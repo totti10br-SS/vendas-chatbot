@@ -133,6 +133,14 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:3px;ba
 .panel-kpi-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.7px;font-weight:600;margin-bottom:2px;}
 .panel-kpi-val{font-family:'Bebas Neue',sans-serif;font-size:18px;color:var(--yellow);line-height:1;}
 .prod-section-label{font-family:'Barlow Condensed',sans-serif;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:8px;}
+.tipo-section{background:var(--surface2);border:1px solid var(--border);border-left:2px solid var(--yellow);border-radius:6px;padding:10px 12px;margin-bottom:14px;}
+.tipo-section-title{font-family:'Barlow Condensed',sans-serif;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:8px;}
+.tipo-row{display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04);}
+.tipo-row:last-child{border-bottom:none;}
+.tipo-nome{font-size:12px;color:var(--text2);flex:1;padding-right:8px;}
+.tipo-vals{display:flex;gap:12px;flex-shrink:0;text-align:right;}
+.tipo-kg{font-family:'Barlow Condensed',sans-serif;font-size:13px;color:var(--yellow);font-weight:700;}
+.tipo-fat{font-size:11px;color:var(--muted);}
 .prod-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05);}
 .prod-row:last-child{border-bottom:none;}
 .prod-nome{font-size:12px;color:var(--text2);flex:1;padding-right:10px;line-height:1.3;}
@@ -141,6 +149,13 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:3px;ba
 .prod-r{font-size:11px;color:var(--muted);}
 .prod-pm{font-size:11px;color:rgba(245,200,0,.6);font-style:italic;}
 .panel-loading{text-align:center;padding:20px;color:var(--text2);font-size:13px;}
+.tipo-carne-box{background:var(--surface2);border:1px solid var(--border);border-top:2px solid var(--yellow);border-radius:7px;padding:9px 12px;margin-top:10px;}
+.tipo-carne-title{font-family:'Barlow Condensed',sans-serif;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;font-weight:700;margin-bottom:7px;}
+.tipo-carne-row{display:flex;align-items:center;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04);}
+.tipo-carne-row:last-child{border-bottom:none;}
+.tc-nome{font-size:11px;color:var(--text2);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:8px;}
+.tc-kg{font-family:'Barlow Condensed',sans-serif;font-size:12px;color:var(--yellow);font-weight:700;flex-shrink:0;}
+.tc-fat{font-size:11px;color:var(--muted);flex-shrink:0;margin-left:8px;}
 </style>
 </head>
 <body>
@@ -159,18 +174,24 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:3px;ba
 
 <!-- DASHBOARD COMPACTO -->
 <div class="dashboard" id="dashboard" style="display:none">
-  <div class="kpi-group">
-    <div class="kpi-mini">
-      <div class="kpi-mini-label">Faturamento</div>
-      <div class="kpi-mini-value" id="kpiFat">—</div>
-      <div class="kpi-mini-sub">R$</div>
-      <div class="kpi-dia" id="diaLabel">—</div>
+  <div style="display:flex;flex-direction:column;gap:0;flex-shrink:0;">
+    <div class="kpi-group">
+      <div class="kpi-mini">
+        <div class="kpi-mini-label">Faturamento</div>
+        <div class="kpi-mini-value" id="kpiFat">—</div>
+        <div class="kpi-mini-sub">R$</div>
+        <div class="kpi-dia" id="diaLabel">—</div>
+      </div>
+      <div class="kpi-mini">
+        <div class="kpi-mini-label">Volume</div>
+        <div class="kpi-mini-value" id="kpiKg">—</div>
+        <div class="kpi-mini-sub">kg</div>
+        <div class="kpi-dia" id="diaLabel2">—</div>
+      </div>
     </div>
-    <div class="kpi-mini">
-      <div class="kpi-mini-label">Volume</div>
-      <div class="kpi-mini-value" id="kpiKg">—</div>
-      <div class="kpi-mini-sub">kg</div>
-      <div class="kpi-dia" id="diaLabel2">—</div>
+    <div class="tipo-carne-box" id="tipoCarne" style="display:none">
+      <div class="tipo-carne-title">📦 Tipo de Carne</div>
+      <div id="tipoCarneLista"></div>
     </div>
   </div>
 
@@ -288,11 +309,47 @@ async function openCliente(nome){
         </div>
       </div>`;
     }).join('');
+    // Agrupamento por Tipo de Carne (DESC_DIVISAO2)
+    const tipoMap = {};
+    d.produtos.forEach(p=>{
+      const t = p.tipo || 'Outros';
+      if(!tipoMap[t]) tipoMap[t]={kg:0,fat:0};
+      tipoMap[t].kg += p.kg;
+      tipoMap[t].fat += p.fat;
+    });
+    const tiposHTML = Object.entries(tipoMap)
+      .sort((a,b)=>b[1].kg-a[1].kg)
+      .map(([t,v])=>`
+        <div class="tipo-row">
+          <div class="tipo-nome">${t}</div>
+          <div class="tipo-vals">
+            <div class="tipo-kg">${fmtKg(v.kg)}</div>
+            <div class="tipo-fat">${fmtBRL(v.fat)}</div>
+          </div>
+        </div>`).join('');
+
+    // Popular box tipo de carne no canto superior esquerdo
+    const tcLista = document.getElementById('tipoCarneLista');
+    const tcBox = document.getElementById('tipoCarne');
+    tcLista.innerHTML = Object.entries(tipoMap)
+      .sort((a,b)=>b[1].kg-a[1].kg)
+      .map(([t,v])=>`
+        <div class="tipo-carne-row">
+          <div class="tc-nome">${t}</div>
+          <div class="tc-kg">${fmtKg(v.kg)}</div>
+          <div class="tc-fat">${fmtBRL(v.fat)}</div>
+        </div>`).join('');
+    tcBox.style.display='block';
+
     document.getElementById('panelContent').innerHTML=`
       <div class="panel-cliente-nome">${d.nome}</div>
       <div class="panel-totais">
         <div class="panel-kpi"><div class="panel-kpi-label">Volume</div><div class="panel-kpi-val">${fmtKg(d.kg_total)}</div></div>
         <div class="panel-kpi"><div class="panel-kpi-label">Faturamento</div><div class="panel-kpi-val">${fmtBRL(d.fat_total)}</div></div>
+      </div>
+      <div class="tipo-section">
+        <div class="tipo-section-title">📦 Tipo de Carne</div>
+        ${tiposHTML||'<p style="color:var(--muted);font-size:12px">Sem dados</p>'}
       </div>
       <div class="prod-section-label">Produtos comprados</div>
       ${prodsHTML||'<p style="color:var(--muted);font-size:13px">Sem produtos</p>'}`;
@@ -301,7 +358,11 @@ async function openCliente(nome){
   }
 }
 
-function closePanel(){document.getElementById('sidePanel').classList.remove('open');}
+function closePanel(){
+  document.getElementById('sidePanel').classList.remove('open');
+  document.getElementById('tipoCarne').style.display='none';
+  document.getElementById('tipoCarneLista').innerHTML='';
+}
 
 function showWelcome(total){
   const el=document.getElementById('messages');
