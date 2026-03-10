@@ -107,7 +107,7 @@
       const lines=text.split('\n').filter(l=>l.trim());
       if(lines.length<2) throw new Error('Arquivo vazio');
       const header=lines[0], dataLines=lines.slice(1);
-      salesData=header+'\n'+dataLines.slice(-3000).join('\n');
+      salesData=header+"\n"+dataLines.slice(-1000).join("\n");
       document.getElementById('lastUpdate').textContent=new Date().toLocaleString('pt-BR');
       const headers=header.split(';');
       const dataIdx=headers.findIndex(h=>h.trim().toUpperCase().includes('DATA_MOVTO'));
