@@ -71,10 +71,10 @@
   <div class="header-right">
     <div class="status">
       <div class="status-dot"></div>
-      <span id="statusText">Carregando dados...</span>
+      <span id="statusText">Online</span>
     </div>
-    <div class="data-info" id="dataInfo" style="display:none">
-      Atualizado: <span id="lastUpdate">-</span> · Último registro: <span id="lastRecord">-</span>
+    <div class="data-info" id="dataInfo">
+      Base: <span id="totalRegistros">-</span> registros · Último: <span id="lastRecord">-</span>
     </div>
   </div>
 </header>
@@ -82,7 +82,7 @@
 <div id="messages">
   <div class="loading-overlay" id="loadingOverlay">
     <div class="spinner"></div>
-    <p>Carregando base de dados de vendas...</p>
+    <p>Conectando ao servidor...</p>
   </div>
 </div>
 
@@ -95,114 +95,117 @@
 </div>
 
 <script>
-  const UPDATE_INTERVAL = 30*60*1000;
-  let salesData=null, conversationHistory=[], updateTimer=null;
+  let conversationHistory = [];
 
-  async function loadData(silent=false){
-    if(!silent) document.getElementById('statusText').textContent='Carregando dados...';
-    try{
-      const r=await fetch('/vendas');
-      if(!r.ok) throw new Error('Erro ao acessar os dados');
-      const text=await r.text();
-      const lines=text.split('\n').filter(l=>l.trim());
-      if(lines.length<2) throw new Error('Arquivo vazio');
-      const header=lines[0], dataLines=lines.slice(1);
-      salesData=header+"\n"+dataLines.slice(-1000).join("\n");
-      document.getElementById('lastUpdate').textContent=new Date().toLocaleString('pt-BR');
-      const headers=header.split(';');
-      const dataIdx=headers.findIndex(h=>h.trim().toUpperCase().includes('DATA_MOVTO'));
-      if(dataIdx>=0){
-        const dates=dataLines.map(l=>l.split(';')[dataIdx]?.trim()).filter(d=>d&&d!=='NULL'&&d.length>=10).map(d=>d.substring(0,10));
-        if(dates.length>0){const[y,m,d]=dates.sort().pop().split('-');document.getElementById('lastRecord').textContent=`${d}/${m}/${y}`;}
+  async function init() {
+    try {
+      // Verifica saúde do servidor e carrega info do CSV
+      const r = await fetch('/vendas');
+      if (!r.ok) throw new Error('Erro ao conectar');
+      const text = await r.text();
+      const lines = text.split('\n').filter(l => l.trim());
+      const total = lines.length - 1;
+      const header = lines[0];
+      const dataLines = lines.slice(1);
+
+      document.getElementById('totalRegistros').textContent = total.toLocaleString('pt-BR');
+
+      // Último registro
+      const headers = header.split(';');
+      const dataIdx = headers.findIndex(h => h.trim().toUpperCase().includes('DATA_MOVTO'));
+      if (dataIdx >= 0) {
+        const dates = dataLines.map(l => l.split(';')[dataIdx]?.trim()).filter(d => d && d.length >= 10).map(d => d.substring(0,10));
+        if (dates.length > 0) {
+          const [y,m,d] = dates.sort().pop().split('-');
+          document.getElementById('lastRecord').textContent = `${d}/${m}/${y}`;
+        }
       }
-      document.getElementById('dataInfo').style.display='block';
-      document.getElementById('statusText').textContent=`${dataLines.length.toLocaleString('pt-BR')} registros`;
-      document.getElementById('statusText').style.color='var(--accent)';
-      if(!silent){
-        document.getElementById('loadingOverlay').remove();
-        showWelcome(dataLines.length);
-        document.getElementById('userInput').disabled=false;
-        document.getElementById('sendBtn').disabled=false;
-      }
-      if(updateTimer) clearTimeout(updateTimer);
-      updateTimer=setTimeout(()=>loadData(true),UPDATE_INTERVAL);
-    }catch(err){
-      document.getElementById('statusText').textContent='❌ Erro ao carregar';
-      document.getElementById('statusText').style.color='#ff5050';
-      if(!silent) document.getElementById('loadingOverlay').innerHTML=`<p style="color:#ff5050">❌ Não foi possível carregar os dados.<br><small>${err.message}</small></p>`;
+
+      document.getElementById('statusText').textContent = 'Online';
+      document.getElementById('loadingOverlay').remove();
+      showWelcome(total);
+      document.getElementById('userInput').disabled = false;
+      document.getElementById('sendBtn').disabled = false;
+
+    } catch(err) {
+      document.getElementById('loadingOverlay').innerHTML =
+        `<p style="color:#ff5050">❌ Erro ao conectar ao servidor.<br><small>${err.message}</small></p>`;
     }
   }
 
-  function showWelcome(total){
-    const el=document.getElementById('messages');
-    const div=document.createElement('div');
-    div.className='welcome';div.id='welcome';
-    div.innerHTML=`<h2>Olá! Sou seu Analista de Vendas 👋</h2>
-      <p>Base carregada com <strong style="color:var(--accent)">${total.toLocaleString('pt-BR')} registros</strong>. O que você quer saber hoje?</p>
+  function showWelcome(total) {
+    const el = document.getElementById('messages');
+    const div = document.createElement('div');
+    div.className = 'welcome'; div.id = 'welcome';
+    div.innerHTML = `
+      <h2>Olá! Sou seu Analista de Vendas 👋</h2>
+      <p>Base com <strong style="color:var(--accent)">${total.toLocaleString('pt-BR')} registros</strong> disponível. O que você quer saber hoje?</p>
       <div class="suggestions">
         <div class="suggestion" onclick="sendSuggestion(this)">📈 Como foram as vendas ontem?</div>
-        <div class="suggestion" onclick="sendSuggestion(this)">🏆 Top 5 produtos mais vendidos</div>
+        <div class="suggestion" onclick="sendSuggestion(this)">🏆 Top 5 produtos mais vendidos em março</div>
         <div class="suggestion" onclick="sendSuggestion(this)">🏢 Comparar filiais este mês</div>
         <div class="suggestion" onclick="sendSuggestion(this)">👤 Ranking de vendedores</div>
-        <div class="suggestion" onclick="sendSuggestion(this)">📦 Vendas por categoria</div>
+        <div class="suggestion" onclick="sendSuggestion(this)">📦 Vendas por categoria em 2025</div>
         <div class="suggestion" onclick="sendSuggestion(this)">📅 Resumo do mês atual</div>
       </div>`;
     el.appendChild(div);
   }
 
-  async function sendMessage(){
-    const input=document.getElementById('userInput');
-    const text=input.value.trim();
-    if(!text||!salesData) return;
-    input.value='';input.style.height='auto';
-    document.getElementById('sendBtn').disabled=true;
-    const w=document.getElementById('welcome');if(w) w.style.display='none';
-    addMessage('user',text);
-    const typing=addTyping();
-    conversationHistory.push({role:'user',content:text});
-    try{
-      const r=await fetch('/chat',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({messages:conversationHistory,sales_data:salesData})
+  async function sendMessage() {
+    const input = document.getElementById('userInput');
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = ''; input.style.height = 'auto';
+    document.getElementById('sendBtn').disabled = true;
+    const w = document.getElementById('welcome'); if(w) w.style.display='none';
+    addMessage('user', text);
+    const typing = addTyping();
+    conversationHistory.push({role:'user', content:text});
+
+    try {
+      const r = await fetch('/chat', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({messages: conversationHistory})
       });
-      const data=await r.json();
+      const data = await r.json();
       typing.remove();
-      if(!data.content || !data.content[0]) throw new Error(JSON.stringify(data));
-      if(data.error) throw new Error(data.error.message||JSON.stringify(data.error));
-      const reply=data.content[0].text;
-      conversationHistory.push({role:'assistant',content:reply});
-      addMessage('assistant',reply);
-    }catch(err){
+      if (!data.content || !data.content[0]) throw new Error(JSON.stringify(data));
+      if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+      const reply = data.content[0].text;
+      conversationHistory.push({role:'assistant', content:reply});
+      addMessage('assistant', reply);
+    } catch(err) {
       typing.remove();
-      addMessage('assistant',`❌ Erro: ${err.message}`);
+      addMessage('assistant', `❌ Erro: ${err.message}`);
     }
-    document.getElementById('sendBtn').disabled=false;
+
+    document.getElementById('sendBtn').disabled = false;
     scrollToBottom();
   }
 
-  function addMessage(role,content){
-    const el=document.getElementById('messages');
-    const div=document.createElement('div');
-    div.className=`message ${role}`;
-    div.innerHTML=`<div class="avatar">${role==='user'?'👤':'🤖'}</div><div class="bubble">${content}</div>`;
-    el.appendChild(div);scrollToBottom();return div;
+  function addMessage(role, content) {
+    const el = document.getElementById('messages');
+    const div = document.createElement('div');
+    div.className = `message ${role}`;
+    div.innerHTML = `<div class="avatar">${role==='user'?'👤':'🤖'}</div><div class="bubble">${content}</div>`;
+    el.appendChild(div); scrollToBottom(); return div;
   }
 
-  function addTyping(){
-    const el=document.getElementById('messages');
-    const div=document.createElement('div');
-    div.className='message assistant typing';
-    div.innerHTML='<div class="avatar">🤖</div><div class="bubble"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
-    el.appendChild(div);scrollToBottom();return div;
+  function addTyping() {
+    const el = document.getElementById('messages');
+    const div = document.createElement('div');
+    div.className = 'message assistant typing';
+    div.innerHTML = '<div class="avatar">🤖</div><div class="bubble"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
+    el.appendChild(div); scrollToBottom(); return div;
   }
 
-  function sendSuggestion(el){document.getElementById('userInput').value=el.textContent.replace(/^[^\w]+ /,'').trim();sendMessage();}
-  function handleKey(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();}}
-  function autoResize(el){el.style.height='auto';el.style.height=Math.min(el.scrollHeight,120)+'px';}
-  function scrollToBottom(){const el=document.getElementById('messages');el.scrollTop=el.scrollHeight;}
+  function sendSuggestion(el) { document.getElementById('userInput').value = el.textContent.replace(/^[^\w]+/,'').trim(); sendMessage(); }
+  function handleKey(e) { if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();} }
+  function autoResize(el) { el.style.height='auto'; el.style.height=Math.min(el.scrollHeight,120)+'px'; }
+  function scrollToBottom() { const el=document.getElementById('messages'); el.scrollTop=el.scrollHeight; }
 
-  loadData(false);
+  init();
 </script>
 </body>
 </html>

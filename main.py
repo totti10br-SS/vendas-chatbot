@@ -1,7 +1,8 @@
 import os
 import pickle
 import io
-import json
+import re
+import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, HTMLResponse
@@ -24,6 +25,9 @@ app.add_middleware(
 FILE_ID    = os.environ.get("DRIVE_FILE_ID", "")
 CLAUDE_KEY = os.environ.get("CLAUDE_API_KEY", "")
 
+# Cache do CSV em memória
+_csv_cache = {"data": None, "df": None}
+
 def get_drive_service():
     token_bytes = os.environ.get("GOOGLE_TOKEN_PICKLE")
     if not token_bytes:
@@ -33,6 +37,104 @@ def get_drive_service():
     if creds and creds.expired and creds.refresh_token:
         creds.refresh(Request())
     return build('drive', 'v3', credentials=creds)
+
+def load_csv():
+    """Carrega CSV do Drive e retorna DataFrame."""
+    if _csv_cache["df"] is not None:
+        return _csv_cache["df"]
+    service = get_drive_service()
+    request = service.files().get_media(fileId=FILE_ID)
+    buffer = io.BytesIO()
+    downloader = MediaIoBaseDownload(buffer, request)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+    buffer.seek(0)
+    df = pd.read_csv(buffer, sep=';', encoding='utf-8-sig', low_memory=False)
+    df['DATA_MOVTO'] = pd.to_datetime(df['DATA_MOVTO'], errors='coerce')
+    _csv_cache["df"] = df
+    return df
+
+def filter_data(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
+    """Filtra o DataFrame baseado em palavras-chave da pergunta."""
+    pergunta_lower = pergunta.lower()
+    df_filtered = df.copy()
+
+    # Mapeamento de meses PT
+    meses = {
+        'janeiro': 1, 'fevereiro': 2, 'março': 3, 'marco': 3,
+        'abril': 4, 'maio': 5, 'junho': 6, 'julho': 7,
+        'agosto': 8, 'setembro': 9, 'outubro': 10,
+        'novembro': 11, 'dezembro': 12
+    }
+
+    # Filtro por mês
+    for nome, num in meses.items():
+        if nome in pergunta_lower:
+            df_filtered = df_filtered[df_filtered['DATA_MOVTO'].dt.month == num]
+            break
+
+    # Filtro por ano
+    anos = re.findall(r'\b(202[0-9])\b', pergunta)
+    if anos:
+        df_filtered = df_filtered[df_filtered['DATA_MOVTO'].dt.year == int(anos[0])]
+
+    # Filtro "ontem" / "hoje" / "última semana" / "último mês"
+    from datetime import datetime, timedelta
+    hoje = datetime.now()
+    if 'ontem' in pergunta_lower:
+        ontem = hoje - timedelta(days=1)
+        df_filtered = df_filtered[df_filtered['DATA_MOVTO'].dt.date == ontem.date()]
+    elif 'hoje' in pergunta_lower:
+        df_filtered = df_filtered[df_filtered['DATA_MOVTO'].dt.date == hoje.date()]
+    elif 'última semana' in pergunta_lower or 'ultima semana' in pergunta_lower:
+        df_filtered = df_filtered[df_filtered['DATA_MOVTO'] >= hoje - timedelta(days=7)]
+    elif 'último mês' in pergunta_lower or 'ultimo mes' in pergunta_lower:
+        df_filtered = df_filtered[df_filtered['DATA_MOVTO'] >= hoje - timedelta(days=30)]
+
+    # Filtro por filial
+    filiais = {'itap': 'ITAP', 'bjesus': 'BJESUS', 'porc': 'PORC', 'trindade': 'TRINDADE'}
+    for key, val in filiais.items():
+        if key in pergunta_lower:
+            df_filtered = df_filtered[df_filtered['NOME_FILIAL'].str.upper() == val]
+            break
+
+    # Filtro por cliente (nome parcial)
+    cliente_match = re.search(r'cliente[:\s]+([a-záéíóúâêîôûãõç\s]+)', pergunta_lower)
+    if cliente_match:
+        nome_cliente = cliente_match.group(1).strip()
+        if len(nome_cliente) > 2:
+            df_filtered = df_filtered[
+                df_filtered['NOME_CLIENTE'].str.lower().str.contains(nome_cliente, na=False)
+            ]
+
+    # Filtro por vendedor
+    vendedor_match = re.search(r'vendedor[:\s]+([a-záéíóúâêîôûãõç\s]+)', pergunta_lower)
+    if vendedor_match:
+        nome_vend = vendedor_match.group(1).strip()
+        if len(nome_vend) > 2:
+            df_filtered = df_filtered[
+                df_filtered['NOM_VENDEDOR'].str.lower().str.contains(nome_vend, na=False)
+            ]
+
+    # Filtro por produto
+    produto_match = re.search(r'produto[:\s]+([a-záéíóúâêîôûãõç\s]+)', pergunta_lower)
+    if produto_match:
+        nome_prod = produto_match.group(1).strip()
+        if len(nome_prod) > 2:
+            df_filtered = df_filtered[
+                df_filtered['DESC_PRODUTO'].str.lower().str.contains(nome_prod, na=False)
+            ]
+
+    # Se filtrou demais ou nada, garante pelo menos os últimos 60 dias
+    if len(df_filtered) == 0:
+        df_filtered = df[df['DATA_MOVTO'] >= hoje - timedelta(days=60)]
+
+    # Limita a 3000 linhas para não estourar o contexto
+    if len(df_filtered) > 3000:
+        df_filtered = df_filtered.tail(3000)
+
+    return df_filtered
 
 @app.get("/", response_class=HTMLResponse)
 def root():
@@ -53,6 +155,8 @@ def get_vendas():
         while not done:
             _, done = downloader.next_chunk()
         buffer.seek(0)
+        # Invalida cache ao atualizar
+        _csv_cache["df"] = None
         return StreamingResponse(
             buffer,
             media_type="text/csv",
@@ -67,14 +171,27 @@ class Message(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: List[Message]
-    sales_data: str
 
 @app.post("/chat")
 async def chat(req: ChatRequest):
     if not CLAUDE_KEY:
         raise HTTPException(status_code=500, detail="API Key da Claude não configurada.")
-    
-    SYSTEM_PROMPT = """Você é um Analista de Dados Comercial Sênior, bem-humorado e extremamente competente.
+
+    # Pega a última pergunta do usuário
+    ultima_pergunta = next(
+        (m.content for m in reversed(req.messages) if m.role == "user"), ""
+    )
+
+    # Carrega e filtra os dados
+    try:
+        df = load_csv()
+        df_filtrado = filter_data(df, ultima_pergunta)
+        sales_data = df_filtrado.to_csv(sep=';', index=False)
+        linhas_filtradas = len(df_filtrado)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao carregar dados: {str(e)}")
+
+    SYSTEM_PROMPT = f"""Você é um Analista de Dados Comercial Sênior, bem-humorado e extremamente competente.
 Você analisa dados de vendas de uma empresa brasileira do setor de alimentos com filiais em ITAP, BJESUS, PORC e TRINDADE.
 
 REGRAS IMPORTANTES:
@@ -86,10 +203,10 @@ REGRAS IMPORTANTES:
 - Seja bem-humorado mas profissional
 - Formate valores monetários como R$ X.XXX,XX
 - Quando não tiver certeza, diga claramente
+- Os dados abaixo são um recorte filtrado com {linhas_filtradas} registros relevantes para a pergunta
 
-Os dados de vendas serão fornecidos em formato CSV com as seguintes colunas principais:
-cod_filial, NOME_FILIAL, DESC_TIPO_MV, COD_PRODUTO, DESC_PRODUTO, NOME_CLIENTE, DATA_MOVTO,
-NOM_VENDEDOR, QTDE_PRI, VALOR_UNITARIO, VALOR_LIQUIDO, DESC_DIVISAO2, DESC_DIVISAO3, UF, CIDADE"""
+DADOS DE VENDAS (CSV - {linhas_filtradas} registros):
+{sales_data}"""
 
     async with httpx.AsyncClient(timeout=60) as client:
         response = await client.post(
@@ -102,14 +219,14 @@ NOM_VENDEDOR, QTDE_PRI, VALOR_UNITARIO, VALOR_LIQUIDO, DESC_DIVISAO2, DESC_DIVIS
             json={
                 "model": "claude-sonnet-4-20250514",
                 "max_tokens": 1500,
-                "system": SYSTEM_PROMPT + "\n\nDADOS DE VENDAS (CSV):\n" + req.sales_data,
+                "system": SYSTEM_PROMPT,
                 "messages": [m.dict() for m in req.messages]
             }
         )
-    
+
     if response.status_code != 200:
         raise HTTPException(status_code=response.status_code, detail=response.text)
-    
+
     return response.json()
 
 @app.get("/health")
