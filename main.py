@@ -284,3 +284,14 @@ DADOS ({n} registros):
 @app.get("/health")
 def health():
     return {"status":"ok","cache":"loaded" if _cache["df"] is not None else "empty"}
+
+@app.get("/vendas")
+def reload_vendas():
+    """Força download do CSV do Drive e invalida cache."""
+    _cache["df"] = None
+    _cache["loaded_at"] = None
+    try:
+        load_df()
+        return {"status":"ok","message":"CSV recarregado com sucesso"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

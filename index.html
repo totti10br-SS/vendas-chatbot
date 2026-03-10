@@ -166,7 +166,8 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:3px;ba
     <h1>IAF · Analista Comercial</h1>
     <p>Especialista em Indicadores de Vendas · Frinense Alimentos</p>
   </div>
-  <div class="header-right">
+  <div class="header-right" style="display:flex;align-items:center;gap:10px;">
+    <button onclick="forceReload()" title="Recarregar dados do Drive" style="background:none;border:1px solid rgba(245,200,0,.3);border-radius:5px;padding:4px 8px;cursor:pointer;color:var(--yellow);font-size:11px;font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.5px;transition:all .2s;" onmouseover="this.style.background='rgba(245,200,0,.1)'" onmouseout="this.style.background='none'">↺ ATUALIZAR</button>
     <div class="stat-pill"><div class="stat-dot"></div><span id="totalReg">—</span></div>
     <div class="stat-sub" id="ultimaNota">Última nota: —</div>
   </div>
@@ -257,6 +258,19 @@ function renderMarkdown(text){
   text=text.replace(/\n\n/g,'</p><p>');
   return '<p>'+text+'</p>';
 }
+async function forceReload(){
+  const btn = document.querySelector('button[onclick="forceReload()"]');
+  btn.textContent='↺ CARREGANDO...';
+  btn.disabled=true;
+  try{
+    await fetch('/vendas');
+    location.reload();
+  }catch(e){
+    btn.textContent='↺ ATUALIZAR';
+    btn.disabled=false;
+  }
+}
+
 async function init(){
   try{
     const r=await fetch('/dashboard');
