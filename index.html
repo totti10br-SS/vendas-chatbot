@@ -217,17 +217,14 @@ function fmtBRL(v){return 'R$ '+parseFloat(v||0).toLocaleString('pt-BR',{minimum
 function fmtKg(v){return parseFloat(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+' kg';}
 
 function renderMarkdown(text){
-  text=text.replace(/\|(.+)\|
-\|[-| :]+\|
-((?:\|.+\|
-?)+)/gm,(m,header,rows)=>{
-    const ths=header.split('|').filter(c=>c.trim()).map(c=>`<th>${c.trim()}</th>`).join('');
-    const trs=rows.trim().split('
-').map(row=>{
-      const tds=row.split('|').filter(c=>c.trim()).map(c=>`<td>${c.trim()}</td>`).join('');
-      return `<tr>${tds}</tr>`;
+  // Tabelas markdown
+  text=text.replace(/\|(.+)\|\n\|[-| :]+\|\n((?:\|.+\|\n?)+)/gm,function(m,header,rows){
+    var ths=header.split('|').filter(function(c){return c.trim();}).map(function(c){return '<th>'+c.trim()+'</th>';}).join('');
+    var trs=rows.trim().split('\n').map(function(row){
+      var tds=row.split('|').filter(function(c){return c.trim();}).map(function(c){return '<td>'+c.trim()+'</td>';}).join('');
+      return '<tr>'+tds+'</tr>';
     }).join('');
-    return `<table><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`;
+    return '<table><thead><tr>'+ths+'</tr></thead><tbody>'+trs+'</tbody></table>';
   });
   text=text.replace(/^### (.+)$/gm,'<h3>$1</h3>');
   text=text.replace(/^## (.+)$/gm,'<h2>$1</h2>');
@@ -235,12 +232,9 @@ function renderMarkdown(text){
   text=text.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
   text=text.replace(/\*(.+?)\*/g,'<em>$1</em>');
   text=text.replace(/^[-*] (.+)$/gm,'<li>$1</li>');
-  text=text.replace(/
-
-/g,'</p><p>');
-  return `<p>${text}</p>`;
+  text=text.replace(/\n\n/g,'</p><p>');
+  return '<p>'+text+'</p>';
 }
-
 async function init(){
   try{
     const r=await fetch('/dashboard');
