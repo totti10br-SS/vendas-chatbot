@@ -230,6 +230,7 @@ async def chat(req: ChatRequest):
 - Filiais: ITAP (Itaperuna), BJESUS (Bom Jesus), PORC (Porciúncula), TRINDADE (Trindade)
 - Use Markdown: ## títulos, **negrito**, tabelas com | Col |
 - Valores: R$ X.XXX,XX | Quantidades: X.XXX,XX kg
+- Sempre calcule e exiba o PREÇO MÉDIO (R$/kg) em qualquer análise de produto, cliente ou vendedor — calcule como VALOR_LIQUIDO / QTDE_PRI e formate como R$ X,XX/kg
 - Finalize com 1 insight ou sugestão
 
 DADOS ({n} registros):

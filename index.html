@@ -139,6 +139,7 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:3px;ba
 .prod-vals{text-align:right;flex-shrink:0;}
 .prod-kg{font-family:'Barlow Condensed',sans-serif;font-size:13px;color:var(--yellow);font-weight:700;}
 .prod-r{font-size:11px;color:var(--muted);}
+.prod-pm{font-size:11px;color:rgba(245,200,0,.6);font-style:italic;}
 .panel-loading{text-align:center;padding:20px;color:var(--text2);font-size:13px;}
 </style>
 </head>
@@ -276,11 +277,17 @@ async function openCliente(nome){
   try{
     const r=await fetch('/cliente/'+encodeURIComponent(nome));
     const d=await r.json();
-    const prodsHTML=d.produtos.map(p=>`
-      <div class="prod-row">
+    const prodsHTML=d.produtos.map(p=>{
+      const pm = p.kg>0 ? (p.fat/p.kg).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}) : '—';
+      return `<div class="prod-row">
         <div class="prod-nome">${p.nome}</div>
-        <div class="prod-vals"><div class="prod-kg">${fmtKg(p.kg)}</div><div class="prod-r">${fmtBRL(p.fat)}</div></div>
-      </div>`).join('');
+        <div class="prod-vals">
+          <div class="prod-kg">${fmtKg(p.kg)}</div>
+          <div class="prod-r">${fmtBRL(p.fat)}</div>
+          <div class="prod-pm">R$ ${pm}/kg</div>
+        </div>
+      </div>`;
+    }).join('');
     document.getElementById('panelContent').innerHTML=`
       <div class="panel-cliente-nome">${d.nome}</div>
       <div class="panel-totais">
