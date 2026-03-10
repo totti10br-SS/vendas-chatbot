@@ -113,8 +113,10 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
     if len(dff) == 0:
         dff = df[df['DATA_MOVTO'] >= hoje - timedelta(days=30)]
 
-    if len(dff) > 2000:
-        dff = dff.tail(2000)
+    # Limite menor quando busca por cliente específico (muitos registros)
+    limite = 500 if m else 800
+    if len(dff) > limite:
+        dff = dff.tail(limite)
 
     cols = ['NOME_FILIAL','DATA_MOVTO','NUM_DOCTO','COD_PRODUTO','DESC_PRODUTO','NOME_CLIENTE',
             'NOM_VENDEDOR','QTDE_PRI','VALOR_LIQUIDO','DESC_DIVISAO2','DESC_DIVISAO3']
@@ -243,7 +245,7 @@ DADOS ({n} registros):
             headers={"Content-Type":"application/json",
                      "x-api-key":CLAUDE_KEY,
                      "anthropic-version":"2023-06-01"},
-            json={"model":"claude-sonnet-4-20250514",
+            json={"model":"claude-haiku-4-5-20251001",
                   "max_tokens":1500,
                   "system":system,
                   "messages":[m.dict() for m in req.messages]}
