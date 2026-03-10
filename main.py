@@ -98,9 +98,28 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
             dff = dff[dff['NOME_FILIAL'].str.upper() == val]
             break
 
-    m = re.search(r'cliente[:\s]+([a-záéíóúâêîôûãõç\s]+)', pl)
-    if m and len(m.group(1).strip()) > 2:
-        dff = dff[dff['NOME_CLIENTE'].str.lower().str.contains(m.group(1).strip(), na=False)]
+    m_cliente = re.search(r'cliente[:\s]+([a-záéíóúâêîôûãõç\s]+)', pl)
+    if m_cliente and len(m_cliente.group(1).strip()) > 2:
+        dff = dff[dff['NOME_CLIENTE'].str.lower().str.contains(m_cliente.group(1).strip(), na=False)]
+
+    # Busca livre por nome de cliente (quando não usa palavra "cliente:")
+    # Detecta padrões como "distribuidora uniao", "rca alimentos" etc na pergunta
+    elif not any(x in pl for x in ['produto','vendedor','filial','ranking','comparar','top','total','resumo']):
+        palavras = [p for p in pl.split() if len(p) > 3 and p not in
+                    ['últimas','ultimas','vendas','venda','quais','qual','como','foram','mais','este','essa','esse','para','pela','pelo','mês','mes','ano','2025','2026']]
+        if palavras:
+            termo = ' '.join(palavras[:3])
+            mask = dff['NOME_CLIENTE'].str.lower().str.contains(termo, na=False)
+            if mask.sum() > 0:
+                dff = dff[mask]
+
+    cols = ['NOME_FILIAL','DATA_MOVTO','NUM_DOCTO','COD_PRODUTO','DESC_PRODUTO','NOME_CLIENTE',
+            'NOM_VENDEDOR','QTDE_PRI','VALOR_LIQUIDO','DESC_DIVISAO2','DESC_DIVISAO3']
+
+    # Detecta intenção de "últimas vendas" — já filtrado por cliente acima, limita 15 linhas
+    if any(x in pl for x in ['últimas vendas','ultimas vendas','ultima venda','última venda']):
+        dff = dff.sort_values('DATA_MOVTO', ascending=False).head(15)
+        return dff[[c for c in cols if c in dff.columns]]
 
     m = re.search(r'vendedor[:\s]+([a-záéíóúâêîôûãõç\s]+)', pl)
     if m and len(m.group(1).strip()) > 2:
@@ -113,13 +132,9 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
     if len(dff) == 0:
         dff = df[df['DATA_MOVTO'] >= hoje - timedelta(days=30)]
 
-    # Limite menor quando busca por cliente específico (muitos registros)
-    limite = 500 if m else 800
-    if len(dff) > limite:
-        dff = dff.tail(limite)
+    if len(dff) > 800:
+        dff = dff.tail(800)
 
-    cols = ['NOME_FILIAL','DATA_MOVTO','NUM_DOCTO','COD_PRODUTO','DESC_PRODUTO','NOME_CLIENTE',
-            'NOM_VENDEDOR','QTDE_PRI','VALOR_LIQUIDO','DESC_DIVISAO2','DESC_DIVISAO3']
     return dff[[c for c in cols if c in dff.columns]]
 
 # ─── ROUTES ───
