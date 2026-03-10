@@ -116,7 +116,7 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
     if len(dff) > 2000:
         dff = dff.tail(2000)
 
-    cols = ['NOME_FILIAL','DATA_MOVTO','DESC_PRODUTO','NOME_CLIENTE',
+    cols = ['NOME_FILIAL','DATA_MOVTO','NUM_DOCTO','COD_PRODUTO','DESC_PRODUTO','NOME_CLIENTE',
             'NOM_VENDEDOR','QTDE_PRI','VALOR_LIQUIDO','DESC_DIVISAO2','DESC_DIVISAO3']
     return dff[[c for c in cols if c in dff.columns]]
 
@@ -232,6 +232,7 @@ async def chat(req: ChatRequest):
 - Valores: R$ X.XXX,XX | Quantidades: X.XXX,XX kg
 - Sempre calcule e exiba o PREÇO MÉDIO (R$/kg) em qualquer análise de produto, cliente ou vendedor — calcule como VALOR_LIQUIDO / QTDE_PRI e formate como R$ X,XX/kg
 - Finalize com 1 insight ou sugestão
+- Quando perguntado sobre "últimas vendas de um cliente" sem especificar o nome, pergunte qual cliente. Quando o cliente for informado, mostre uma tabela com colunas: DATA | NR NOTA | COD PRODUTO | DESCRIÇÃO | QTDE (kg) | R$/kg — ordenada por data decrescente
 
 DADOS ({n} registros):
 {sales_data}"""
