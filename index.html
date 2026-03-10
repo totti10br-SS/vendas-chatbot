@@ -168,6 +168,7 @@
       });
       const data=await r.json();
       typing.remove();
+      if(!data.content || !data.content[0]) throw new Error(JSON.stringify(data));
       if(data.error) throw new Error(data.error.message||JSON.stringify(data.error));
       const reply=data.content[0].text;
       conversationHistory.push({role:'assistant',content:reply});
