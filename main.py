@@ -3,9 +3,10 @@ import pickle
 import io
 import re
 import pandas as pd
+from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 from typing import List
 import httpx
@@ -14,19 +15,14 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
 app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["GET", "POST"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 FILE_ID    = os.environ.get("DRIVE_FILE_ID", "")
 CLAUDE_KEY = os.environ.get("CLAUDE_API_KEY", "")
 
-# Cache do CSV em memória
-_csv_cache = {"data": None, "df": None}
+# Cache em memória
+_cache = {"df": None, "loaded_at": None}
+CACHE_TTL_MINUTES = 60  # recarrega do Drive a cada 60 min
 
 def get_drive_service():
     token_bytes = os.environ.get("GOOGLE_TOKEN_PICKLE")
@@ -38,139 +34,169 @@ def get_drive_service():
         creds.refresh(Request())
     return build('drive', 'v3', credentials=creds)
 
-def load_csv():
-    """Carrega CSV do Drive e retorna DataFrame."""
-    if _csv_cache["df"] is not None:
-        return _csv_cache["df"]
+def load_df() -> pd.DataFrame:
+    """Carrega CSV do Drive com cache TTL de 60 min."""
+    now = datetime.now()
+    if _cache["df"] is not None and _cache["loaded_at"]:
+        age = (now - _cache["loaded_at"]).total_seconds() / 60
+        if age < CACHE_TTL_MINUTES:
+            return _cache["df"]
     service = get_drive_service()
-    request = service.files().get_media(fileId=FILE_ID)
-    buffer = io.BytesIO()
-    downloader = MediaIoBaseDownload(buffer, request)
+    req = service.files().get_media(fileId=FILE_ID)
+    buf = io.BytesIO()
+    dl = MediaIoBaseDownload(buf, req)
     done = False
     while not done:
-        _, done = downloader.next_chunk()
-    buffer.seek(0)
-    df = pd.read_csv(buffer, sep=';', encoding='utf-8-sig', low_memory=False)
+        _, done = dl.next_chunk()
+    buf.seek(0)
+    df = pd.read_csv(buf, sep=';', encoding='utf-8-sig', low_memory=False)
     df['DATA_MOVTO'] = pd.to_datetime(df['DATA_MOVTO'], errors='coerce')
-    _csv_cache["df"] = df
+    df['VALOR_LIQUIDO'] = pd.to_numeric(df['VALOR_LIQUIDO'], errors='coerce').fillna(0)
+    df['QTDE_PRI']      = pd.to_numeric(df['QTDE_PRI'],      errors='coerce').fillna(0)
+    _cache["df"] = df
+    _cache["loaded_at"] = now
     return df
 
-def filter_data(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
-    """Filtra o DataFrame baseado em palavras-chave da pergunta."""
-    pergunta_lower = pergunta.lower()
-    df_filtered = df.copy()
+def get_dia_referencia(df: pd.DataFrame):
+    """Retorna o último dia com dados (hoje se existir, senão último disponível)."""
+    hoje = datetime.now().date()
+    if (df['DATA_MOVTO'].dt.date == hoje).any():
+        return hoje
+    ultimo = df['DATA_MOVTO'].dropna().dt.date.max()
+    return ultimo
 
-    # Mapeamento de meses PT
-    meses = {
-        'janeiro': 1, 'fevereiro': 2, 'março': 3, 'marco': 3,
-        'abril': 4, 'maio': 5, 'junho': 6, 'julho': 7,
-        'agosto': 8, 'setembro': 9, 'outubro': 10,
-        'novembro': 11, 'dezembro': 12
-    }
+def filter_for_chat(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
+    """Filtra dados para o chat baseado na pergunta."""
+    pl = pergunta.lower()
+    dff = df.copy()
 
-    # Filtro por mês
+    meses = {'janeiro':1,'fevereiro':2,'março':3,'marco':3,'abril':4,'maio':5,
+             'junho':6,'julho':7,'agosto':8,'setembro':9,'outubro':10,'novembro':11,'dezembro':12}
     for nome, num in meses.items():
-        if nome in pergunta_lower:
-            df_filtered = df_filtered[df_filtered['DATA_MOVTO'].dt.month == num]
+        if nome in pl:
+            dff = dff[dff['DATA_MOVTO'].dt.month == num]
             break
 
-    # Filtro por ano
     anos = re.findall(r'\b(202[0-9])\b', pergunta)
     if anos:
-        df_filtered = df_filtered[df_filtered['DATA_MOVTO'].dt.year == int(anos[0])]
+        dff = dff[dff['DATA_MOVTO'].dt.year == int(anos[0])]
 
-    # Filtro "ontem" / "hoje" / "última semana" / "último mês"
-    from datetime import datetime, timedelta
     hoje = datetime.now()
-    if 'ontem' in pergunta_lower:
-        ontem = hoje - timedelta(days=1)
-        df_filtered = df_filtered[df_filtered['DATA_MOVTO'].dt.date == ontem.date()]
-    elif 'hoje' in pergunta_lower:
-        df_filtered = df_filtered[df_filtered['DATA_MOVTO'].dt.date == hoje.date()]
-    elif 'última semana' in pergunta_lower or 'ultima semana' in pergunta_lower:
-        df_filtered = df_filtered[df_filtered['DATA_MOVTO'] >= hoje - timedelta(days=7)]
-    elif 'último mês' in pergunta_lower or 'ultimo mes' in pergunta_lower:
-        df_filtered = df_filtered[df_filtered['DATA_MOVTO'] >= hoje - timedelta(days=30)]
+    if 'ontem' in pl:
+        dia = (hoje - timedelta(days=1)).date()
+        dff = dff[dff['DATA_MOVTO'].dt.date == dia]
+    elif 'hoje' in pl:
+        dff = dff[dff['DATA_MOVTO'].dt.date == hoje.date()]
+    elif 'última semana' in pl or 'ultima semana' in pl:
+        dff = dff[dff['DATA_MOVTO'] >= hoje - timedelta(days=7)]
+    elif 'último mês' in pl or 'ultimo mes' in pl:
+        dff = dff[dff['DATA_MOVTO'] >= hoje - timedelta(days=30)]
 
-    # Filtro por filial
-    filiais = {'itap': 'ITAP', 'bjesus': 'BJESUS', 'porc': 'PORC', 'trindade': 'TRINDADE'}
+    filiais = {'itap':'ITAP','bjesus':'BJESUS','porc':'PORC','trindade':'TRINDADE'}
     for key, val in filiais.items():
-        if key in pergunta_lower:
-            df_filtered = df_filtered[df_filtered['NOME_FILIAL'].str.upper() == val]
+        if key in pl:
+            dff = dff[dff['NOME_FILIAL'].str.upper() == val]
             break
 
-    # Filtro por cliente (nome parcial)
-    cliente_match = re.search(r'cliente[:\s]+([a-záéíóúâêîôûãõç\s]+)', pergunta_lower)
-    if cliente_match:
-        nome_cliente = cliente_match.group(1).strip()
-        if len(nome_cliente) > 2:
-            df_filtered = df_filtered[
-                df_filtered['NOME_CLIENTE'].str.lower().str.contains(nome_cliente, na=False)
-            ]
+    m = re.search(r'cliente[:\s]+([a-záéíóúâêîôûãõç\s]+)', pl)
+    if m and len(m.group(1).strip()) > 2:
+        dff = dff[dff['NOME_CLIENTE'].str.lower().str.contains(m.group(1).strip(), na=False)]
 
-    # Filtro por vendedor
-    vendedor_match = re.search(r'vendedor[:\s]+([a-záéíóúâêîôûãõç\s]+)', pergunta_lower)
-    if vendedor_match:
-        nome_vend = vendedor_match.group(1).strip()
-        if len(nome_vend) > 2:
-            df_filtered = df_filtered[
-                df_filtered['NOM_VENDEDOR'].str.lower().str.contains(nome_vend, na=False)
-            ]
+    m = re.search(r'vendedor[:\s]+([a-záéíóúâêîôûãõç\s]+)', pl)
+    if m and len(m.group(1).strip()) > 2:
+        dff = dff[dff['NOM_VENDEDOR'].str.lower().str.contains(m.group(1).strip(), na=False)]
 
-    # Filtro por produto
-    produto_match = re.search(r'produto[:\s]+([a-záéíóúâêîôûãõç\s]+)', pergunta_lower)
-    if produto_match:
-        nome_prod = produto_match.group(1).strip()
-        if len(nome_prod) > 2:
-            df_filtered = df_filtered[
-                df_filtered['DESC_PRODUTO'].str.lower().str.contains(nome_prod, na=False)
-            ]
+    m = re.search(r'produto[:\s]+([a-záéíóúâêîôûãõç\s]+)', pl)
+    if m and len(m.group(1).strip()) > 2:
+        dff = dff[dff['DESC_PRODUTO'].str.lower().str.contains(m.group(1).strip(), na=False)]
 
-    # Se filtrou demais ou nada, garante pelo menos os últimos 30 dias
-    if len(df_filtered) == 0:
-        df_filtered = df[df['DATA_MOVTO'] >= hoje - timedelta(days=30)]
+    if len(dff) == 0:
+        dff = df[df['DATA_MOVTO'] >= hoje - timedelta(days=30)]
 
-    # Limita a 2000 linhas para não estourar o contexto
-    if len(df_filtered) > 2000:
-        df_filtered = df_filtered.tail(2000)
+    if len(dff) > 2000:
+        dff = dff.tail(2000)
 
-    # Mantém apenas colunas essenciais para análise
-    colunas_essenciais = [
-        'NOME_FILIAL', 'DATA_MOVTO', 'DESC_PRODUTO', 'NOME_CLIENTE',
-        'NOM_VENDEDOR', 'QTDE_PRI', 'VALOR_LIQUIDO', 'DESC_DIVISAO2',
-        'DESC_DIVISAO3', 'UF', 'CIDADE'
-    ]
-    colunas_presentes = [c for c in colunas_essenciais if c in df_filtered.columns]
-    df_filtered = df_filtered[colunas_presentes]
+    cols = ['NOME_FILIAL','DATA_MOVTO','DESC_PRODUTO','NOME_CLIENTE',
+            'NOM_VENDEDOR','QTDE_PRI','VALOR_LIQUIDO','DESC_DIVISAO2','DESC_DIVISAO3']
+    return dff[[c for c in cols if c in dff.columns]]
 
-    return df_filtered
+# ─── ROUTES ───
 
 @app.get("/", response_class=HTMLResponse)
 def root():
-    html_path = os.path.join(os.path.dirname(__file__), "index.html")
-    if os.path.exists(html_path):
-        with open(html_path, "r", encoding="utf-8") as f:
+    p = os.path.join(os.path.dirname(__file__), "index.html")
+    if os.path.exists(p):
+        with open(p, "r", encoding="utf-8") as f:
             return HTMLResponse(content=f.read())
-    return HTMLResponse(content="<h1>Analista de Vendas IA</h1>")
+    return HTMLResponse("<h1>Jhon</h1>")
 
-@app.get("/vendas")
-def get_vendas():
+@app.get("/dashboard")
+def dashboard():
+    """Retorna KPIs + top10 clientes — JSON leve, sem CSV."""
     try:
-        service = get_drive_service()
-        request = service.files().get_media(fileId=FILE_ID)
-        buffer = io.BytesIO()
-        downloader = MediaIoBaseDownload(buffer, request)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-        buffer.seek(0)
-        # Invalida cache ao atualizar
-        _csv_cache["df"] = None
-        return StreamingResponse(
-            buffer,
-            media_type="text/csv",
-            headers={"Content-Disposition": "inline; filename=vendas.csv"}
-        )
+        df = load_df()
+        dia = get_dia_referencia(df)
+        df_dia = df[df['DATA_MOVTO'].dt.date == dia]
+
+        fat   = float(df_dia['VALOR_LIQUIDO'].sum())
+        kg    = float(df_dia['QTDE_PRI'].sum())
+        notas = int(df_dia.shape[0])
+        total = int(df.shape[0])
+
+        # Última nota com hora
+        ultima_str = "—"
+        ultima = df.dropna(subset=['DATA_MOVTO']).sort_values('DATA_MOVTO').iloc[-1]['DATA_MOVTO']
+        if pd.notna(ultima):
+            ultima_str = ultima.strftime('%d/%m/%Y %H:%M')
+
+        # Top 10 clientes por volume
+        top = (df_dia.groupby('NOME_CLIENTE')
+               .agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'))
+               .sort_values('kg', ascending=False)
+               .head(10)
+               .reset_index())
+        top10 = [{"nome": r.NOME_CLIENTE, "kg": round(r.kg,2), "fat": round(r.fat,2)}
+                 for r in top.itertuples()]
+
+        dia_label = dia.strftime('%d/%m/%Y')
+
+        return JSONResponse({
+            "total_registros": total,
+            "dia_label": dia_label,
+            "fat": round(fat, 2),
+            "kg":  round(kg, 2),
+            "notas": notas,
+            "ultima_nota": ultima_str,
+            "top10": top10
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/cliente/{nome}")
+def detalhe_cliente(nome: str):
+    """Retorna produtos comprados pelo cliente no dia de referência."""
+    try:
+        df = load_df()
+        dia = get_dia_referencia(df)
+        df_dia = df[df['DATA_MOVTO'].dt.date == dia]
+        df_cli = df_dia[df_dia['NOME_CLIENTE'].str.upper() == nome.upper()]
+
+        fat_total = float(df_cli['VALOR_LIQUIDO'].sum())
+        kg_total  = float(df_cli['QTDE_PRI'].sum())
+
+        prods = (df_cli.groupby('DESC_PRODUTO')
+                 .agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'))
+                 .sort_values('kg', ascending=False)
+                 .reset_index())
+        produtos = [{"nome": r.DESC_PRODUTO, "kg": round(r.kg,2), "fat": round(r.fat,2)}
+                    for r in prods.itertuples()]
+
+        return JSONResponse({
+            "nome": nome,
+            "fat_total": round(fat_total,2),
+            "kg_total":  round(kg_total,2),
+            "produtos": produtos
+        })
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -184,69 +210,46 @@ class ChatRequest(BaseModel):
 @app.post("/chat")
 async def chat(req: ChatRequest):
     if not CLAUDE_KEY:
-        raise HTTPException(status_code=500, detail="API Key da Claude não configurada.")
+        raise HTTPException(status_code=500, detail="CLAUDE_API_KEY não configurada.")
 
-    # Pega a última pergunta do usuário
-    ultima_pergunta = next(
-        (m.content for m in reversed(req.messages) if m.role == "user"), ""
-    )
+    ultima = next((m.content for m in reversed(req.messages) if m.role == "user"), "")
 
-    # Carrega e filtra os dados
     try:
-        df = load_csv()
-        df_filtrado = filter_data(df, ultima_pergunta)
-        sales_data = df_filtrado.to_csv(sep=';', index=False)
-        linhas_filtradas = len(df_filtrado)
+        df = load_df()
+        dff = filter_for_chat(df, ultima)
+        sales_data = dff.to_csv(sep=';', index=False)
+        n = len(dff)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao carregar dados: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erro ao carregar dados: {e}")
 
-    SYSTEM_PROMPT = f"""Você é o Jhon, Analista Comercial Sênior da Frinense Alimentos.
-
-PERFIL:
-- Especialista em indicadores comerciais com foco em volume de vendas
-- Comunicativo mas discreto — vai direto ao ponto, sem rodeios
-- Respostas claras, organizadas e sempre orientadas a dados
-- Conhece profundamente o mercado de alimentos e frigoríficos
-- Prioriza sempre volume de vendas (kg/unidades) antes de valor financeiro
-- Nunca inventa dados — se não tiver certeza, diz claramente
-
-EMPRESA:
-- Frinense Alimentos — setor frigorífico/alimentos, Brasil
+    system = f"""Você é o Jhon, Analista Comercial Sênior da Frinense Alimentos.
+- Especialista em indicadores comerciais, foco em volume de vendas (kg)
+- Comunicativo mas direto — sem rodeios, sem introduções longas
+- Prioriza volume (kg) antes de valor financeiro
+- Nunca inventa dados
 - Filiais: ITAP (Itaperuna), BJESUS (Bom Jesus), PORC (Porciúncula), TRINDADE (Trindade)
+- Use Markdown: ## títulos, **negrito**, tabelas com | Col |
+- Valores: R$ X.XXX,XX | Quantidades: X.XXX,XX kg
+- Finalize com 1 insight ou sugestão
 
-REGRAS DE FORMATAÇÃO:
-- Responda SEMPRE em português brasileiro
-- Use Markdown: ## para títulos de seção, **negrito** para destaques
-- Use tabelas Markdown para dados comparativos (| Col | Col |)
-- Formate valores monetários como R$ X.XXX,XX
-- Formate quantidades com unidade: ex. 15.320 kg
-- Sempre finalize com 1 insight relevante ou sugestão de próxima análise
-- Seja conciso: respostas objetivas, sem introduções longas
-
-DADOS DISPONÍVEIS ({linhas_filtradas} registros filtrados para esta pergunta):
+DADOS ({n} registros):
 {sales_data}"""
 
     async with httpx.AsyncClient(timeout=60) as client:
-        response = await client.post(
+        r = await client.post(
             "https://api.anthropic.com/v1/messages",
-            headers={
-                "Content-Type": "application/json",
-                "x-api-key": CLAUDE_KEY,
-                "anthropic-version": "2023-06-01"
-            },
-            json={
-                "model": "claude-sonnet-4-20250514",
-                "max_tokens": 1500,
-                "system": SYSTEM_PROMPT,
-                "messages": [m.dict() for m in req.messages]
-            }
+            headers={"Content-Type":"application/json",
+                     "x-api-key":CLAUDE_KEY,
+                     "anthropic-version":"2023-06-01"},
+            json={"model":"claude-sonnet-4-20250514",
+                  "max_tokens":1500,
+                  "system":system,
+                  "messages":[m.dict() for m in req.messages]}
         )
-
-    if response.status_code != 200:
-        raise HTTPException(status_code=response.status_code, detail=response.text)
-
-    return response.json()
+    if r.status_code != 200:
+        raise HTTPException(status_code=r.status_code, detail=r.text)
+    return r.json()
 
 @app.get("/health")
 def health():
-    return {"status": "healthy"}
+    return {"status":"ok","cache":"loaded" if _cache["df"] is not None else "empty"}
