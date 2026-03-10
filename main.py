@@ -126,13 +126,22 @@ def filter_data(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
                 df_filtered['DESC_PRODUTO'].str.lower().str.contains(nome_prod, na=False)
             ]
 
-    # Se filtrou demais ou nada, garante pelo menos os últimos 60 dias
+    # Se filtrou demais ou nada, garante pelo menos os últimos 30 dias
     if len(df_filtered) == 0:
-        df_filtered = df[df['DATA_MOVTO'] >= hoje - timedelta(days=60)]
+        df_filtered = df[df['DATA_MOVTO'] >= hoje - timedelta(days=30)]
 
-    # Limita a 3000 linhas para não estourar o contexto
-    if len(df_filtered) > 3000:
-        df_filtered = df_filtered.tail(3000)
+    # Limita a 2000 linhas para não estourar o contexto
+    if len(df_filtered) > 2000:
+        df_filtered = df_filtered.tail(2000)
+
+    # Mantém apenas colunas essenciais para análise
+    colunas_essenciais = [
+        'NOME_FILIAL', 'DATA_MOVTO', 'DESC_PRODUTO', 'NOME_CLIENTE',
+        'NOM_VENDEDOR', 'QTDE_PRI', 'VALOR_LIQUIDO', 'DESC_DIVISAO2',
+        'DESC_DIVISAO3', 'UF', 'CIDADE'
+    ]
+    colunas_presentes = [c for c in colunas_essenciais if c in df_filtered.columns]
+    df_filtered = df_filtered[colunas_presentes]
 
     return df_filtered
 
