@@ -175,6 +175,17 @@ def dashboard():
         top10 = [{"nome": r.NOME_CLIENTE, "kg": round(r.kg,2), "fat": round(r.fat,2)}
                  for r in top.itertuples()]
 
+        # Tipos de carne do dia (DESC_DIVISAO2)
+        df_dia2 = df_dia.copy()
+        df_dia2['DESC_DIVISAO2'] = df_dia2['DESC_DIVISAO2'].fillna('').str.strip()
+        df_dia2.loc[df_dia2['DESC_DIVISAO2'] == '', 'DESC_DIVISAO2'] = 'SEM CLASS.'
+        tipos_grp = (df_dia2.groupby('DESC_DIVISAO2')
+                     .agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'))
+                     .sort_values('kg', ascending=False)
+                     .reset_index())
+        tipos = [{"tipo": r.DESC_DIVISAO2, "kg": round(r.kg,2), "fat": round(r.fat,2)}
+                 for r in tipos_grp.itertuples()]
+
         dia_label = dia.strftime('%d/%m/%Y')
 
         return JSONResponse({
@@ -184,7 +195,8 @@ def dashboard():
             "kg":  round(kg, 2),
             "notas": notas,
             "ultima_nota": ultima_str,
-            "top10": top10
+            "top10": top10,
+            "tipos": tipos
         })
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -201,11 +213,11 @@ def detalhe_cliente(nome: str):
         fat_total = float(df_cli['VALOR_LIQUIDO'].sum())
         kg_total  = float(df_cli['QTDE_PRI'].sum())
 
-        prods = (df_cli.groupby('DESC_PRODUTO')
+        prods = (df_cli.groupby(['DESC_PRODUTO','DESC_DIVISAO2'])
                  .agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'))
                  .sort_values('kg', ascending=False)
                  .reset_index())
-        produtos = [{"nome": r.DESC_PRODUTO, "kg": round(r.kg,2), "fat": round(r.fat,2)}
+        produtos = [{"nome": r.DESC_PRODUTO, "tipo": r.DESC_DIVISAO2, "kg": round(r.kg,2), "fat": round(r.fat,2)}
                     for r in prods.itertuples()]
 
         return JSONResponse({

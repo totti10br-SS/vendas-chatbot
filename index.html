@@ -281,6 +281,19 @@ async function init(){
       list.appendChild(div);
     });
 
+    // Popula box Tipo de Carne fixo com totais do dia
+    if(d.tipos && d.tipos.length){
+      const lista = document.getElementById('tipoCarneLista');
+      lista.innerHTML = d.tipos.map(t=>`
+        <div class="tipo-carne-row">
+          <div class="tc-nome">${t.tipo}</div>
+          <div class="tc-kg">${fmtKg(t.kg)}</div>
+          <div class="tc-fat">${fmtBRL(t.fat)}</div>
+        </div>`).join('');
+      document.getElementById('tipoCarne').style.display='block';
+      window._tiposDia = document.getElementById('tipoCarneLista').innerHTML;
+      document.querySelector('.tipo-carne-title').textContent = '📦 Tipo de Carne · Total do Dia';
+    }
     document.getElementById('dashboard').style.display='flex';
     document.getElementById('initLoader').remove();
     showWelcome(d.total_registros);
@@ -312,7 +325,7 @@ async function openCliente(nome){
     // Agrupamento por Tipo de Carne (DESC_DIVISAO2)
     const tipoMap = {};
     d.produtos.forEach(p=>{
-      const t = p.tipo || 'Outros';
+      const t = (p.tipo && p.tipo.trim()) ? p.tipo.trim() : 'SEM CLASS.';
       if(!tipoMap[t]) tipoMap[t]={kg:0,fat:0};
       tipoMap[t].kg += p.kg;
       tipoMap[t].fat += p.fat;
@@ -328,9 +341,10 @@ async function openCliente(nome){
           </div>
         </div>`).join('');
 
-    // Popular box tipo de carne no canto superior esquerdo
+    // Atualiza box tipo de carne com dados do cliente selecionado
     const tcLista = document.getElementById('tipoCarneLista');
-    const tcBox = document.getElementById('tipoCarne');
+    const tcTitulo = document.querySelector('.tipo-carne-title');
+    tcTitulo.textContent = '📦 Tipo de Carne · ' + (d.nome.length>18 ? d.nome.substring(0,18)+'…' : d.nome);
     tcLista.innerHTML = Object.entries(tipoMap)
       .sort((a,b)=>b[1].kg-a[1].kg)
       .map(([t,v])=>`
@@ -339,7 +353,6 @@ async function openCliente(nome){
           <div class="tc-kg">${fmtKg(v.kg)}</div>
           <div class="tc-fat">${fmtBRL(v.fat)}</div>
         </div>`).join('');
-    tcBox.style.display='block';
 
     document.getElementById('panelContent').innerHTML=`
       <div class="panel-cliente-nome">${d.nome}</div>
@@ -360,8 +373,11 @@ async function openCliente(nome){
 
 function closePanel(){
   document.getElementById('sidePanel').classList.remove('open');
-  document.getElementById('tipoCarne').style.display='none';
-  document.getElementById('tipoCarneLista').innerHTML='';
+  // Volta título e dados ao total do dia
+  document.querySelector('.tipo-carne-title').textContent = '📦 Tipo de Carne · Total do Dia';
+  if(window._tiposDia){
+    document.getElementById('tipoCarneLista').innerHTML = window._tiposDia;
+  }
 }
 
 function showWelcome(total){
