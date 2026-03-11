@@ -583,7 +583,9 @@ def gerar_grafico(dff: pd.DataFrame, pergunta: str) -> str:
         return f"⚠️ Erro ao gerar gráfico: {e}"
 
 
-
+class Message(BaseModel):
+    role: str
+    content: str
 
 class ChatRequest(BaseModel):
     messages: List[Message]
