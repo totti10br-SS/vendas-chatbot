@@ -66,18 +66,66 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
     pl = pergunta.lower()
     dff = df.copy()
 
+    hoje = datetime.now()
+
+    # ── Intervalo de datas explícito: "de DD/MM/YYYY a DD/MM/YYYY" ──
+    m_range = re.search(r'(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})\s+a[té]?\s+(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})', pl)
+    if m_range:
+        try:
+            d1 = datetime(int(m_range.group(3)) if len(m_range.group(3))==4 else 2000+int(m_range.group(3)),
+                          int(m_range.group(2)), int(m_range.group(1)))
+            d2 = datetime(int(m_range.group(6)) if len(m_range.group(6))==4 else 2000+int(m_range.group(6)),
+                          int(m_range.group(5)), int(m_range.group(4)))
+            dff = dff[(dff['DATA_MOVTO'] >= d1) & (dff['DATA_MOVTO'] <= d2 + timedelta(days=1))]
+        except:
+            pass
+        return _finalize_filter(dff, pl)
+
+    # ── Ano explícito ──
+    anos = re.findall(r'\b(202[0-9])\b', pergunta)
+    ano_ref = int(anos[0]) if anos else hoje.year
+
+    # ── Mês + ano ──
     meses = {'janeiro':1,'fevereiro':2,'março':3,'marco':3,'abril':4,'maio':5,
              'junho':6,'julho':7,'agosto':8,'setembro':9,'outubro':10,'novembro':11,'dezembro':12}
+    mes_encontrado = None
     for nome, num in meses.items():
         if nome in pl:
-            dff = dff[dff['DATA_MOVTO'].dt.month == num]
+            mes_encontrado = num
             break
 
-    anos = re.findall(r'\b(202[0-9])\b', pergunta)
-    if anos:
-        dff = dff[dff['DATA_MOVTO'].dt.year == int(anos[0])]
+    if mes_encontrado:
+        dff = dff[(dff['DATA_MOVTO'].dt.month == mes_encontrado) &
+                  (dff['DATA_MOVTO'].dt.year == ano_ref)]
+        return _finalize_filter(dff, pl)
 
-    hoje = datetime.now()
+    # ── Trimestre ──
+    if 'trimestre' in pl or '1º tri' in pl or 'primeiro trimestre' in pl:
+        tri = 1
+        if '2º tri' in pl or 'segundo trimestre' in pl: tri = 2
+        elif '3º tri' in pl or 'terceiro trimestre' in pl: tri = 3
+        elif '4º tri' in pl or 'quarto trimestre' in pl: tri = 4
+        mes_ini = (tri - 1) * 3 + 1
+        mes_fim = mes_ini + 2
+        dff = dff[(dff['DATA_MOVTO'].dt.month >= mes_ini) &
+                  (dff['DATA_MOVTO'].dt.month <= mes_fim) &
+                  (dff['DATA_MOVTO'].dt.year == ano_ref)]
+        return _finalize_filter(dff, pl)
+
+    # ── Semestre ──
+    if 'semestre' in pl:
+        if '1º sem' in pl or 'primeiro semestre' in pl:
+            dff = dff[(dff['DATA_MOVTO'].dt.month <= 6) & (dff['DATA_MOVTO'].dt.year == ano_ref)]
+        else:
+            dff = dff[(dff['DATA_MOVTO'].dt.month >= 7) & (dff['DATA_MOVTO'].dt.year == ano_ref)]
+        return _finalize_filter(dff, pl)
+
+    # ── Ano inteiro ──
+    if 'ano' in pl and anos:
+        dff = dff[dff['DATA_MOVTO'].dt.year == ano_ref]
+        return _finalize_filter(dff, pl)
+
+    # ── Relativos ──
     if 'ontem' in pl:
         dia = (hoje - timedelta(days=1)).date()
         dff = dff[dff['DATA_MOVTO'].dt.date == dia]
@@ -88,6 +136,13 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
     elif 'último mês' in pl or 'ultimo mes' in pl:
         dff = dff[dff['DATA_MOVTO'] >= hoje - timedelta(days=30)]
 
+    return _finalize_filter(dff, pl)
+
+
+def _finalize_filter(dff: pd.DataFrame, pl: str) -> pd.DataFrame:
+    """Aplica filtros de filial/cliente/vendedor/produto e limita tamanho."""
+    hoje = datetime.now()
+
     filiais = {'itap':'ITAP','bjesus':'BJESUS','porc':'PORC','trindade':'TRINDADE'}
     for key, val in filiais.items():
         if key in pl:
@@ -97,12 +152,12 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
     m_cliente = re.search(r'cliente[:\s]+([a-záéíóúâêîôûãõç\s]+)', pl)
     if m_cliente and len(m_cliente.group(1).strip()) > 2:
         dff = dff[dff['NOME_CLIENTE'].str.lower().str.contains(m_cliente.group(1).strip(), na=False)]
-
-    # Busca livre por nome de cliente (quando não usa palavra "cliente:")
-    # Detecta padrões como "distribuidora uniao", "rca alimentos" etc na pergunta
-    elif not any(x in pl for x in ['produto','vendedor','filial','ranking','comparar','top','total','resumo']):
+    elif not any(x in pl for x in ['produto','vendedor','filial','ranking','comparar','top','total','resumo',
+                                    'março','marco','janeiro','fevereiro','abril','maio','junho','julho',
+                                    'agosto','setembro','outubro','novembro','dezembro','trimestre','semestre']):
         palavras = [p for p in pl.split() if len(p) > 3 and p not in
-                    ['últimas','ultimas','vendas','venda','quais','qual','como','foram','mais','este','essa','esse','para','pela','pelo','mês','mes','ano','2025','2026']]
+                    ['últimas','ultimas','vendas','venda','quais','qual','como','foram','mais','este',
+                     'essa','esse','para','pela','pelo','mês','mes','ano','2025','2026']]
         if palavras:
             termo = ' '.join(palavras[:3])
             mask = dff['NOME_CLIENTE'].str.lower().str.contains(termo, na=False)
@@ -112,7 +167,6 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
     cols = ['NOME_FILIAL','DATA_MOVTO','NUM_DOCTO','COD_PRODUTO','DESC_PRODUTO','NOME_CLIENTE',
             'NOM_VENDEDOR','QTDE_PRI','VALOR_LIQUIDO','DESC_DIVISAO2','DESC_DIVISAO3']
 
-    # Detecta intenção de "últimas vendas" — já filtrado por cliente acima, limita 15 linhas
     if any(x in pl for x in ['últimas vendas','ultimas vendas','ultima venda','última venda']):
         dff = dff.sort_values('DATA_MOVTO', ascending=False).head(15)
         return dff[[c for c in cols if c in dff.columns]]
@@ -126,7 +180,8 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
         dff = dff[dff['DESC_PRODUTO'].str.lower().str.contains(m.group(1).strip(), na=False)]
 
     if len(dff) == 0:
-        dff = df[df['DATA_MOVTO'] >= hoje - timedelta(days=30)]
+        dff_orig = pd.DataFrame()  # retorna vazio — não força fallback 30 dias
+        return dff_orig[[c for c in cols if c in dff_orig.columns]] if len(dff_orig) else dff[[c for c in cols if c in dff.columns]]
 
     if len(dff) > 2000:
         dff = dff.tail(2000)
@@ -366,7 +421,8 @@ async def chat(req: ChatRequest):
 - Finalize SEMPRE com 1 insight ou sugestão OBRIGATORIAMENTE precedido de "💡 Insight:" em linha separada
 - Nos insights: SEMPRE cite o dia específico (DD/MM/AA), número do documento (NR NOTA) e/ou produto quando relevante — seja o mais específico possível. Ex: "💡 Insight: Em 11/03/26, a NR NOTA 35900 de J. BEEF DIANTEIRO teve R$/kg acima da média..."
 - Quando perguntado sobre "últimas vendas de um cliente" sem especificar o nome, pergunte qual cliente. Quando o cliente for informado, mostre uma tabela com colunas: DATA | NR NOTA | COD PRODUTO | DESCRIÇÃO | QTDE (kg) | R$/kg — ordenada por data decrescente — limitada aos últimos 15 registros
-- Quando identificar que a pergunta envolve um período longo (mensal, trimestral, semestral ou anual), ANTES de responder pergunte ao usuário qual o nível de detalhe desejado, oferecendo opções claras. Exemplo: "Identificei que você quer uma análise mensal. Como prefere ver os dados? 1) Resumo executivo (totais por filial e top clientes) 2) Análise detalhada por dia 3) Ranking completo de produtos e vendedores 4) Comparativo entre filiais". Só processe após a confirmação do usuário.
+- Quando perguntado sobre um período (mês, trimestre, semestre, ano ou intervalo de datas), APRESENTE os dados disponíveis diretamente — não explique o que falta. Os dados já vêm filtrados pelo período solicitado; se há registros de 06/03 a 11/03, apresente como "Dados disponíveis em março: 06/03 a 11/03"
+- Quando identificar que a pergunta envolve um período longo (mensal, trimestral, semestral ou anual) E o usuário não especificou o nível de detalhe, pergunte ao usuário qual o nível desejado, oferecendo opções claras: "1) Resumo executivo (totais por filial e top clientes) 2) Análise detalhada por dia 3) Ranking completo de produtos e vendedores 4) Comparativo entre filiais". Só processe após a confirmação — EXCETO se o usuário já deixou claro o que quer (ex: "quero um resumo", "me dê o ranking", "análise detalhada")
 {personalidade}
 DADOS ({data_label}):
 {sales_data}"""
