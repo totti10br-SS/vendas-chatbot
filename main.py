@@ -27,7 +27,7 @@ CLAUDE_KEY = os.environ.get("CLAUDE_API_KEY", "")
 
 # Cache em memória
 _cache = {"df": None, "loaded_at": None}
-CACHE_TTL_MINUTES = 60  # recarrega do Drive a cada 60 min
+CACHE_TTL_MINUTES = 5  # recarrega do Drive a cada 5 min
 _RELOAD_FLAG = "/tmp/force_reload_vendas"
 
 def get_drive_service():
