@@ -413,9 +413,30 @@ async def chat(req: ChatRequest):
 
     ultima = next((m.content for m in reversed(req.messages) if m.role == "user"), "")
 
+    # Se a última mensagem não tem contexto temporal (ex: "1", "2", "sim", "ok", "resumo executivo"),
+    # busca no histórico recente (últimas 6 mensagens) para encontrar o período da conversa
+    def tem_contexto_temporal(texto: str) -> bool:
+        pl = texto.lower()
+        indicadores = ['janeiro','fevereiro','março','marco','abril','maio','junho','julho',
+                       'agosto','setembro','outubro','novembro','dezembro','mês passado','mes passado',
+                       'mês anterior','mes anterior','este mês','esse mês','este mes','esse mes',
+                       'semana passada','semana anterior','esta semana','essa semana',
+                       'ontem','hoje','trimestre','semestre','último mês','ultimo mes',
+                       r'\d{1,2}/\d{2}/\d{2,4}']
+        return any(i in pl for i in indicadores[:-1]) or bool(re.search(indicadores[-1], pl))
+
+    pergunta_para_filtro = ultima
+    if not tem_contexto_temporal(ultima):
+        # Varre histórico do mais recente para o mais antigo
+        msgs_usuario = [m.content for m in reversed(req.messages) if m.role == "user"]
+        for msg_anterior in msgs_usuario[1:4]:  # pula a atual, olha até 3 anteriores
+            if tem_contexto_temporal(msg_anterior):
+                pergunta_para_filtro = msg_anterior
+                break
+
     try:
         df = load_df()
-        dff = filter_for_chat(df, ultima)
+        dff = filter_for_chat(df, pergunta_para_filtro)
         n = len(dff)
 
         # Período real dos dados filtrados
@@ -430,7 +451,7 @@ async def chat(req: ChatRequest):
                     periodo_label = f"Período disponível: {d_min.strftime('%d/%m/%y')} a {d_max.strftime('%d/%m/%y')}"
 
         # Para resumos com muitos dados, usa agregação em vez de CSV bruto
-        if n > 1500 or is_summary_query(ultima):
+        if n > 1500 or is_summary_query(pergunta_para_filtro) or is_summary_query(ultima):
             sales_data = aggregate_for_summary(dff)
             data_label = f"DADOS AGREGADOS ({n} registros originais){' | ' + periodo_label if periodo_label else ''}"
         else:
