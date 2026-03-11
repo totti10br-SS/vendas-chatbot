@@ -129,14 +129,48 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
         return _finalize_filter(dff, pl)
 
     # ── Relativos ──
-    if 'ontem' in pl:
+    # "mês passado" / "mes passado" → mês anterior completo
+    if any(x in pl for x in ['mês passado','mes passado','mês anterior','mes anterior']):
+        primeiro_dia_mes_atual = hoje.replace(day=1)
+        ultimo_dia_mes_passado = primeiro_dia_mes_atual - timedelta(days=1)
+        primeiro_dia_mes_passado = ultimo_dia_mes_passado.replace(day=1)
+        dff = dff[(dff['DATA_MOVTO'].dt.date >= primeiro_dia_mes_passado) &
+                  (dff['DATA_MOVTO'].dt.date <= ultimo_dia_mes_passado.date())]
+
+    # "este mês" / "esse mês" / "mês atual" → do dia 1 até hoje
+    elif any(x in pl for x in ['este mês','esse mês','este mes','esse mes','mês atual','mes atual']):
+        primeiro_dia = hoje.replace(day=1).date()
+        dff = dff[dff['DATA_MOVTO'].dt.date >= primeiro_dia]
+
+    # "semana passada" → segunda a domingo da semana anterior
+    elif any(x in pl for x in ['semana passada','semana anterior']):
+        dias_desde_segunda = hoje.weekday()  # 0=seg, 6=dom
+        ultima_segunda = (hoje - timedelta(days=dias_desde_segunda + 7)).date()
+        ultimo_domingo = ultima_segunda + timedelta(days=6)
+        dff = dff[(dff['DATA_MOVTO'].dt.date >= ultima_segunda) &
+                  (dff['DATA_MOVTO'].dt.date <= ultimo_domingo)]
+
+    # "esta semana" / "essa semana" → segunda-feira até hoje
+    elif any(x in pl for x in ['esta semana','essa semana','semana atual']):
+        dias_desde_segunda = hoje.weekday()
+        segunda = (hoje - timedelta(days=dias_desde_segunda)).date()
+        dff = dff[dff['DATA_MOVTO'].dt.date >= segunda]
+
+    # "última semana" → últimos 7 dias corridos
+    elif any(x in pl for x in ['última semana','ultima semana','ultimos 7 dias','últimos 7 dias']):
+        dff = dff[dff['DATA_MOVTO'] >= hoje - timedelta(days=7)]
+
+    # "ontem"
+    elif 'ontem' in pl:
         dia = (hoje - timedelta(days=1)).date()
         dff = dff[dff['DATA_MOVTO'].dt.date == dia]
+
+    # "hoje"
     elif 'hoje' in pl:
         dff = dff[dff['DATA_MOVTO'].dt.date == hoje.date()]
-    elif 'última semana' in pl or 'ultima semana' in pl:
-        dff = dff[dff['DATA_MOVTO'] >= hoje - timedelta(days=7)]
-    elif 'último mês' in pl or 'ultimo mes' in pl:
+
+    # "último mês" / "ultimos 30 dias" → 30 dias corridos
+    elif any(x in pl for x in ['último mês','ultimo mes','ultimos 30','últimos 30']):
         dff = dff[dff['DATA_MOVTO'] >= hoje - timedelta(days=30)]
 
     return _finalize_filter(dff, pl)
@@ -263,7 +297,9 @@ def is_summary_query(pergunta: str) -> bool:
         'desempenho','performance','balanço','balanco','visão geral','visao geral',
         'quanto vendeu','quanto foi','quanto faturou','quero os dados','quero ver',
         'trimestre','semestre','semana','janeiro','fevereiro','março','marco','abril',
-        'maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'
+        'maio','junho','julho','agosto','setembro','outubro','novembro','dezembro',
+        'mês passado','mes passado','mês anterior','mes anterior','este mês','esse mês',
+        'este mes','esse mes','semana passada','semana anterior','esta semana','essa semana'
     ]
     # Não agregar se for busca específica de cliente/produto/nota
     specific_keywords = ['últimas vendas','ultimas vendas','ultima venda','última venda','nota ','nr ']
