@@ -7,7 +7,12 @@ except AttributeError:
 import pickle
 import io
 import re
+import base64
 import pandas as pd
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -415,9 +420,170 @@ def detalhe_cliente(nome: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-class Message(BaseModel):
-    role: str
-    content: str
+def is_chart_query(pergunta: str) -> bool:
+    """Detecta se o usuário quer um gráfico."""
+    pl = pergunta.lower()
+    return any(x in pl for x in [
+        'gráfico','grafico','chart','plotar','plot','visualiz',
+        'evolução','evolucao','tendencia','tendência','barra','linha','pizza','pie'
+    ])
+
+# Paleta Frinense
+COR_PRIMARIA  = '#c0392b'   # vermelho
+COR_SECUNDARIA = '#f5c800'  # amarelo
+COR_BG        = '#1a1a1a'
+COR_GRID      = '#2e2e2e'
+COR_TEXTO     = '#e0e0e0'
+CORES_SERIES  = ['#c0392b','#f5c800','#e67e22','#27ae60','#2980b9','#8e44ad','#16a085','#d35400']
+
+def _fig_to_base64(fig) -> str:
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', bbox_inches='tight', facecolor=COR_BG, dpi=120)
+    plt.close(fig)
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode('utf-8')
+
+def _setup_ax(ax, titulo: str = ""):
+    ax.set_facecolor(COR_BG)
+    ax.tick_params(colors=COR_TEXTO, labelsize=8)
+    ax.xaxis.label.set_color(COR_TEXTO)
+    ax.yaxis.label.set_color(COR_TEXTO)
+    for spine in ax.spines.values():
+        spine.set_edgecolor(COR_GRID)
+    ax.grid(axis='y', color=COR_GRID, linewidth=0.5, linestyle='--')
+    if titulo:
+        ax.set_title(titulo, color=COR_TEXTO, fontsize=10, pad=8)
+
+def gerar_grafico(dff: pd.DataFrame, pergunta: str) -> str:
+    """
+    Gera o gráfico mais adequado para a pergunta e retorna HTML com img base64.
+    Retorna None se não conseguir gerar.
+    """
+    pl = pergunta.lower()
+    if dff.empty:
+        return None
+
+    dff = dff.copy()
+    dff['DATA_MOVTO'] = pd.to_datetime(dff['DATA_MOVTO'], errors='coerce')
+
+    # ── Detecta dimensões pedidas ──
+    por_tipo   = any(x in pl for x in ['tipo','carne','divisao','divisão','categoria'])
+    por_filial = any(x in pl for x in ['filial','itap','bjesus','porc','trindade','unidade'])
+    por_prod   = any(x in pl for x in ['produto','products'])
+    por_vend   = any(x in pl for x in ['vendedor','representante'])
+    por_cliente= any(x in pl for x in ['cliente'])
+    usa_fat    = any(x in pl for x in ['faturamento','receita','valor','r$','financeiro'])
+    metrica    = 'VALOR_LIQUIDO' if usa_fat else 'QTDE_PRI'
+    label_met  = 'Faturamento (R$)' if usa_fat else 'Volume (kg)'
+
+    # ── Detecta granularidade temporal ──
+    span_dias = (dff['DATA_MOVTO'].max() - dff['DATA_MOVTO'].min()).days if len(dff) > 1 else 0
+    agrupar_por_mes = span_dias > 45  # mais de 45 dias → agrupa por mês
+
+    fig_title_extra = ""
+
+    try:
+        # === GRÁFICO 1: Evolução temporal por tipo de carne ===
+        if por_tipo or (not por_filial and not por_prod and not por_vend and not por_cliente):
+            col_dim = 'DESC_DIVISAO2' if 'DESC_DIVISAO2' in dff.columns else None
+
+            if agrupar_por_mes:
+                dff['periodo'] = dff['DATA_MOVTO'].dt.to_period('M').astype(str)
+                label_x = 'Mês'
+            else:
+                dff['periodo'] = dff['DATA_MOVTO'].dt.strftime('%d/%m')
+                label_x = 'Data'
+
+            if col_dim and por_tipo:
+                pivot = dff.groupby(['periodo', col_dim])[metrica].sum().unstack(fill_value=0)
+                # Mantém só top 6 tipos por volume total
+                top_cols = pivot.sum().nlargest(6).index
+                pivot = pivot[top_cols]
+                fig, ax = plt.subplots(figsize=(10, 5), facecolor=COR_BG)
+                for i, col in enumerate(pivot.columns):
+                    ax.plot(pivot.index, pivot[col], marker='o', markersize=4,
+                            color=CORES_SERIES[i % len(CORES_SERIES)], linewidth=2, label=col)
+                _setup_ax(ax, f"Evolução por Tipo de Carne — {label_met}")
+                ax.set_xlabel(label_x, color=COR_TEXTO)
+                ax.set_ylabel(label_met, color=COR_TEXTO)
+                ax.legend(fontsize=7, facecolor=COR_BG, labelcolor=COR_TEXTO, loc='upper left')
+                ax.yaxis.set_major_formatter(mticker.FuncFormatter(
+                    lambda v,_: f'R${v/1e6:.1f}M' if usa_fat else f'{v/1e3:.0f}t'))
+                plt.xticks(rotation=35, ha='right')
+            else:
+                # Sem dimensão extra — total por período
+                serie = dff.groupby('periodo')[metrica].sum()
+                fig, ax = plt.subplots(figsize=(10, 4), facecolor=COR_BG)
+                bars = ax.bar(serie.index, serie.values, color=COR_PRIMARIA, width=0.6)
+                # Destaca maior
+                max_idx = serie.values.argmax()
+                bars[max_idx].set_color(COR_SECUNDARIA)
+                _setup_ax(ax, f"Evolução de {label_met}")
+                ax.set_xlabel(label_x, color=COR_TEXTO)
+                ax.set_ylabel(label_met, color=COR_TEXTO)
+                ax.yaxis.set_major_formatter(mticker.FuncFormatter(
+                    lambda v,_: f'R${v/1e6:.1f}M' if usa_fat else f'{v/1e3:.0f}t'))
+                plt.xticks(rotation=35, ha='right')
+
+        # === GRÁFICO 2: Ranking por filial ===
+        elif por_filial:
+            grupo = dff.groupby('NOME_FILIAL')[metrica].sum().sort_values(ascending=True)
+            fig, ax = plt.subplots(figsize=(8, 4), facecolor=COR_BG)
+            bars = ax.barh(grupo.index, grupo.values, color=CORES_SERIES[:len(grupo)])
+            for bar, val in zip(bars, grupo.values):
+                ax.text(val * 1.01, bar.get_y() + bar.get_height()/2,
+                        f'R${val/1e6:.2f}M' if usa_fat else f'{val/1e3:.0f}t',
+                        va='center', color=COR_TEXTO, fontsize=8)
+            _setup_ax(ax, f"{label_met} por Filial")
+            ax.set_xlabel(label_met, color=COR_TEXTO)
+
+        # === GRÁFICO 3: Top produtos ===
+        elif por_prod:
+            top = dff.groupby('DESC_PRODUTO')[metrica].sum().nlargest(10).sort_values(ascending=True)
+            fig, ax = plt.subplots(figsize=(9, 6), facecolor=COR_BG)
+            ax.barh(top.index, top.values, color=COR_PRIMARIA)
+            ax.barh(top.index[-1:], top.values[-1:], color=COR_SECUNDARIA)  # destaca top 1
+            _setup_ax(ax, f"Top 10 Produtos — {label_met}")
+            ax.set_xlabel(label_met, color=COR_TEXTO)
+            ax.tick_params(axis='y', labelsize=7)
+            ax.xaxis.set_major_formatter(mticker.FuncFormatter(
+                lambda v,_: f'R${v/1e6:.1f}M' if usa_fat else f'{v/1e3:.0f}t'))
+
+        # === GRÁFICO 4: Top vendedores ===
+        elif por_vend:
+            top = dff.groupby('NOM_VENDEDOR')[metrica].sum().nlargest(10).sort_values(ascending=True)
+            fig, ax = plt.subplots(figsize=(9, 6), facecolor=COR_BG)
+            ax.barh(top.index, top.values, color=COR_PRIMARIA)
+            ax.barh(top.index[-1:], top.values[-1:], color=COR_SECUNDARIA)
+            _setup_ax(ax, f"Top 10 Vendedores — {label_met}")
+            ax.set_xlabel(label_met, color=COR_TEXTO)
+            ax.tick_params(axis='y', labelsize=7)
+            ax.xaxis.set_major_formatter(mticker.FuncFormatter(
+                lambda v,_: f'R${v/1e6:.1f}M' if usa_fat else f'{v/1e3:.0f}t'))
+
+        # === GRÁFICO 5: Top clientes ===
+        elif por_cliente:
+            top = dff.groupby('NOME_CLIENTE')[metrica].sum().nlargest(10).sort_values(ascending=True)
+            fig, ax = plt.subplots(figsize=(10, 6), facecolor=COR_BG)
+            ax.barh(top.index, top.values, color=COR_PRIMARIA)
+            ax.barh(top.index[-1:], top.values[-1:], color=COR_SECUNDARIA)
+            _setup_ax(ax, f"Top 10 Clientes — {label_met}")
+            ax.set_xlabel(label_met, color=COR_TEXTO)
+            ax.tick_params(axis='y', labelsize=7)
+            ax.xaxis.set_major_formatter(mticker.FuncFormatter(
+                lambda v,_: f'R${v/1e6:.1f}M' if usa_fat else f'{v/1e3:.0f}t'))
+
+        else:
+            return None
+
+        img_b64 = _fig_to_base64(fig)
+        return f'<img src="data:image/png;base64,{img_b64}" style="max-width:100%;border-radius:8px;margin-top:8px;" />'
+
+    except Exception as e:
+        return f"⚠️ Erro ao gerar gráfico: {e}"
+
+
+
 
 class ChatRequest(BaseModel):
     messages: List[Message]
@@ -455,6 +621,31 @@ async def chat(req: ChatRequest):
         df = load_df()
         dff = filter_for_chat(df, pergunta_para_filtro)
         n = len(dff)
+
+        # ── GRÁFICO: intercepta antes de chamar Claude — zero tokens ──
+        if is_chart_query(ultima):
+            html_grafico = gerar_grafico(dff, ultima)
+            if html_grafico:
+                # Monta resposta simulando formato Claude
+                d_min = dff['DATA_MOVTO'].min()
+                d_max = dff['DATA_MOVTO'].max()
+                periodo_str = ""
+                if pd.notna(d_min) and pd.notna(d_max):
+                    if d_min.date() == d_max.date():
+                        periodo_str = d_min.strftime('%d/%m/%y')
+                    else:
+                        periodo_str = f"{d_min.strftime('%d/%m/%y')} a {d_max.strftime('%d/%m/%y')}"
+                resposta_md = f"📊 **Gráfico gerado** — {periodo_str} ({n:,} registros)\n\n{html_grafico}"
+                return JSONResponse({
+                    "id": "grafico",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": resposta_md}],
+                    "model": "local-matplotlib",
+                    "stop_reason": "end_turn"
+                })
+
+
 
         # Período real dos dados filtrados
         periodo_label = ""
