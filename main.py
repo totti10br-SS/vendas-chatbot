@@ -189,6 +189,25 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
     elif any(x in pl for x in ['último mês','ultimo mes','ultimos 30','últimos 30']):
         dff = dff[dff['DATA_MOVTO'] >= hoje - timedelta(days=30)]
 
+    else:
+        # ── "últimos N meses/dias/semanas" com regex ──
+        m_rel = re.search(r'[uú]ltimos?\s+(\d+)\s+(m[eê]s(?:es)?|dia[s]?|semana[s]?)', pl)
+        if m_rel:
+            n = int(m_rel.group(1))
+            unidade = m_rel.group(2)
+            if 'm' in unidade:  # meses
+                # Volta N meses a partir do primeiro dia do mês atual
+                primeiro_mes_atual = hoje.replace(day=1)
+                mes = primeiro_mes_atual.month - n
+                ano = primeiro_mes_atual.year + (mes - 1) // 12
+                mes = ((mes - 1) % 12) + 1
+                d_ini = pd.Timestamp(ano, mes, 1)
+                dff = dff[dff['DATA_MOVTO'] >= d_ini]
+            elif 'semana' in unidade:
+                dff = dff[dff['DATA_MOVTO'] >= hoje - timedelta(weeks=n)]
+            else:  # dias
+                dff = dff[dff['DATA_MOVTO'] >= hoje - timedelta(days=n)]
+
     return _finalize_filter(dff, pl)
 
 
@@ -321,6 +340,10 @@ def is_summary_query(pergunta: str) -> bool:
     specific_keywords = ['últimas vendas','ultimas vendas','ultima venda','última venda','nota ','nr ']
     if any(x in pl for x in specific_keywords):
         return False
+
+    # Sempre agrega se tiver "últimos N meses/semanas"
+    if re.search(r'[uú]ltimos?\s+\d+\s+(m[eê]s|semana)', pl):
+        return True
 
     # Sempre agrega se tiver intervalo de datas explícito (período longo)
     if re.search(r'\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}\s+a[té]?\s+\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}', pl):
@@ -608,7 +631,7 @@ async def chat(req: ChatRequest):
                        'semana passada','semana anterior','esta semana','essa semana',
                        'ontem','hoje','trimestre','semestre','último mês','ultimo mes',
                        r'\d{1,2}/\d{2}/\d{2,4}']
-        return any(i in pl for i in indicadores[:-1]) or bool(re.search(indicadores[-1], pl))
+        return any(i in pl for i in indicadores[:-1]) or bool(re.search(indicadores[-1], pl)) or bool(re.search(r'[uú]ltimos?\s+\d+\s+(m[eê]s|dia|semana)', pl))
 
     pergunta_para_filtro = ultima
     if not tem_contexto_temporal(ultima):
