@@ -25,9 +25,9 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 FILE_ID    = os.environ.get("DRIVE_FILE_ID", "")
 CLAUDE_KEY = os.environ.get("CLAUDE_API_KEY", "")
 
-# Cache em memória
+# Sem cache — sempre busca do Drive
 _cache = {"df": None, "loaded_at": None}
-CACHE_TTL_MINUTES = 5  # recarrega do Drive a cada 5 min
+CACHE_TTL_MINUTES = 0  # sem cache
 _RELOAD_FLAG = "/tmp/force_reload_vendas"
 
 def get_drive_service():
@@ -43,15 +43,8 @@ def get_drive_service():
 def load_df() -> pd.DataFrame:
     """Carrega CSV do Drive com cache TTL de 60 min."""
     now = datetime.now()
-    # Checa se foi solicitado reload forçado
-    force = os.path.exists(_RELOAD_FLAG)
-    if force:
-        try: os.remove(_RELOAD_FLAG)
-        except: pass
-    if not force and _cache["df"] is not None and _cache["loaded_at"]:
-        age = (now - _cache["loaded_at"]).total_seconds() / 60
-        if age < CACHE_TTL_MINUTES:
-            return _cache["df"]
+    # Sempre recarrega do Drive (sem cache)
+    pass
     service = get_drive_service()
     req = service.files().get_media(fileId=FILE_ID)
     buf = io.BytesIO()
@@ -318,21 +311,13 @@ DADOS ({n} registros):
 
 @app.get("/health")
 def health():
-    return {"status":"ok","cache":"loaded" if _cache["df"] is not None else "empty"}
+    return {"status":"ok","cache":"disabled"}
 
 @app.get("/vendas")
 def reload_vendas():
-    """Força download do CSV do Drive e invalida cache."""
-    # Invalida cache local
-    _cache["df"] = None
-    _cache["loaded_at"] = None
-    # Cria flag de reload para todas as instâncias
-    try:
-        with open(_RELOAD_FLAG, "w") as f:
-            f.write(datetime.now().isoformat())
-    except: pass
+    """Confirma que Drive está acessível."""
     try:
         load_df()
-        return {"status":"ok","message":"CSV recarregado com sucesso"}
+        return {"status":"ok","message":"CSV carregado com sucesso"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
