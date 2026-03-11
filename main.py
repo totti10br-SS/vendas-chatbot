@@ -134,42 +134,36 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
         primeiro_dia_mes_atual = hoje.replace(day=1)
         ultimo_dia_mes_passado = primeiro_dia_mes_atual - timedelta(days=1)
         primeiro_dia_mes_passado = ultimo_dia_mes_passado.replace(day=1)
-        dff = dff[(dff['DATA_MOVTO'].dt.date >= primeiro_dia_mes_passado) &
-                  (dff['DATA_MOVTO'].dt.date <= ultimo_dia_mes_passado.date())]
+        dff = dff[(dff['DATA_MOVTO'] >= pd.Timestamp(primeiro_dia_mes_passado)) &
+                  (dff['DATA_MOVTO'] <= pd.Timestamp(ultimo_dia_mes_passado))]
 
-    # "este mês" / "esse mês" / "mês atual" → do dia 1 até hoje
     elif any(x in pl for x in ['este mês','esse mês','este mes','esse mes','mês atual','mes atual']):
-        primeiro_dia = hoje.replace(day=1).date()
-        dff = dff[dff['DATA_MOVTO'].dt.date >= primeiro_dia]
+        primeiro_dia = hoje.replace(day=1)
+        dff = dff[dff['DATA_MOVTO'] >= pd.Timestamp(primeiro_dia)]
 
-    # "semana passada" → segunda a domingo da semana anterior
     elif any(x in pl for x in ['semana passada','semana anterior']):
-        dias_desde_segunda = hoje.weekday()  # 0=seg, 6=dom
-        ultima_segunda = (hoje - timedelta(days=dias_desde_segunda + 7)).date()
+        dias_desde_segunda = hoje.weekday()
+        ultima_segunda = hoje - timedelta(days=dias_desde_segunda + 7)
         ultimo_domingo = ultima_segunda + timedelta(days=6)
-        dff = dff[(dff['DATA_MOVTO'].dt.date >= ultima_segunda) &
-                  (dff['DATA_MOVTO'].dt.date <= ultimo_domingo)]
+        dff = dff[(dff['DATA_MOVTO'] >= pd.Timestamp(ultima_segunda)) &
+                  (dff['DATA_MOVTO'] <= pd.Timestamp(ultimo_domingo) + timedelta(days=1))]
 
-    # "esta semana" / "essa semana" → segunda-feira até hoje
     elif any(x in pl for x in ['esta semana','essa semana','semana atual']):
         dias_desde_segunda = hoje.weekday()
-        segunda = (hoje - timedelta(days=dias_desde_segunda)).date()
-        dff = dff[dff['DATA_MOVTO'].dt.date >= segunda]
+        segunda = hoje - timedelta(days=dias_desde_segunda)
+        dff = dff[dff['DATA_MOVTO'] >= pd.Timestamp(segunda)]
 
-    # "última semana" → últimos 7 dias corridos
     elif any(x in pl for x in ['última semana','ultima semana','ultimos 7 dias','últimos 7 dias']):
         dff = dff[dff['DATA_MOVTO'] >= hoje - timedelta(days=7)]
 
-    # "ontem"
     elif 'ontem' in pl:
-        dia = (hoje - timedelta(days=1)).date()
-        dff = dff[dff['DATA_MOVTO'].dt.date == dia]
+        dia = hoje - timedelta(days=1)
+        dff = dff[(dff['DATA_MOVTO'] >= pd.Timestamp(dia.date())) &
+                  (dff['DATA_MOVTO'] < pd.Timestamp(hoje.date()))]
 
-    # "hoje"
     elif 'hoje' in pl:
-        dff = dff[dff['DATA_MOVTO'].dt.date == hoje.date()]
+        dff = dff[dff['DATA_MOVTO'] >= pd.Timestamp(hoje.date())]
 
-    # "último mês" / "ultimos 30 dias" → 30 dias corridos
     elif any(x in pl for x in ['último mês','ultimo mes','ultimos 30','últimos 30']):
         dff = dff[dff['DATA_MOVTO'] >= hoje - timedelta(days=30)]
 
