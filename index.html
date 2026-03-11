@@ -149,6 +149,25 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:3px;ba
 .prod-r{font-size:11px;color:var(--muted);}
 .prod-pm{font-size:11px;color:rgba(245,200,0,.6);font-style:italic;}
 .panel-loading{text-align:center;padding:20px;color:var(--text2);font-size:13px;}
+
+/* INSIGHT LATERAL */
+.insight-panel{position:fixed;right:0;top:50%;transform:translateY(-50%);width:38px;z-index:100;transition:width .3s ease;}
+.insight-panel.expanded{width:280px;}
+.insight-tab{background:var(--red);color:var(--yellow);writing-mode:vertical-rl;text-orientation:mixed;padding:14px 8px;font-family:'Barlow Condensed',sans-serif;font-size:12px;font-weight:700;letter-spacing:1.5px;cursor:pointer;border-radius:6px 0 0 6px;white-space:nowrap;display:flex;align-items:center;gap:6px;box-shadow:-3px 0 10px rgba(0,0,0,.4);transition:background .2s;}
+.insight-tab:hover{background:var(--red-dark);}
+.insight-body{display:none;background:var(--surface);border-left:3px solid var(--yellow);border-top:1px solid var(--border);border-bottom:1px solid var(--border);padding:14px;max-height:60vh;overflow-y:auto;flex:1;}
+.insight-body::-webkit-scrollbar{width:3px;}
+.insight-body::-webkit-scrollbar-thumb{background:rgba(245,200,0,.3);}
+.insight-panel.expanded .insight-body{display:block;}
+.insight-panel.expanded .insight-tab{border-radius:0;writing-mode:horizontal-tb;width:auto;}
+.insight-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+.insight-title{font-family:'Barlow Condensed',sans-serif;font-size:12px;color:var(--yellow);text-transform:uppercase;letter-spacing:1px;font-weight:700;}
+.insight-close{background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:0 2px;}
+.insight-close:hover{color:var(--yellow);}
+.insight-list{display:flex;flex-direction:column;gap:10px;}
+.insight-item{background:var(--surface2);border-left:2px solid var(--yellow);border-radius:0 5px 5px 0;padding:8px 10px;font-size:12px;color:var(--text2);line-height:1.5;}
+.insight-item strong{color:var(--yellow);font-weight:700;}
+.insight-empty{font-size:12px;color:var(--muted);text-align:center;padding:10px 0;}
 .tipo-carne-box{background:var(--surface2);border:1px solid var(--border);border-top:2px solid var(--yellow);border-radius:7px;padding:9px 12px;margin-top:10px;}
 .tipo-carne-title{font-family:'Barlow Condensed',sans-serif;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;font-weight:700;margin-bottom:7px;}
 .tipo-carne-row{display:flex;align-items:center;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04);}
@@ -548,6 +567,8 @@ async function sendMessage(){
     const reply=data.content[0].text;
     conversationHistory.push({role:'assistant',content:reply});
     addMessage('assistant',reply);
+    const insight = extractInsight(reply);
+    if(insight) addInsight(insight);
   }catch(err){typing.remove();addMessage('assistant',`❌ ${err.message}`);}
   document.getElementById('sendBtn').disabled=false;
   scrollToBottom();
@@ -573,6 +594,46 @@ function sendSuggestion(el){document.getElementById('userInput').value=el.textCo
 function handleKey(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();}}
 function autoResize(el){el.style.height='auto';el.style.height=Math.min(el.scrollHeight,100)+'px';}
 function scrollToBottom(){const el=document.getElementById('messages');el.scrollTop=el.scrollHeight;}
+
+function toggleInsight(){
+  const panel = document.getElementById('insightPanel');
+  panel.classList.toggle('expanded');
+  const label = document.getElementById('insightTabLabel');
+  label.textContent = panel.classList.contains('expanded') ? 'FECHAR' : 'INSIGHTS';
+}
+
+function addInsight(text){
+  const list = document.getElementById('insightList');
+  const empty = list.querySelector('.insight-empty');
+  if(empty) empty.remove();
+  const div = document.createElement('div');
+  div.className = 'insight-item';
+  // Formatar negrito
+  div.innerHTML = text.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
+  list.insertBefore(div, list.firstChild);
+  // Limitar a 10 insights
+  while(list.children.length > 10) list.removeChild(list.lastChild);
+  // Piscar aba
+  const tab = document.getElementById('insightTab');
+  tab.style.background='var(--yellow)';
+  tab.style.color='#111';
+  setTimeout(()=>{tab.style.background='';tab.style.color='';},800);
+}
+
+function extractInsight(text){
+  // Captura linha após "Insight:" ou "💡" ou linhas que começam com 🔍
+  const lines = text.split('\n');
+  for(let i=0; i<lines.length; i++){
+    const l = lines[i].trim();
+    if(/^(💡|🔍|\*\*Insight|Insight:?|##\s*Insight)/i.test(l)){
+      const insight = l.replace(/^(💡|🔍|\*\*Insight\*\*:?|Insight:?|##\s*Insight:?)/i,'').trim();
+      if(insight.length > 10) return insight;
+      // Tentar linha seguinte
+      if(lines[i+1] && lines[i+1].trim().length > 10) return lines[i+1].trim();
+    }
+  }
+  return null;
+}
 init();
 
 
@@ -679,5 +740,22 @@ sendMessage = async function(){
 };
 
 </script>
+
+<div class="insight-panel" id="insightPanel">
+  <div style="display:flex;flex-direction:row-reverse;">
+    <div class="insight-tab" id="insightTab" onclick="toggleInsight()">
+      <span>💡</span><span id="insightTabLabel">INSIGHTS</span>
+    </div>
+    <div class="insight-body" id="insightBody">
+      <div class="insight-header">
+        <div class="insight-title">💡 Insights do IAF</div>
+        <button class="insight-close" onclick="toggleInsight()">✕</button>
+      </div>
+      <div class="insight-list" id="insightList">
+        <div class="insight-empty">Os insights aparecerão aqui conforme você conversa com o IAF.</div>
+      </div>
+    </div>
+  </div>
+</div>
 </body>
 </html>
