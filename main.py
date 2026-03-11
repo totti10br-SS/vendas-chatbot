@@ -25,10 +25,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 FILE_ID    = os.environ.get("DRIVE_FILE_ID", "")
 CLAUDE_KEY = os.environ.get("CLAUDE_API_KEY", "")
 
-# Sem cache — sempre busca do Drive
-_cache = {"df": None, "loaded_at": None}
-CACHE_TTL_MINUTES = 0  # sem cache
-_RELOAD_FLAG = "/tmp/force_reload_vendas"
+# Sem cache — sempre busca do Drive diretamente
 
 def get_drive_service():
     token_bytes = os.environ.get("GOOGLE_TOKEN_PICKLE")
@@ -41,10 +38,7 @@ def get_drive_service():
     return build('drive', 'v3', credentials=creds)
 
 def load_df() -> pd.DataFrame:
-    """Carrega CSV do Drive com cache TTL de 60 min."""
-    now = datetime.now()
-    # Sempre recarrega do Drive (sem cache)
-    pass
+    """Sempre busca CSV diretamente do Drive — sem cache."""
     service = get_drive_service()
     req = service.files().get_media(fileId=FILE_ID)
     buf = io.BytesIO()
@@ -57,8 +51,6 @@ def load_df() -> pd.DataFrame:
     df['DATA_MOVTO'] = pd.to_datetime(df['DATA_MOVTO'], errors='coerce')
     df['VALOR_LIQUIDO'] = pd.to_numeric(df['VALOR_LIQUIDO'], errors='coerce').fillna(0)
     df['QTDE_PRI']      = pd.to_numeric(df['QTDE_PRI'],      errors='coerce').fillna(0)
-    _cache["df"] = df
-    _cache["loaded_at"] = now
     return df
 
 def get_dia_referencia(df: pd.DataFrame):
