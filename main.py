@@ -88,18 +88,35 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
     anos = re.findall(r'\b(202[0-9])\b', pergunta)
     ano_ref = int(anos[0]) if anos else hoje.year
 
-    # ── Mês + ano ──
-    meses = {'janeiro':1,'fevereiro':2,'março':3,'marco':3,'abril':4,'maio':5,
-             'junho':6,'julho':7,'agosto':8,'setembro':9,'outubro':10,'novembro':11,'dezembro':12}
-    mes_encontrado = None
-    for nome, num in meses.items():
-        if nome in pl:
-            mes_encontrado = num
-            break
+    # ── Meses encontrados na pergunta (suporta intervalo: "novembro de 2025 a fevereiro de 2026") ──
+    meses_map = {'janeiro':1,'fevereiro':2,'março':3,'marco':3,'abril':4,'maio':5,
+                 'junho':6,'julho':7,'agosto':8,'setembro':9,'outubro':10,'novembro':11,'dezembro':12}
 
-    if mes_encontrado:
+    meses_encontrados = []
+    for nome, num in meses_map.items():
+        for m in re.finditer(nome, pl):
+            trecho = pl[m.start():m.start()+30]
+            ano_local = re.search(r'202[0-9]', trecho)
+            ano_mes = int(ano_local.group()) if ano_local else None
+            meses_encontrados.append((m.start(), num, ano_mes))
+    meses_encontrados.sort(key=lambda x: x[0])
+
+    if len(meses_encontrados) >= 2:
+        # Intervalo entre dois meses (ex: "novembro/2025 a fevereiro/2026")
+        _, mes_ini, ano_ini = meses_encontrados[0]
+        _, mes_fim, ano_fim = meses_encontrados[-1]
+        ano_ini = ano_ini or (int(anos[0]) if anos else hoje.year)
+        ano_fim = ano_fim or (int(anos[-1]) if len(anos) > 1 else ano_ini)
+        d1 = pd.Timestamp(ano_ini, mes_ini, 1)
+        d2 = pd.Timestamp(ano_fim, mes_fim + 1, 1) - timedelta(days=1) if mes_fim < 12 else pd.Timestamp(ano_fim + 1, 1, 1) - timedelta(days=1)
+        dff = dff[(dff['DATA_MOVTO'] >= d1) & (dff['DATA_MOVTO'] <= d2)]
+        return _finalize_filter(dff, pl)
+
+    elif len(meses_encontrados) == 1:
+        _, mes_encontrado, ano_mes = meses_encontrados[0]
+        ano_usar = ano_mes or ano_ref
         dff = dff[(dff['DATA_MOVTO'].dt.month == mes_encontrado) &
-                  (dff['DATA_MOVTO'].dt.year == ano_ref)]
+                  (dff['DATA_MOVTO'].dt.year == ano_usar)]
         return _finalize_filter(dff, pl)
 
     # ── Trimestre ──
