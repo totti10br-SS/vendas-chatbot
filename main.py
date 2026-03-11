@@ -28,6 +28,7 @@ CLAUDE_KEY = os.environ.get("CLAUDE_API_KEY", "")
 # Cache em memória
 _cache = {"df": None, "loaded_at": None}
 CACHE_TTL_MINUTES = 60  # recarrega do Drive a cada 60 min
+_RELOAD_FLAG = "/tmp/force_reload_vendas"
 
 def get_drive_service():
     token_bytes = os.environ.get("GOOGLE_TOKEN_PICKLE")
@@ -42,7 +43,12 @@ def get_drive_service():
 def load_df() -> pd.DataFrame:
     """Carrega CSV do Drive com cache TTL de 60 min."""
     now = datetime.now()
-    if _cache["df"] is not None and _cache["loaded_at"]:
+    # Checa se foi solicitado reload forçado
+    force = os.path.exists(_RELOAD_FLAG)
+    if force:
+        try: os.remove(_RELOAD_FLAG)
+        except: pass
+    if not force and _cache["df"] is not None and _cache["loaded_at"]:
         age = (now - _cache["loaded_at"]).total_seconds() / 60
         if age < CACHE_TTL_MINUTES:
             return _cache["df"]
@@ -317,8 +323,14 @@ def health():
 @app.get("/vendas")
 def reload_vendas():
     """Força download do CSV do Drive e invalida cache."""
+    # Invalida cache local
     _cache["df"] = None
     _cache["loaded_at"] = None
+    # Cria flag de reload para todas as instâncias
+    try:
+        with open(_RELOAD_FLAG, "w") as f:
+            f.write(datetime.now().isoformat())
+    except: pass
     try:
         load_df()
         return {"status":"ok","message":"CSV recarregado com sucesso"}
