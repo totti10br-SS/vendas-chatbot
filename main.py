@@ -193,8 +193,7 @@ def aggregate_for_summary(dff: pd.DataFrame) -> str:
         pm = r.fat/r.kg if r.kg > 0 else 0
         lines.append(f"{idx}: {r.kg:,.2f} kg | R$ {r.fat:,.2f} | R$ {pm:.2f}/kg")
 
-    return "
-".join(lines)
+    return "\n".join(lines)
 
 def is_summary_query(pergunta: str) -> bool:
     """Detecta se é uma pergunta de resumo/análise geral que precisa de agregação."""
