@@ -128,10 +128,88 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
     if len(dff) == 0:
         dff = df[df['DATA_MOVTO'] >= hoje - timedelta(days=30)]
 
-    if len(dff) > 800:
-        dff = dff.tail(800)
+    if len(dff) > 2000:
+        dff = dff.tail(2000)
 
     return dff[[c for c in cols if c in dff.columns]]
+
+def aggregate_for_summary(dff: pd.DataFrame) -> str:
+    """Agrega dados para resumos mensais — evita estouro de tokens."""
+    lines = []
+    
+    # Totais gerais
+    total_kg = dff['QTDE_PRI'].sum()
+    total_fat = dff['VALOR_LIQUIDO'].sum()
+    total_notas = dff['NUM_DOCTO'].nunique()
+    preco_medio = total_fat / total_kg if total_kg > 0 else 0
+    lines.append(f"## RESUMO GERAL")
+    lines.append(f"Total: {total_kg:,.2f} kg | R$ {total_fat:,.2f} | {total_notas} notas | R$ {preco_medio:.2f}/kg")
+    lines.append("")
+
+    # Por filial
+    lines.append("## POR FILIAL")
+    por_filial = dff.groupby('NOME_FILIAL').agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'), notas=('NUM_DOCTO','nunique')).sort_values('kg', ascending=False)
+    for idx, r in por_filial.iterrows():
+        pm = r.fat/r.kg if r.kg > 0 else 0
+        lines.append(f"{idx}: {r.kg:,.2f} kg | R$ {r.fat:,.2f} | {r.notas} notas | R$ {pm:.2f}/kg")
+    lines.append("")
+
+    # Por dia
+    lines.append("## POR DIA")
+    por_dia = dff.groupby(dff['DATA_MOVTO'].dt.strftime('%d/%m/%y')).agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'), notas=('NUM_DOCTO','nunique')).sort_index()
+    for idx, r in por_dia.iterrows():
+        pm = r.fat/r.kg if r.kg > 0 else 0
+        lines.append(f"{idx}: {r.kg:,.2f} kg | R$ {r.fat:,.2f} | {r.notas} notas | R$ {pm:.2f}/kg")
+    lines.append("")
+
+    # Top 15 clientes
+    lines.append("## TOP 15 CLIENTES (por volume)")
+    por_cli = dff.groupby('NOME_CLIENTE').agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum')).sort_values('kg', ascending=False).head(15)
+    for idx, r in por_cli.iterrows():
+        pm = r.fat/r.kg if r.kg > 0 else 0
+        lines.append(f"{idx}: {r.kg:,.2f} kg | R$ {r.fat:,.2f} | R$ {pm:.2f}/kg")
+    lines.append("")
+
+    # Top 15 produtos
+    lines.append("## TOP 15 PRODUTOS (por volume)")
+    por_prod = dff.groupby(['COD_PRODUTO','DESC_PRODUTO']).agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum')).sort_values('kg', ascending=False).head(15)
+    for idx, r in por_prod.iterrows():
+        pm = r.fat/r.kg if r.kg > 0 else 0
+        lines.append(f"{idx[1]}: {r.kg:,.2f} kg | R$ {r.fat:,.2f} | R$ {pm:.2f}/kg")
+    lines.append("")
+
+    # Top 10 vendedores
+    lines.append("## TOP 10 VENDEDORES (por volume)")
+    por_vend = dff.groupby('NOM_VENDEDOR').agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum')).sort_values('kg', ascending=False).head(10)
+    for idx, r in por_vend.iterrows():
+        pm = r.fat/r.kg if r.kg > 0 else 0
+        lines.append(f"{idx}: {r.kg:,.2f} kg | R$ {r.fat:,.2f} | R$ {pm:.2f}/kg")
+    lines.append("")
+
+    # Por tipo de carne
+    lines.append("## POR TIPO DE CARNE (DESC_DIVISAO2)")
+    por_tipo = dff.groupby('DESC_DIVISAO2').agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum')).sort_values('kg', ascending=False)
+    for idx, r in por_tipo.iterrows():
+        pm = r.fat/r.kg if r.kg > 0 else 0
+        lines.append(f"{idx}: {r.kg:,.2f} kg | R$ {r.fat:,.2f} | R$ {pm:.2f}/kg")
+
+    return "
+".join(lines)
+
+def is_summary_query(pergunta: str) -> bool:
+    """Detecta se é uma pergunta de resumo/análise geral que precisa de agregação."""
+    pl = pergunta.lower()
+    summary_keywords = [
+        'como está','como esta','resumo','análise','analise','comparar','comparativo',
+        'ranking','top','total','mês','mes','periodo','período','evolução','evolucao',
+        'desempenho','performance','balanço','balanco','visão geral','visao geral',
+        'quanto vendeu','quanto foi','quanto faturou'
+    ]
+    # Não agregar se for busca específica de cliente/produto/nota
+    specific_keywords = ['últimas vendas','ultimas vendas','ultima venda','última venda','nota ','nr ']
+    if any(x in pl for x in specific_keywords):
+        return False
+    return any(x in pl for x in summary_keywords)
 
 # ─── ROUTES ───
 
@@ -243,10 +321,16 @@ async def chat(req: ChatRequest):
     try:
         df = load_df()
         dff = filter_for_chat(df, ultima)
-        dff = dff.copy()
-        dff['DATA_MOVTO'] = dff['DATA_MOVTO'].dt.strftime('%d/%m/%y')
-        sales_data = dff.to_csv(sep=';', index=False)
         n = len(dff)
+        # Para resumos com muitos dados, usa agregação em vez de CSV bruto
+        if n > 1500 or is_summary_query(ultima):
+            sales_data = aggregate_for_summary(dff)
+            data_label = f"DADOS AGREGADOS ({n} registros originais)"
+        else:
+            dff = dff.copy()
+            dff['DATA_MOVTO'] = dff['DATA_MOVTO'].dt.strftime('%d/%m/%y')
+            sales_data = dff.to_csv(sep=';', index=False)
+            data_label = f"{n} registros"
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao carregar dados: {e}")
 
@@ -280,10 +364,12 @@ async def chat(req: ChatRequest):
 - Valores: R$ X.XXX,XX | Quantidades: X.XXX,XX kg
 - Sempre calcule e exiba o PREÇO MÉDIO (R$/kg) em qualquer análise de produto, cliente ou vendedor — calcule como VALOR_LIQUIDO / QTDE_PRI e formate como R$ X,XX/kg
 - Datas sempre no formato DD/MM/AA (ex: 09/03/26)
-- Finalize com 1 insight ou sugestão
+- Finalize SEMPRE com 1 insight ou sugestão OBRIGATORIAMENTE precedido de "💡 Insight:" em linha separada
+- Nos insights: SEMPRE cite o dia específico (DD/MM/AA), número do documento (NR NOTA) e/ou produto quando relevante — seja o mais específico possível. Ex: "💡 Insight: Em 11/03/26, a NR NOTA 35900 de J. BEEF DIANTEIRO teve R$/kg acima da média..."
 - Quando perguntado sobre "últimas vendas de um cliente" sem especificar o nome, pergunte qual cliente. Quando o cliente for informado, mostre uma tabela com colunas: DATA | NR NOTA | COD PRODUTO | DESCRIÇÃO | QTDE (kg) | R$/kg — ordenada por data decrescente — limitada aos últimos 15 registros
+- Quando identificar que a pergunta envolve um período longo (mensal, trimestral, semestral ou anual), ANTES de responder pergunte ao usuário qual o nível de detalhe desejado, oferecendo opções claras. Exemplo: "Identificei que você quer uma análise mensal. Como prefere ver os dados? 1) Resumo executivo (totais por filial e top clientes) 2) Análise detalhada por dia 3) Ranking completo de produtos e vendedores 4) Comparativo entre filiais". Só processe após a confirmação do usuário.
 {personalidade}
-DADOS ({n} registros):
+DADOS ({data_label}):
 {sales_data}"""
 
     async with httpx.AsyncClient(timeout=60) as client:
