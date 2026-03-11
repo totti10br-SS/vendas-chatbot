@@ -257,15 +257,23 @@ def is_summary_query(pergunta: str) -> bool:
     """Detecta se é uma pergunta de resumo/análise geral que precisa de agregação."""
     pl = pergunta.lower()
     summary_keywords = [
-        'como está','como esta','resumo','análise','analise','comparar','comparativo',
+        'como está','como esta','como foi','como ficou','me mostra','me mostre',
+        'resumo','análise','analise','comparar','comparativo',
         'ranking','top','total','mês','mes','periodo','período','evolução','evolucao',
         'desempenho','performance','balanço','balanco','visão geral','visao geral',
-        'quanto vendeu','quanto foi','quanto faturou'
+        'quanto vendeu','quanto foi','quanto faturou','quero os dados','quero ver',
+        'trimestre','semestre','semana','janeiro','fevereiro','março','marco','abril',
+        'maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'
     ]
     # Não agregar se for busca específica de cliente/produto/nota
     specific_keywords = ['últimas vendas','ultimas vendas','ultima venda','última venda','nota ','nr ']
     if any(x in pl for x in specific_keywords):
         return False
+
+    # Sempre agrega se tiver intervalo de datas explícito (período longo)
+    if re.search(r'\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}\s+a[té]?\s+\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}', pl):
+        return True
+
     return any(x in pl for x in summary_keywords)
 
 # ─── ROUTES ───
