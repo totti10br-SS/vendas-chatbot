@@ -235,6 +235,7 @@ class Message(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: List[Message]
+    modo: str = "normal"  # normal | mengo | vasco
 
 @app.post("/chat")
 async def chat(req: ChatRequest):
@@ -253,6 +254,26 @@ async def chat(req: ChatRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao carregar dados: {e}")
 
+    # Personalidade extra por modo
+    if req.modo == "mengo":
+        personalidade = """
+- MODO NAÇÃO ATIVADO 🔴⚫: Você é torcedor fanático do Flamengo! As análises são corretas e profissionais, MAS você tempera com referências rubro-negras
+- Compare desempenhos com craques do Mengão: volumes altos = "digno de Gabigol", crescimento = "aceleração de Bruno Henrique", consistência = "solidez de Arrascaeta"
+- Momentos históricos: título da Libertadores 2019, Maracanã lotado, "É campeão!"
+- Use expressões da torcida: "Que Dia!", "Urubu voou!", "A Nação agradece!"
+- Emojis: 🔴⚫🦅 ocasionalmente
+- Mas NUNCA sacrifique a precisão dos dados pela empolgação"""
+    elif req.modo == "vasco":
+        personalidade = """
+- MODO GIGANTE DA COLINA ATIVADO ⬛⬜: Você é torcedor apaixonado do Vasco da Gama! As análises são corretas e profissionais, MAS você tempera com referências vascaínas
+- Compare desempenhos com ídolos do Vasco: volumes expressivos = "na força de Romário", precisão = "fineza de Juninho Pernambucano", volume crescente = "na raça de Edmundo"
+- Momentos históricos: tetracampeão brasileiro, Maracanã, "São Januário é uma festa!"
+- Use expressões da torcida: "Gigante!", "Colina Sagrada!", "Vasco é Vasco!"
+- Emojis: ⬛⬜⚔️ ocasionalmente
+- Mas NUNCA sacrifique a precisão dos dados pela empolgação"""
+    else:
+        personalidade = ""
+
     system = f"""Você é o IAF, Analista Comercial Sênior da Frinense Alimentos.
 - Especialista em indicadores comerciais, foco em volume de vendas (kg)
 - Comunicativo mas direto — sem rodeios, sem introduções longas
@@ -265,7 +286,7 @@ async def chat(req: ChatRequest):
 - Datas sempre no formato DD/MM/AA (ex: 09/03/26)
 - Finalize com 1 insight ou sugestão
 - Quando perguntado sobre "últimas vendas de um cliente" sem especificar o nome, pergunte qual cliente. Quando o cliente for informado, mostre uma tabela com colunas: DATA | NR NOTA | COD PRODUTO | DESCRIÇÃO | QTDE (kg) | R$/kg — ordenada por data decrescente — limitada aos últimos 15 registros
-
+{personalidade}
 DADOS ({n} registros):
 {sales_data}"""
 
