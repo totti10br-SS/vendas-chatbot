@@ -1,4 +1,9 @@
 import os
+os.environ.setdefault('TZ', 'America/Sao_Paulo')
+try:
+    import time; time.tzset()
+except AttributeError:
+    pass
 import pickle
 import io
 import re
