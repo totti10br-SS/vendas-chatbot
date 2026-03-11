@@ -48,7 +48,10 @@ def load_df() -> pd.DataFrame:
         _, done = dl.next_chunk()
     buf.seek(0)
     df = pd.read_csv(buf, sep=';', encoding='utf-8-sig', low_memory=False)
-    df['DATA_MOVTO'] = pd.to_datetime(df['DATA_MOVTO'], errors='coerce')
+    # Detecta formato da data no CSV (DD/MM/YYYY brasileiro vs YYYY-MM-DD ISO)
+    sample = df['DATA_MOVTO'].dropna().iloc[0] if len(df) > 0 else ''
+    use_dayfirst = bool(re.match(r'\d{1,2}/\d{1,2}/\d{2,4}', str(sample)))
+    df['DATA_MOVTO'] = pd.to_datetime(df['DATA_MOVTO'], errors='coerce', dayfirst=use_dayfirst)
     df['VALOR_LIQUIDO'] = pd.to_numeric(df['VALOR_LIQUIDO'], errors='coerce').fillna(0)
     df['QTDE_PRI']      = pd.to_numeric(df['QTDE_PRI'],      errors='coerce').fillna(0)
     return df
@@ -376,15 +379,27 @@ async def chat(req: ChatRequest):
         df = load_df()
         dff = filter_for_chat(df, ultima)
         n = len(dff)
+
+        # Período real dos dados filtrados
+        periodo_label = ""
+        if n > 0 and 'DATA_MOVTO' in dff.columns:
+            d_min = dff['DATA_MOVTO'].min()
+            d_max = dff['DATA_MOVTO'].max()
+            if pd.notna(d_min) and pd.notna(d_max):
+                if d_min.date() == d_max.date():
+                    periodo_label = f"Período: {d_min.strftime('%d/%m/%y')}"
+                else:
+                    periodo_label = f"Período disponível: {d_min.strftime('%d/%m/%y')} a {d_max.strftime('%d/%m/%y')}"
+
         # Para resumos com muitos dados, usa agregação em vez de CSV bruto
         if n > 1500 or is_summary_query(ultima):
             sales_data = aggregate_for_summary(dff)
-            data_label = f"DADOS AGREGADOS ({n} registros originais)"
+            data_label = f"DADOS AGREGADOS ({n} registros originais){' | ' + periodo_label if periodo_label else ''}"
         else:
             dff = dff.copy()
             dff['DATA_MOVTO'] = dff['DATA_MOVTO'].dt.strftime('%d/%m/%y')
             sales_data = dff.to_csv(sep=';', index=False)
-            data_label = f"{n} registros"
+            data_label = f"{n} registros{' | ' + periodo_label if periodo_label else ''}"
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao carregar dados: {e}")
 
@@ -421,7 +436,7 @@ async def chat(req: ChatRequest):
 - Finalize SEMPRE com 1 insight ou sugestão OBRIGATORIAMENTE precedido de "💡 Insight:" em linha separada
 - Nos insights: SEMPRE cite o dia específico (DD/MM/AA), número do documento (NR NOTA) e/ou produto quando relevante — seja o mais específico possível. Ex: "💡 Insight: Em 11/03/26, a NR NOTA 35900 de J. BEEF DIANTEIRO teve R$/kg acima da média..."
 - Quando perguntado sobre "últimas vendas de um cliente" sem especificar o nome, pergunte qual cliente. Quando o cliente for informado, mostre uma tabela com colunas: DATA | NR NOTA | COD PRODUTO | DESCRIÇÃO | QTDE (kg) | R$/kg — ordenada por data decrescente — limitada aos últimos 15 registros
-- Quando perguntado sobre um período (mês, trimestre, semestre, ano ou intervalo de datas), APRESENTE os dados disponíveis diretamente — não explique o que falta. Os dados já vêm filtrados pelo período solicitado; se há registros de 06/03 a 11/03, apresente como "Dados disponíveis em março: 06/03 a 11/03"
+- Quando perguntado sobre um período (mês, trimestre, semestre, ano ou intervalo de datas), APRESENTE os dados disponíveis diretamente, SEM mencionar datas ou períodos que não existem no dataset. NUNCA diga frases como "não há dados de X a Y", "os registros estão limitados a", "não tenho dados para esse período" — simplesmente apresente o que existe. Se há dados de 06/03 a 11/03, comece direto: "## Vendas de março/2026" e liste os dados. O usuário já sabe o que pediu.
 - Quando identificar que a pergunta envolve um período longo (mensal, trimestral, semestral ou anual) E o usuário não especificou o nível de detalhe, pergunte ao usuário qual o nível desejado, oferecendo opções claras: "1) Resumo executivo (totais por filial e top clientes) 2) Análise detalhada por dia 3) Ranking completo de produtos e vendedores 4) Comparativo entre filiais". Só processe após a confirmação — EXCETO se o usuário já deixou claro o que quer (ex: "quero um resumo", "me dê o ranking", "análise detalhada")
 {personalidade}
 DADOS ({data_label}):
