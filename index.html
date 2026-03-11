@@ -566,8 +566,9 @@ async function sendMessage(){
     if(!data.content||!data.content[0]) throw new Error(JSON.stringify(data));
     const reply=data.content[0].text;
     conversationHistory.push({role:'assistant',content:reply});
-    addMessage('assistant',reply);
     const insight = extractInsight(reply);
+    const replyClean = insight ? removeInsightFromText(reply) : reply;
+    addMessage('assistant',replyClean);
     if(insight) addInsight(insight);
   }catch(err){typing.remove();addMessage('assistant',`❌ ${err.message}`);}
   document.getElementById('sendBtn').disabled=false;
@@ -621,18 +622,31 @@ function addInsight(text){
 }
 
 function extractInsight(text){
-  // Captura linha após "Insight:" ou "💡" ou linhas que começam com 🔍
   const lines = text.split('\n');
   for(let i=0; i<lines.length; i++){
     const l = lines[i].trim();
-    if(/^(💡|🔍|\*\*Insight|Insight:?|##\s*Insight)/i.test(l)){
-      const insight = l.replace(/^(💡|🔍|\*\*Insight\*\*:?|Insight:?|##\s*Insight:?)/i,'').trim();
+    // Detecta qualquer variação: 💡 Insight:, **Insight:**, 🔍 Insight, etc.
+    if(/💡|🔍/.test(l) || /^\*{0,2}insight\*{0,2}:?/i.test(l)){
+      // Remove prefixos: emojis, asteriscos, "Insight:", ":"
+      let insight = l
+        .replace(/^💡\s*/,'')
+        .replace(/^🔍\s*/,'')
+        .replace(/^\*{0,2}insight\*{0,2}:?\s*/i,'')
+        .replace(/^:\s*/,'')
+        .trim();
       if(insight.length > 10) return insight;
-      // Tentar linha seguinte
       if(lines[i+1] && lines[i+1].trim().length > 10) return lines[i+1].trim();
     }
   }
   return null;
+}
+
+function removeInsightFromText(text){
+  // Remove a linha de insight do texto da resposta
+  return text.split('\n').filter(l => {
+    const t = l.trim();
+    return !((/💡|🔍/.test(t) || /^\*{0,2}insight\*{0,2}:?/i.test(t)) && t.length > 5);
+  }).join('\n').replace(/\n{3,}/g,'\n\n').trim();
 }
 init();
 
