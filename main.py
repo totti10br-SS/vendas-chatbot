@@ -246,6 +246,8 @@ async def chat(req: ChatRequest):
     try:
         df = load_df()
         dff = filter_for_chat(df, ultima)
+        dff = dff.copy()
+        dff['DATA_MOVTO'] = dff['DATA_MOVTO'].dt.strftime('%d/%m/%y')
         sales_data = dff.to_csv(sep=';', index=False)
         n = len(dff)
     except Exception as e:
@@ -260,6 +262,7 @@ async def chat(req: ChatRequest):
 - Use Markdown: ## títulos, **negrito**, tabelas com | Col |
 - Valores: R$ X.XXX,XX | Quantidades: X.XXX,XX kg
 - Sempre calcule e exiba o PREÇO MÉDIO (R$/kg) em qualquer análise de produto, cliente ou vendedor — calcule como VALOR_LIQUIDO / QTDE_PRI e formate como R$ X,XX/kg
+- Datas sempre no formato DD/MM/AA (ex: 09/03/26)
 - Finalize com 1 insight ou sugestão
 - Quando perguntado sobre "últimas vendas de um cliente" sem especificar o nome, pergunte qual cliente. Quando o cliente for informado, mostre uma tabela com colunas: DATA | NR NOTA | COD PRODUTO | DESCRIÇÃO | QTDE (kg) | R$/kg — ordenada por data decrescente — limitada aos últimos 15 registros
 
