@@ -25,7 +25,10 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
 app = FastAPI()
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware,
+    allow_origins=["https://web-production-91aff.up.railway.app"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"])
 
 FILE_ID    = os.environ.get("DRIVE_FILE_ID", "")
 CLAUDE_KEY = os.environ.get("CLAUDE_API_KEY", "")
