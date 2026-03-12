@@ -250,12 +250,25 @@ def _finalize_filter(dff: pd.DataFrame, pl: str) -> pd.DataFrame:
         dff = dff.sort_values('DATA_MOVTO', ascending=False).head(15)
         return dff[[c for c in cols if c in dff.columns]]
 
-    # Filtro de vendedor
+    # Filtro de vendedor — busca por palavras separadas (mais tolerante)
     m = re.search(r'vendedor[:\s]+([a-záéíóúâêîôûãõç\s]+)', pl)
     if m:
         nome_vend = re.split(r'\s+(?:em|de|no|na|para|do|da|nos|nas|\d{4})\b', m.group(1))[0].strip()
         if len(nome_vend) > 2:
-            dff = dff[dff['NOM_VENDEDOR'].str.lower().str.contains(nome_vend, na=False)]
+            # Tenta primeiro match exato da string completa
+            mask = dff['NOM_VENDEDOR'].str.lower().str.contains(nome_vend, na=False)
+            if mask.sum() == 0:
+                # Fallback: busca por cada palavra separada (todas devem estar presentes)
+                palavras_vend = [p for p in nome_vend.split() if len(p) > 2]
+                if palavras_vend:
+                    mask = pd.Series([True] * len(dff), index=dff.index)
+                    for palavra in palavras_vend:
+                        mask = mask & dff['NOM_VENDEDOR'].str.lower().str.contains(palavra, na=False)
+            if mask.sum() > 0:
+                dff = dff[mask]
+            else:
+                # Nenhum resultado — marca para sugerir busca por código
+                dff._iaf_vendedor_nao_encontrado = nome_vend
     else:
         m_cod = re.search(r'cod(?:igo)?[_\s]+(?:vendedor[_\s]+)?(\d{3,6})', pl)
         if m_cod:
@@ -848,6 +861,11 @@ async def chat(req: ChatRequest):
         import logging
         anos_no_df = sorted(df['DATA_MOVTO'].dt.year.dropna().unique().tolist()) if 'DATA_MOVTO' in df.columns else []
         logging.warning(f"[IAF DEBUG] ultima={ultima!r} | pergunta_para_filtro={pergunta_para_filtro!r} | df total={len(df)} | anos_no_df={anos_no_df}")
+        # Log vendedores disponíveis em 2025
+        if '2025' in pergunta_para_filtro:
+            df2025 = df[df['DATA_MOVTO'].dt.year == 2025]
+            vends = sorted(df2025['NOM_VENDEDOR'].dropna().unique().tolist()) if 'NOM_VENDEDOR' in df2025.columns else []
+            logging.warning(f"[IAF DEBUG] vendedores em 2025 ({len(df2025)} regs): {vends[:20]}")
         dff = filter_for_chat(df, pergunta_para_filtro)
         import re as _re2
         anos_debug = _re2.findall(r'\b(202[0-9])\b', pergunta_para_filtro)
@@ -905,14 +923,28 @@ async def chat(req: ChatRequest):
                     periodo_label = f"Período disponível: {d_min.strftime('%d/%m/%y')} a {d_max.strftime('%d/%m/%y')}"
 
         # Para resumos com muitos dados, usa agregação em vez de CSV bruto
+        # Verifica se vendedor não foi encontrado
+        vendedor_nao_encontrado = getattr(dff, '_iaf_vendedor_nao_encontrado', None)
+        aviso_vendedor = ""
+        if vendedor_nao_encontrado or (n == 0 and re.search(r'vendedor', pergunta_para_filtro.lower())):
+            nome_buscado = vendedor_nao_encontrado or "informado"
+            # Lista vendedores disponíveis no período como sugestão
+            try:
+                df_periodo = filter_for_chat(df, pergunta_para_filtro.lower().replace('vendedor','').strip())
+                vends_disp = df_periodo['NOM_VENDEDOR'].dropna().value_counts().head(5).index.tolist() if 'NOM_VENDEDOR' in df_periodo.columns else []
+                vends_str = " | ".join(vends_disp) if vends_disp else "nenhum"
+            except:
+                vends_str = "indisponível"
+            aviso_vendedor = f" | ⚠️ VENDEDOR '{nome_buscado.upper()}' NÃO LOCALIZADO — sugerir busca por código (ex: 'vendedor cod XXXX') | Vendedores disponíveis no período: {vends_str}"
+
         if n > 1500 or is_summary_query(pergunta_para_filtro) or is_summary_query(ultima):
             sales_data = aggregate_for_summary(dff)
-            data_label = f"DADOS AGREGADOS ({n} registros originais){' | ' + periodo_label if periodo_label else ''}"
+            data_label = f"DADOS AGREGADOS ({n} registros originais){' | ' + periodo_label if periodo_label else ''}{aviso_vendedor}"
         else:
             dff = dff.copy()
             dff['DATA_MOVTO'] = dff['DATA_MOVTO'].dt.strftime('%d/%m/%y')
             sales_data = dff.to_csv(sep=';', index=False)
-            data_label = f"{n} registros{' | ' + periodo_label if periodo_label else ''}"
+            data_label = f"{n} registros{' | ' + periodo_label if periodo_label else ''}{aviso_vendedor}"
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao carregar dados: {e}")
 
@@ -951,6 +983,7 @@ async def chat(req: ChatRequest):
 - Quando perguntado sobre "últimas vendas de um cliente" sem especificar o nome, pergunte qual cliente. Quando o cliente for informado, mostre uma tabela com colunas: DATA | NR NOTA | COD PRODUTO | DESCRIÇÃO | QTDE (kg) | R$/kg — ordenada por data decrescente — limitada aos últimos 15 registros
 - Quando perguntado sobre um período (mês, trimestre, semestre, ano ou intervalo de datas), APRESENTE os dados disponíveis diretamente, SEM mencionar datas ou períodos que não existem no dataset. NUNCA diga frases como "não há dados de X a Y", "os registros estão limitados a", "não tenho dados para esse período" — simplesmente apresente o que existe. Se há dados de 06/03 a 11/03, comece direto: "## Vendas de março/2026" e liste os dados. O usuário já sabe o que pediu.
 - Quando identificar que a pergunta envolve um período longo (mensal, trimestral, semestral ou anual) E o usuário não especificou o nível de detalhe, pergunte ao usuário qual o nível desejado, oferecendo opções claras: "1) Resumo executivo (totais por filial e top clientes) 2) Análise detalhada por dia 3) Ranking completo de produtos e vendedores 4) Comparativo entre filiais". Só processe após a confirmação — EXCETO se o usuário já deixou claro o que quer (ex: "quero um resumo", "me dê o ranking", "análise detalhada")
+- Busca de vendedor: o sistema tenta localizar pelo nome (busca parcial por palavras). Se os dados retornados estiverem VAZIOS e a pergunta mencionar um vendedor, informe que não localizou o vendedor pelo nome informado e sugira: "1) Verifique o nome exato no sistema 2) Tente buscar pelo código: ex: 'vendedor cod 4063'" — liste também até 5 vendedores disponíveis no período como sugestão, se houver dados.
 {personalidade}
 DADOS ({data_label}):
 {sales_data}"""
