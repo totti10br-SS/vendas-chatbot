@@ -845,7 +845,12 @@ async def chat(req: ChatRequest):
 
     try:
         df = load_df()
+        import logging
+        logging.warning(f"[IAF DEBUG] ultima={ultima!r} | pergunta_para_filtro={pergunta_para_filtro!r} | df total={len(df)}")
         dff = filter_for_chat(df, pergunta_para_filtro)
+        import re as _re2
+        anos_debug = _re2.findall(r'\b(202[0-9])\b', pergunta_para_filtro)
+        logging.warning(f"[IAF DEBUG] dff apos filter_for_chat={len(dff)} | anos_detectados={anos_debug}")
         n = len(dff)
 
         # ── PDF: intercepta antes de chamar Claude — zero tokens ──
