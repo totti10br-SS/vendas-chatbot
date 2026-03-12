@@ -287,7 +287,7 @@ def _finalize_filter(dff: pd.DataFrame, pl: str) -> pd.DataFrame:
                 dff = dff[mask]
 
     cols = ['NOME_FILIAL','DATA_MOVTO','NUM_DOCTO','COD_PRODUTO','DESC_PRODUTO','NOME_CLIENTE',
-            'NOM_VENDEDOR','COD_VENDEDOR','QTDE_PRI','VALOR_LIQUIDO','DESC_DIVISAO2','DESC_DIVISAO3','UF','CIDADE']
+            'NOM_VENDEDOR','COD_VENDEDOR','QTDE_PRI','QTDE_AUX','VALOR_LIQUIDO','DESC_DIVISAO2','DESC_DIVISAO3','UF','CIDADE']
 
     if any(x in pl for x in ['últimas vendas','ultimas vendas','ultima venda','última venda']):
         dff = dff.sort_values('DATA_MOVTO', ascending=False).head(15)
@@ -346,15 +346,19 @@ def aggregate_for_summary(dff: pd.DataFrame) -> str:
     total_notas = dff['NUM_DOCTO'].nunique()
     preco_medio = total_fat / total_kg if total_kg > 0 else 0
     lines.append(f"## RESUMO GERAL")
-    lines.append(f"Total: {total_kg:,.2f} kg | R$ {total_fat:,.2f} | {total_notas} notas | R$ {preco_medio:.2f}/kg")
+    total_cx = dff['QTDE_AUX'].sum() if 'QTDE_AUX' in dff.columns else 0
+    lines.append(f"Total: {total_kg:,.2f} kg | {total_cx:,.0f} cx | R$ {total_fat:,.2f} | {total_notas} notas | R$ {preco_medio:.2f}/kg")
     lines.append("")
 
     # Por filial
     lines.append("## POR FILIAL")
-    por_filial = dff.groupby('NOME_FILIAL').agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'), notas=('NUM_DOCTO','nunique')).sort_values('kg', ascending=False)
+    agg_filial = {'kg':('QTDE_PRI','sum'), 'fat':('VALOR_LIQUIDO','sum'), 'notas':('NUM_DOCTO','nunique')}
+    if 'QTDE_AUX' in dff.columns: agg_filial['cx'] = ('QTDE_AUX','sum')
+    por_filial = dff.groupby('NOME_FILIAL').agg(**agg_filial).sort_values('kg', ascending=False)
     for idx, r in por_filial.iterrows():
         pm = r.fat/r.kg if r.kg > 0 else 0
-        lines.append(f"{idx}: {r.kg:,.2f} kg | R$ {r.fat:,.2f} | {r.notas} notas | R$ {pm:.2f}/kg")
+        cx_str = f" | {r.cx:,.0f} cx" if 'cx' in por_filial.columns else ""
+        lines.append(f"{idx}: {r.kg:,.2f} kg{cx_str} | R$ {r.fat:,.2f} | {r.notas} notas | R$ {pm:.2f}/kg")
     lines.append("")
 
     # Por dia
@@ -366,42 +370,57 @@ def aggregate_for_summary(dff: pd.DataFrame) -> str:
     lines.append("")
 
     # Top 15 clientes
-    lines.append("## TOP 15 CLIENTES (por volume)")
-    por_cli = dff.groupby('NOME_CLIENTE').agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum')).sort_values('kg', ascending=False).head(15)
+    lines.append("## TOP 10 CLIENTES (por volume)")
+    agg_cli = {'kg':('QTDE_PRI','sum'), 'fat':('VALOR_LIQUIDO','sum')}
+    if 'QTDE_AUX' in dff.columns: agg_cli['cx'] = ('QTDE_AUX','sum')
+    por_cli = dff.groupby('NOME_CLIENTE').agg(**agg_cli).sort_values('kg', ascending=False).head(10)
     for idx, r in por_cli.iterrows():
         pm = r.fat/r.kg if r.kg > 0 else 0
-        lines.append(f"{idx}: {r.kg:,.2f} kg | R$ {r.fat:,.2f} | R$ {pm:.2f}/kg")
+        cx_str = f" | {r.cx:,.0f} cx" if 'cx' in por_cli.columns else ""
+        lines.append(f"{idx}: {r.kg:,.2f} kg{cx_str} | R$ {r.fat:,.2f} | R$ {pm:.2f}/kg")
     lines.append("")
 
     # Top 15 produtos
-    lines.append("## TOP 15 PRODUTOS (por volume)")
-    por_prod = dff.groupby(['COD_PRODUTO','DESC_PRODUTO']).agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum')).sort_values('kg', ascending=False).head(15)
+    lines.append("## TOP 10 PRODUTOS (por volume)")
+    agg_prod = {'kg':('QTDE_PRI','sum'), 'fat':('VALOR_LIQUIDO','sum')}
+    if 'QTDE_AUX' in dff.columns: agg_prod['cx'] = ('QTDE_AUX','sum')
+    por_prod = dff.groupby(['COD_PRODUTO','DESC_PRODUTO']).agg(**agg_prod).sort_values('kg', ascending=False).head(10)
     for idx, r in por_prod.iterrows():
         pm = r.fat/r.kg if r.kg > 0 else 0
-        lines.append(f"{idx[1]}: {r.kg:,.2f} kg | R$ {r.fat:,.2f} | R$ {pm:.2f}/kg")
+        cx_str = f" | {r.cx:,.0f} cx" if 'cx' in por_prod.columns else ""
+        lines.append(f"{idx[1]}: {r.kg:,.2f} kg{cx_str} | R$ {r.fat:,.2f} | R$ {pm:.2f}/kg")
     lines.append("")
 
     # Todos os vendedores (com código)
     lines.append("## VENDEDORES (por volume)")
     if 'COD_VENDEDOR' in dff.columns:
-        por_vend = dff.groupby(['COD_VENDEDOR','NOM_VENDEDOR']).agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum')).sort_values('kg', ascending=False)
+        agg_v = {'kg':('QTDE_PRI','sum'), 'fat':('VALOR_LIQUIDO','sum')}
+        if 'QTDE_AUX' in dff.columns: agg_v['cx'] = ('QTDE_AUX','sum')
+        por_vend = dff.groupby(['COD_VENDEDOR','NOM_VENDEDOR']).agg(**agg_v).sort_values('kg', ascending=False)
         for idx, r in por_vend.iterrows():
             pm = r.fat/r.kg if r.kg > 0 else 0
-            lines.append(f"COD {idx[0]} | {idx[1]}: {r.kg:,.2f} kg | R$ {r.fat:,.2f} | R$ {pm:.2f}/kg")
+            cx_str = f" | {r.cx:,.0f} cx" if 'cx' in por_vend.columns else ""
+            lines.append(f"COD {idx[0]} | {idx[1]}: {r.kg:,.2f} kg{cx_str} | R$ {r.fat:,.2f} | R$ {pm:.2f}/kg")
     else:
-        por_vend = dff.groupby('NOM_VENDEDOR').agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum')).sort_values('kg', ascending=False)
+        agg_v = {'kg':('QTDE_PRI','sum'), 'fat':('VALOR_LIQUIDO','sum')}
+        if 'QTDE_AUX' in dff.columns: agg_v['cx'] = ('QTDE_AUX','sum')
+        por_vend = dff.groupby('NOM_VENDEDOR').agg(**agg_v).sort_values('kg', ascending=False)
         for idx, r in por_vend.iterrows():
             pm = r.fat/r.kg if r.kg > 0 else 0
-            lines.append(f"{idx}: {r.kg:,.2f} kg | R$ {r.fat:,.2f} | R$ {pm:.2f}/kg")
+            cx_str = f" | {r.cx:,.0f} cx" if 'cx' in por_vend.columns else ""
+            lines.append(f"{idx}: {r.kg:,.2f} kg{cx_str} | R$ {r.fat:,.2f} | R$ {pm:.2f}/kg")
     lines.append("")
 
     # Por UF / Estado
     if 'UF' in dff.columns:
         lines.append("## POR ESTADO (UF)")
-        por_uf = dff.groupby('UF').agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'), notas=('NUM_DOCTO','nunique')).sort_values('kg', ascending=False)
+        agg_uf = {'kg':('QTDE_PRI','sum'), 'fat':('VALOR_LIQUIDO','sum'), 'notas':('NUM_DOCTO','nunique')}
+        if 'QTDE_AUX' in dff.columns: agg_uf['cx'] = ('QTDE_AUX','sum')
+        por_uf = dff.groupby('UF').agg(**agg_uf).sort_values('kg', ascending=False)
         for idx, r in por_uf.iterrows():
             pm = r.fat/r.kg if r.kg > 0 else 0
-            lines.append(f"{idx}: {r.kg:,.2f} kg | R$ {r.fat:,.2f} | {r.notas} notas | R$ {pm:.2f}/kg")
+            cx_str = f" | {r.cx:,.0f} cx" if 'cx' in por_uf.columns else ""
+            lines.append(f"{idx}: {r.kg:,.2f} kg{cx_str} | R$ {r.fat:,.2f} | {r.notas} notas | R$ {pm:.2f}/kg")
         lines.append("")
 
     # Por tipo de carne
@@ -1208,6 +1227,7 @@ async def chat(req: ChatRequest):
 - Sempre calcule e exiba o PREÇO MÉDIO (R$/kg) em qualquer análise de produto, cliente ou vendedor — calcule como VALOR_LIQUIDO / QTDE_PRI e formate como R$ X,XX/kg
 - Datas sempre no formato DD/MM/AA (ex: 09/03/26)
 - Finalize SEMPRE com 1 insight ou sugestão OBRIGATORIAMENTE precedido de "💡 Insight:" em linha separada
+- Os dados incluem QTDE_PRI (kg) e QTDE_AUX (caixas/CX). Sempre que apresentar volume, inclua também a quantidade de caixas ao lado do kg. Ex: '250.360 kg | 25.036 cx'
 - Nos insights: SEMPRE cite o dia específico (DD/MM/AA), número do documento (NR NOTA) e/ou produto quando relevante — seja o mais específico possível. Ex: "💡 Insight: Em 11/03/26, a NR NOTA 35900 de J. BEEF DIANTEIRO teve R$/kg acima da média..."
 - Quando perguntado sobre "últimas vendas de um cliente" sem especificar o nome, pergunte qual cliente. Quando o cliente for informado, mostre uma tabela com colunas: DATA | NR NOTA | COD PRODUTO | DESCRIÇÃO | QTDE (kg) | R$/kg — ordenada por data decrescente — limitada aos últimos 15 registros
 - Quando perguntado sobre um período (mês, trimestre, semestre, ano ou intervalo de datas), APRESENTE os dados disponíveis diretamente, SEM mencionar datas ou períodos que não existem no dataset. NUNCA diga frases como "não há dados de X a Y", "os registros estão limitados a", "não tenho dados para esse período" — simplesmente apresente o que existe. Se há dados de 06/03 a 11/03, comece direto: "## Vendas de março/2026" e liste os dados. O usuário já sabe o que pediu.
