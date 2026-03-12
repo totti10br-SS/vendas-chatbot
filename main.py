@@ -327,6 +327,23 @@ def _finalize_filter(dff: pd.DataFrame, pl: str) -> pd.DataFrame:
         if len(nome_prod) > 2:
             dff = dff[dff['DESC_PRODUTO'].str.lower().str.contains(nome_prod, na=False)]
 
+    # ── Filtro por NR NOTA / NUM_DOCTO específico ──
+    m_nota = re.search(r'\bnr?\s*(?:nota|docto|doc)?\s*[:\s#]?\s*(\d{3,8})\b', pl)
+    if m_nota and 'NUM_DOCTO' in dff.columns:
+        nr = m_nota.group(1)
+        mask_nota = dff['NUM_DOCTO'].astype(str).str.strip() == nr
+        if mask_nota.sum() > 0:
+            dff = dff[mask_nota]
+
+    # ── "última nota" / "ultimo pedido" — retorna os itens da nota mais recente ──
+    if any(x in pl for x in ['última nota','ultima nota','último pedido','ultimo pedido','last nota']) and 'NUM_DOCTO' in dff.columns:
+        if len(dff) > 0:
+            ultima_data = dff['DATA_MOVTO'].max()
+            dff_dia = dff[dff['DATA_MOVTO'] == ultima_data]
+            # Pega o maior NUM_DOCTO do dia mais recente (ou o único)
+            ultimo_nr = dff_dia['NUM_DOCTO'].max()
+            dff = dff[dff['NUM_DOCTO'] == ultimo_nr]
+
     if len(dff) == 0:
         dff_orig = pd.DataFrame()  # retorna vazio — não força fallback 30 dias
         return dff_orig[[c for c in cols if c in dff_orig.columns]] if len(dff_orig) else dff[[c for c in cols if c in dff.columns]]
@@ -446,8 +463,10 @@ def is_summary_query(pergunta: str) -> bool:
         'mês passado','mes passado','mês anterior','mes anterior','este mês','esse mês',
         'este mes','esse mes','semana passada','semana anterior','esta semana','essa semana'
     ]
-    # Não agregar se for busca específica de cliente/produto/nota
-    specific_keywords = ['últimas vendas','ultimas vendas','ultima venda','última venda','nota ','nr ']
+    # Não agregar se for busca específica de cliente/produto/nota/última nota
+    specific_keywords = ['últimas vendas','ultimas vendas','ultima venda','última venda',
+                         'nota ','nr ','última nota','ultima nota','último pedido','ultimo pedido',
+                         'nr nota','nr_nota','numero da nota','número da nota']
     if any(x in pl for x in specific_keywords):
         return False
 
@@ -1470,7 +1489,12 @@ async def chat(req: ChatRequest):
                 vends_str = "indisponível"
             aviso_vendedor = f" | ⚠️ VENDEDOR '{nome_buscado.upper()}' NÃO LOCALIZADO — sugerir busca por código (ex: 'vendedor cod XXXX') | Vendedores disponíveis no período: {vends_str}"
 
-        if n > 1500 or is_summary_query(pergunta_para_filtro) or is_summary_query(ultima):
+        is_nota_query = any(x in pergunta_para_filtro.lower() for x in [
+            'última nota','ultima nota','último pedido','ultimo pedido',
+            'nota ','nr nota','nr_nota','numero da nota','número da nota'
+        ]) or bool(re.search(r'\bnr?\s*(?:nota|docto|doc)?\s*[:\s#]?\s*\d{3,8}\b', pergunta_para_filtro.lower()))
+
+        if (n > 1500 or is_summary_query(pergunta_para_filtro) or is_summary_query(ultima)) and not is_nota_query:
             sales_data = aggregate_for_summary(dff)
             data_label = f"DADOS AGREGADOS ({n} registros originais){' | ' + periodo_label if periodo_label else ''}{aviso_vendedor}"
         else:
