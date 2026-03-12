@@ -628,6 +628,257 @@ def is_pdf_query(pergunta: str) -> bool:
     pl = pergunta.lower()
     return any(x in pl for x in ['pdf','exportar','exporta','gerar relatório','gerar relatorio','imprimir','download'])
 
+def is_pptx_query(pergunta: str) -> bool:
+    """Detecta se o usuário quer uma apresentação PowerPoint."""
+    pl = pergunta.lower()
+    return any(x in pl for x in [
+        'apresentação','apresentacao','powerpoint','pptx','ppt','slides','slide deck',
+        'deck','apresentar para','apresentar à','apresentar a diretoria',
+        'apresentar ao board','pitch','reunião de','reuniao de'
+    ])
+
+def gerar_pptx(conteudo_md: str) -> str:
+    """Gera apresentação PowerPoint executiva com layout Frinense a partir de Markdown."""
+    import subprocess, tempfile, os, re as _re
+
+    # Paleta Frinense
+    C_RED      = "C0392B"
+    C_RED_DRK  = "7B241C"
+    C_YELLOW   = "F5C800"
+    C_BLACK    = "1A1A1A"
+    C_DARK     = "1C2833"
+    C_WHITE    = "FFFFFF"
+    C_GRAY_L   = "F4F4F4"
+    C_GRAY_M   = "888888"
+    C_GRAY_D   = "444444"
+    C_GREEN    = "1A6B3A"
+
+    # Parseia Markdown em seções de slides
+    slides_raw = []
+    current = {"title": "", "subtitle": "", "items": [], "table": [], "kpis": []}
+    linhas = conteudo_md.split('\n')
+
+    for linha in linhas:
+        l = linha.strip()
+        if l.startswith('# ') and not l.startswith('## '):
+            if current["title"]:
+                slides_raw.append(dict(current))
+            current = {"title": l[2:].strip(), "subtitle": "", "items": [], "table": [], "kpis": []}
+        elif l.startswith('## '):
+            if current["title"]:
+                slides_raw.append(dict(current))
+            current = {"title": l[3:].strip(), "subtitle": "", "items": [], "table": [], "kpis": []}
+        elif l.startswith('### '):
+            current["subtitle"] = l[4:].strip()
+        elif l.startswith('| ') and '|' in l[1:]:
+            if not _re.match(r'^\|[\s\-\|:]+\|$', l):
+                cols = [c.strip() for c in l.strip('|').split('|')]
+                current["table"].append(cols)
+        elif l.startswith('- ') or l.startswith('* '):
+            current["items"].append(l[2:].strip())
+        elif l.startswith('**') and ':' in l:
+            current["kpis"].append(l.strip('*').strip())
+        elif l and not l.startswith('---'):
+            if current["subtitle"] == "" and current["title"]:
+                pass  # ignora texto solto por enquanto
+
+    if current["title"]:
+        slides_raw.append(dict(current))
+
+    # Gera JS para pptxgenjs
+    def esc(s):
+        return s.replace('\\','\\\\').replace('"','\\"').replace('\n','\\n').replace('\r','')
+
+    def strip_md(s):
+        s = _re.sub(r'\*\*(.+?)\*\*', r'\1', s)
+        s = _re.sub(r'\*(.+?)\*', r'\1', s)
+        return s.strip()
+
+    js_slides = []
+
+    for idx, slide in enumerate(slides_raw):
+        titulo = esc(strip_md(slide["title"]))
+        subtitulo = esc(strip_md(slide["subtitle"]))
+        items = [strip_md(x) for x in slide["items"]]
+        table = [[strip_md(c) for c in row] for row in slide["table"]]
+        kpis  = slide["kpis"]
+        is_first = (idx == 0)
+        is_last  = (idx == len(slides_raw) - 1)
+
+        lines = [f'  // ── Slide {idx+1}: {titulo[:40]} ──']
+        lines.append('  { const slide = pres.addSlide();')
+
+        # ── CAPA ──
+        if is_first:
+            lines.append(f'  slide.background = {{ color: "{C_RED_DRK}" }};')
+            # Faixa preta esquerda decorativa
+            lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:0, y:0, w:0.18, h:5.625, fill:{{ color:"{C_BLACK}" }}, line:{{ color:"{C_BLACK}" }} }});')
+            # Accent amarelo topo
+            lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:0, y:0, w:10, h:0.07, fill:{{ color:"{C_YELLOW}" }}, line:{{ color:"{C_YELLOW}" }} }});')
+            # Accent amarelo rodapé
+            lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:0, y:5.55, w:10, h:0.075, fill:{{ color:"{C_YELLOW}" }}, line:{{ color:"{C_YELLOW}" }} }});')
+            # Bloco título
+            lines.append(f'  slide.addText("{titulo}", {{ x:0.5, y:1.5, w:9, h:1.6, fontSize:42, fontFace:"Calibri", bold:true, color:"{C_WHITE}", valign:"middle", margin:0 }});')
+            if subtitulo:
+                lines.append(f'  slide.addText("{subtitulo}", {{ x:0.5, y:3.2, w:8, h:0.6, fontSize:18, fontFace:"Calibri", color:"FFCCCC", valign:"top", margin:0 }});')
+            # Data e empresa
+            from datetime import datetime as _dt
+            data_hoje = _dt.now().strftime('%d/%m/%Y')
+            lines.append(f'  slide.addText("Frinense Alimentos  ·  {data_hoje}  ·  Uso Interno", {{ x:0.5, y:5.0, w:9, h:0.4, fontSize:10, fontFace:"Calibri", color:"FFAAAA", align:"left", margin:0 }});')
+
+        # ── CONCLUSÃO / ÚLTIMO SLIDE ──
+        elif is_last:
+            lines.append(f'  slide.background = {{ color: "{C_DARK}" }};')
+            lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:0, y:0, w:0.18, h:5.625, fill:{{ color:"{C_RED}" }}, line:{{ color:"{C_RED}" }} }});')
+            lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:0, y:5.55, w:10, h:0.075, fill:{{ color:"{C_YELLOW}" }}, line:{{ color:"{C_YELLOW}" }} }});')
+            lines.append(f'  slide.addText("{titulo}", {{ x:0.5, y:1.8, w:9, h:1.4, fontSize:36, fontFace:"Calibri", bold:true, color:"{C_WHITE}", valign:"middle", align:"center", margin:0 }});')
+            if items:
+                bullets = [{{ "text": esc(x), "options": {{ "bullet": True, "breakLine": True, "fontSize": 15, "color": "DDDDDD" }} }} for x in items]
+                bullet_js = '[' + ','.join([f'{{ text: "{esc(x)}", options: {{ bullet: true, breakLine: true, fontSize: 15, color: "DDDDDD" }} }}' for x in items[:-1]] +
+                            [f'{{ text: "{esc(items[-1])}", options: {{ bullet: true, fontSize: 15, color: "DDDDDD" }} }}']) + ']'
+                lines.append(f'  slide.addText({bullet_js}, {{ x:1.5, y:3.2, w:7, h:1.8, fontFace:"Calibri", valign:"top", margin:0 }});')
+            lines.append(f'  slide.addText("IAF · Analista Comercial · Frinense Alimentos", {{ x:0.5, y:5.1, w:9, h:0.35, fontSize:9, fontFace:"Calibri", color:"777777", align:"center", margin:0 }});')
+
+        # ── SLIDES COM KPIs ──
+        elif len(kpis) >= 2:
+            lines.append(f'  slide.background = {{ color: "{C_GRAY_L}" }};')
+            # Header vermelho
+            lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:0, y:0, w:10, h:0.85, fill:{{ color:"{C_RED}" }}, line:{{ color:"{C_RED}" }} }});')
+            lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:0, y:0.83, w:10, h:0.055, fill:{{ color:"{C_YELLOW}" }}, line:{{ color:"{C_YELLOW}" }} }});')
+            lines.append(f'  slide.addText("{titulo}", {{ x:0.35, y:0.1, w:9.3, h:0.65, fontSize:22, fontFace:"Calibri", bold:true, color:"{C_WHITE}", valign:"middle", margin:0 }});')
+            # KPI cards
+            n_kpi = min(len(kpis), 4)
+            kw = 9.0 / n_kpi
+            for ki, kpi in enumerate(kpis[:n_kpi]):
+                parts = kpi.split(':', 1)
+                label = parts[0].strip() if len(parts) > 1 else f"KPI {ki+1}"
+                valor = parts[1].strip() if len(parts) > 1 else parts[0].strip()
+                kx = 0.4 + ki * kw
+                lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:{kx:.2f}, y:1.1, w:{kw-0.12:.2f}, h:1.5, fill:{{ color:"{C_WHITE}" }}, line:{{ color:"E0E0E0", width:0.5 }}, shadow:{{ type:"outer", blur:4, offset:2, angle:135, color:"000000", opacity:0.08 }} }});')
+                lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:{kx:.2f}, y:1.1, w:{kw-0.12:.2f}, h:0.1, fill:{{ color:"{C_RED}" }}, line:{{ color:"{C_RED}" }} }});')
+                lines.append(f'  slide.addText("{esc(valor)}", {{ x:{kx:.2f}, y:1.25, w:{kw-0.12:.2f}, h:0.85, fontSize:26, fontFace:"Calibri", bold:true, color:"{C_RED}", align:"center", valign:"middle", margin:0 }});')
+                lines.append(f'  slide.addText("{esc(label)}", {{ x:{kx:.2f}, y:2.1, w:{kw-0.12:.2f}, h:0.35, fontSize:10, fontFace:"Calibri", color:"{C_GRAY_M}", align:"center", margin:0 }});')
+            # Bullets abaixo dos KPIs
+            if items:
+                bullet_js = '[' + ','.join([f'{{ text: "{esc(x)}", options: {{ bullet: true, breakLine: true, fontSize: 13, color: "{C_GRAY_D}" }} }}' for x in items[:-1]] +
+                            [f'{{ text: "{esc(items[-1])}", options: {{ bullet: true, fontSize: 13, color: "{C_GRAY_D}" }} }}']) + ']'
+                lines.append(f'  slide.addText({bullet_js}, {{ x:0.5, y:2.85, w:9, h:2.4, fontFace:"Calibri", valign:"top", margin:0 }});')
+
+        # ── SLIDES COM TABELA ──
+        elif table and len(table) >= 2:
+            lines.append(f'  slide.background = {{ color: "{C_WHITE}" }};')
+            lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:0, y:0, w:10, h:0.85, fill:{{ color:"{C_RED}" }}, line:{{ color:"{C_RED}" }} }});')
+            lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:0, y:0.83, w:10, h:0.055, fill:{{ color:"{C_YELLOW}" }}, line:{{ color:"{C_YELLOW}" }} }});')
+            lines.append(f'  slide.addText("{titulo}", {{ x:0.35, y:0.1, w:9.3, h:0.65, fontSize:22, fontFace:"Calibri", bold:true, color:"{C_WHITE}", valign:"middle", margin:0 }});')
+            n_cols = max(len(r) for r in table)
+            table_data = []
+            for ri, row in enumerate(table[:16]):
+                row_norm = (row + [''] * n_cols)[:n_cols]
+                cells = []
+                for ci, cell in enumerate(row_norm):
+                    if ri == 0:
+                        cells.append(f'{{ text: "{esc(cell)}", options: {{ bold: true, color: "{C_WHITE}", fill: {{ color: "{C_RED}" }}, align: "center", fontSize: 11 }} }}')
+                    else:
+                        bg = C_WHITE if ri % 2 == 1 else "F9F9F9"
+                        align = "right" if ci > 0 else "left"
+                        cells.append(f'{{ text: "{esc(cell)}", options: {{ color: "{C_GRAY_D}", fill: {{ color: "{bg}" }}, align: "{align}", fontSize: 10 }} }}')
+                table_data.append('[' + ','.join(cells) + ']')
+            col_w = round(9.0 / n_cols, 2)
+            table_js = '[' + ','.join(table_data) + ']'
+            lines.append(f'  slide.addTable({table_js}, {{ x:0.4, y:1.05, w:9.2, colW:[{",".join([str(col_w)]*n_cols)}], border:{{ pt:0.5, color:"E0E0E0" }}, rowH:0.38 }});')
+            if subtitulo:
+                lines.append(f'  slide.addText("{subtitulo}", {{ x:0.4, y:5.2, w:9.2, h:0.3, fontSize:9, fontFace:"Calibri", color:"{C_GRAY_M}", italic:true, margin:0 }});')
+
+        # ── SLIDES COM BULLETS (padrão) ──
+        else:
+            lines.append(f'  slide.background = {{ color: "{C_WHITE}" }};')
+            lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:0, y:0, w:10, h:0.85, fill:{{ color:"{C_RED}" }}, line:{{ color:"{C_RED}" }} }});')
+            lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:0, y:0.83, w:10, h:0.055, fill:{{ color:"{C_YELLOW}" }}, line:{{ color:"{C_YELLOW}" }} }});')
+            lines.append(f'  slide.addText("{titulo}", {{ x:0.35, y:0.1, w:9.3, h:0.65, fontSize:22, fontFace:"Calibri", bold:true, color:"{C_WHITE}", valign:"middle", margin:0 }});')
+            if subtitulo:
+                lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:0.4, y:0.98, w:9.2, h:0.4, fill:{{ color:"F4F4F4" }}, line:{{ color:"E0E0E0", width:0.5 }} }});')
+                lines.append(f'  slide.addText("{subtitulo}", {{ x:0.5, y:0.98, w:9, h:0.4, fontSize:13, fontFace:"Calibri", color:"{C_GRAY_D}", italic:true, valign:"middle", margin:0 }});')
+            if items:
+                y_start = 1.55 if subtitulo else 1.1
+                # Dois colunas se muitos items
+                if len(items) > 5:
+                    mid = (len(items) + 1) // 2
+                    left_items  = items[:mid]
+                    right_items = items[mid:]
+                    for col_items, cx in [(left_items, 0.4), (right_items, 5.1)]:
+                        if col_items:
+                            bullet_js = '[' + ','.join([f'{{ text: "{esc(x)}", options: {{ bullet: true, breakLine: true, fontSize: 14, color: "{C_GRAY_D}" }} }}' for x in col_items[:-1]] +
+                                        [f'{{ text: "{esc(col_items[-1])}", options: {{ bullet: true, fontSize: 14, color: "{C_GRAY_D}" }} }}']) + ']'
+                            lines.append(f'  slide.addText({bullet_js}, {{ x:{cx}, y:{y_start:.2f}, w:4.5, h:{5.625-y_start-0.4:.2f}, fontFace:"Calibri", valign:"top", margin:0 }});')
+                else:
+                    bullet_js = '[' + ','.join([f'{{ text: "{esc(x)}", options: {{ bullet: true, breakLine: true, fontSize: 15, color: "{C_GRAY_D}", paraSpaceAfter: 6 }} }}' for x in items[:-1]] +
+                                [f'{{ text: "{esc(items[-1])}", options: {{ bullet: true, fontSize: 15, color: "{C_GRAY_D}", paraSpaceAfter: 6 }} }}']) + ']'
+                    lines.append(f'  slide.addText({bullet_js}, {{ x:0.5, y:{y_start:.2f}, w:9, h:{5.625-y_start-0.4:.2f}, fontFace:"Calibri", valign:"top", margin:0 }});')
+            elif not table:
+                lines.append(f'  slide.addText("Sem conteúdo disponível", {{ x:1, y:2.5, w:8, h:1, fontSize:16, color:"{C_GRAY_M}", align:"center", margin:0 }});')
+
+        # Rodapé em todos os slides exceto capa
+        if not is_first:
+            lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:0, y:5.45, w:10, h:0.175, fill:{{ color:"F0F0F0" }}, line:{{ color:"E0E0E0", width:0.5 }} }});')
+            lines.append(f'  slide.addText("IAF · Frinense Alimentos · Confidencial", {{ x:0.35, y:5.47, w:7, h:0.15, fontSize:7.5, fontFace:"Calibri", color:"{C_GRAY_M}", margin:0 }});')
+            lines.append(f'  slide.addText("{idx+1}", {{ x:9.5, y:5.47, w:0.4, h:0.15, fontSize:7.5, fontFace:"Calibri", color:"{C_GRAY_M}", align:"right", margin:0 }});')
+
+        lines.append('  }')
+        js_slides.append('\n'.join(lines))
+
+    js_code = f"""
+const pptxgen = require("pptxgenjs");
+const pres = new pptxgen();
+pres.layout = 'LAYOUT_16x9';
+pres.author = 'IAF - Frinense Alimentos';
+pres.title = 'Relatorio de Vendas';
+
+{chr(10).join(js_slides)}
+
+pres.writeFile({{ fileName: "/tmp/iaf_apresentacao.pptx" }}).then(() => {{
+  process.exit(0);
+}}).catch(e => {{
+  console.error(e);
+  process.exit(1);
+}});
+"""
+
+    try:
+        # Escreve e executa o script JS
+        js_path = '/tmp/gerar_pptx.js'
+        with open(js_path, 'w') as f:
+            f.write(js_code)
+
+        result = subprocess.run(
+            ['node', js_path],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            raise Exception(f"Node error: {result.stderr[:500]}")
+
+        with open('/tmp/iaf_apresentacao.pptx', 'rb') as f:
+            pptx_b64 = base64.b64encode(f.read()).decode('utf-8')
+
+        from datetime import datetime as _dt
+        nome = f"IAF_Apresentacao_{_dt.now().strftime('%d%m%Y_%H%M')}.pptx"
+        html = (
+            f'<div style="margin-top:8px;">'
+            f'<a href="data:application/vnd.openxmlformats-officedocument.presentationml.presentation;base64,{pptx_b64}" '
+            f'download="{nome}" '
+            f'style="display:inline-flex;align-items:center;gap:6px;background:#1a5276;'
+            f'color:#fff;padding:9px 18px;border-radius:6px;text-decoration:none;'
+            f'font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;'
+            f'letter-spacing:.5px;border:1px solid rgba(245,200,0,.4);">'
+            f'&#8595; BAIXAR APRESENTAÇÃO (.pptx)</a>'
+            f'<span style="color:rgba(255,255,255,.4);font-size:10px;margin-left:10px;">{nome}</span>'
+            f'</div>'
+        )
+        return html
+
+    except Exception as e:
+        import traceback
+        return f"Erro ao gerar PPTX: {e}\n{traceback.format_exc()}"
+
 def gerar_pdf(historico_msgs: list) -> str:
     """Gera PDF executivo profissional com layout Frinense."""
     try:
@@ -1164,8 +1415,9 @@ async def chat(req: ChatRequest):
         logging.warning(f"[IAF DEBUG] dff apos filter_for_chat={len(dff)} | anos_detectados={anos_debug}")
         n = len(dff)
 
-        # ── PDF: flag para processar após Claude gerar o conteúdo ──
-        gerar_pdf_apos_claude = is_pdf_query(ultima)
+        # ── PDF / PPTX: flags para processar após Claude gerar o conteúdo ──
+        gerar_pdf_apos_claude  = is_pdf_query(ultima)
+        gerar_pptx_apos_claude = is_pptx_query(ultima) and not gerar_pdf_apos_claude
 
         # ── GRÁFICO: intercepta antes de chamar Claude — zero tokens ──
         if is_chart_query(ultima):
@@ -1250,30 +1502,60 @@ async def chat(req: ChatRequest):
         personalidade = ""
 
     system = f"""Você é o IAF, Analista Comercial Sênior da Frinense Alimentos.
+
+## IDENTIDADE E POSTURA
 - Especialista em indicadores comerciais, foco em volume de vendas (kg)
-- Comunicativo mas direto — sem rodeios, sem introduções longas
+- Tom executivo e direto — sem rodeios, sem introduções longas, sem enrolação
 - Prioriza volume (kg) antes de valor financeiro
-- Nunca inventa dados
-- Filiais: ITAP (Itaperuna), BJESUS (Bom Jesus), PORC (Porciúncula), TRINDADE (Trindade)
+- Nunca inventa dados. Se não tiver dados suficientes, diz claramente
+- Raciocínio de gerência comercial: sempre conecta dados com decisão de negócio
+
+## FORMATO PADRÃO DE RESPOSTAS
+- Perguntas simples (1 dado, 1 métrica) → resposta CURTA, máximo 3-4 linhas
+- Análises (período, produto, cliente) → estrutura: Resumo 2 linhas → Tabela/Ranking → Insight
+- Análises completas (solicitadas explicitamente) → estrutura completa com seções ## 
+- NUNCA comece com "Olá", "Claro!", "Com prazer" — vá direto ao dado
 - Use Markdown: ## títulos, **negrito**, tabelas com | Col |
-- Valores: R$ X.XXX,XX | Quantidades: X.XXX,XX kg
-- Sempre calcule e exiba o PREÇO MÉDIO (R$/kg) em qualquer análise de produto, cliente ou vendedor — calcule como VALOR_LIQUIDO / QTDE_PRI e formate como R$ X,XX/kg
-- Datas sempre no formato DD/MM/AA (ex: 09/03/26)
-- Finalize SEMPRE com 1 insight ou sugestão OBRIGATORIAMENTE precedido de "💡 Insight:" em linha separada
-- Os dados incluem QTDE_PRI (kg) e QTDE_AUX (caixas/CX). Sempre que apresentar volume, inclua também a quantidade de caixas ao lado do kg. Ex: '250.360 kg | 25.036 cx'
-- Nos insights: SEMPRE cite o dia específico (DD/MM/AA), número do documento (NR NOTA) e/ou produto quando relevante — seja o mais específico possível. Ex: "💡 Insight: Em 11/03/26, a NR NOTA 35900 de J. BEEF DIANTEIRO teve R$/kg acima da média..."
-- Quando perguntado sobre "últimas vendas de um cliente" sem especificar o nome, pergunte qual cliente. Quando o cliente for informado, mostre uma tabela com colunas: DATA | NR NOTA | COD PRODUTO | DESCRIÇÃO | QTDE (kg) | R$/kg — ordenada por data decrescente — limitada aos últimos 15 registros
-- Quando perguntado sobre um período (mês, trimestre, semestre, ano ou intervalo de datas), APRESENTE os dados disponíveis diretamente, SEM mencionar datas ou períodos que não existem no dataset. NUNCA diga frases como "não há dados de X a Y", "os registros estão limitados a", "não tenho dados para esse período" — simplesmente apresente o que existe. Se há dados de 06/03 a 11/03, comece direto: "## Vendas de março/2026" e liste os dados. O usuário já sabe o que pediu.
-- Quando identificar que a pergunta envolve um período longo (mensal, trimestral, semestral ou anual) E o usuário não especificou o nível de detalhe, pergunte ao usuário qual o nível desejado, oferecendo opções claras: "1) Resumo executivo (totais por filial e top clientes) 2) Análise detalhada por dia 3) Ranking completo de produtos e vendedores 4) Comparativo entre filiais". Só processe após a confirmação — EXCETO se o usuário já deixou claro o que quer (ex: "quero um resumo", "me dê o ranking", "análise detalhada")
-- Filtro por estado/UF: o sistema reconhece siglas (ES, RJ, SP...) e nomes por extenso ("Espírito Santo", "Minas Gerais"...) filtrando automaticamente a coluna UF. Ao analisar por estado, destaque: volume total, faturamento, principais clientes, produtos mais vendidos e cidades atendidas
-- Busca de vendedor: o sistema tenta localizar pelo nome (busca parcial por palavras). Se os dados retornados estiverem VAZIOS e a pergunta mencionar um vendedor, informe que não localizou o vendedor pelo nome informado e sugira: "1) Verifique o nome exato no sistema 2) Tente buscar pelo código: ex: 'vendedor cod 4063'" — liste também até 5 vendedores disponíveis no período como sugestão, se houver dados.
+- Valores: R$ X.XXX,XX | Quantidades: X.XXX,XX kg | Datas: DD/MM/AA
+
+## COMPARATIVO AUTOMÁTICO
+- Sempre que apresentar dados de um período, calcule e exiba a variação vs. período anterior equivalente
+- Ex: hoje vs ontem, semana atual vs semana anterior, mês atual vs mês anterior
+- Formato: "29.324 kg (+12% vs ontem)" ou "R$ 1,06M (-8% vs semana passada)"
+- Se não houver dados do período anterior, omita a variação silenciosamente
+
+## ALERTAS PROATIVOS
+- Se detectar anomalia nos dados (queda/alta acima de 20%, cliente sem compra há mais de 7 dias, produto zerado, filial abaixo da média), mencione no insight mesmo sem ser perguntado
+- Formato: "⚠️ Atenção: [anomalia detectada]"
+
+## MÉTRICAS OBRIGATÓRIAS
+- PREÇO MÉDIO (R$/kg): calcule como VALOR_LIQUIDO / QTDE_PRI em toda análise de produto, cliente ou vendedor
+- CAIXAS: sempre exiba QTDE_AUX (cx) junto com kg. Ex: '29.324 kg | 2.324 cx'
+- Filiais: ITAP (Itaperuna), BJESUS (Bom Jesus), PORC (Porciúncula), TRINDADE (Trindade)
+
+## INSIGHT FINAL
+- Finalize SEMPRE com 1 insight executivo precedido de "💡 Insight:" em linha separada
+- Seja específico: cite dia (DD/MM/AA), NR NOTA, produto ou cliente quando relevante
+- O insight deve sugerir uma AÇÃO ou destacar uma OPORTUNIDADE, não apenas repetir dados
+
+## COMPORTAMENTOS ESPECÍFICOS
+- "Últimas vendas de [cliente]": tabela DATA | NR NOTA | COD PRODUTO | DESCRIÇÃO | QTDE kg | CX | R$/kg — últimos 15 registros, data decrescente
+- Período sem detalhe especificado (mensal/trimestral/anual): ofereça 4 opções antes de processar: "1) Resumo executivo 2) Análise por dia 3) Ranking produtos/vendedores 4) Comparativo filiais"
+- EXCEÇÃO: se o usuário já especificou o que quer ("resumo", "ranking", "análise detalhada"), processe direto
+- Filtro UF: reconhece siglas (ES, RJ...) e nomes por extenso. Destaque: volume, faturamento, clientes, produtos, cidades
+- Vendedor não encontrado: sugira busca por código e liste até 5 disponíveis no período
+- Apresente dados disponíveis SEM mencionar o que não existe. Nunca diga "não tenho dados de X"
+
 {personalidade}
 DADOS ({data_label}):
 {sales_data}"""
 
-    # Se for PDF, instrui o Claude a gerar conteúdo analítico completo em Markdown puro
+    # Instrução extra por tipo de output
     if gerar_pdf_apos_claude:
-        system += "\n\nIMPORTANTE: O usuário quer um PDF. Gere uma análise completa e detalhada em Markdown puro (sem HTML, sem base64, sem <img>). Use ## títulos, ### subtítulos, tabelas com |, bullets com -. Seja extenso e analítico — o conteúdo será convertido em PDF profissional."
+        system += "\n\nIMPORTANTE: O usuário quer um PDF executivo. Gere análise COMPLETA e DETALHADA em Markdown puro (sem HTML, sem base64). Estrutura: # Título principal → ## Seções → ### Subseções → tabelas com | → bullets com -. Seja extenso, analítico e com linguagem de relatório executivo para diretoria. Inclua: resumo executivo, KPIs principais (**Label**: Valor), análise por filial, top clientes, top produtos, análise temporal, pontos de atenção e recomendações."
+        max_tok = 4000
+    elif gerar_pptx_apos_claude:
+        system += "\n\nIMPORTANTE: O usuário quer uma APRESENTAÇÃO POWERPOINT para diretoria. Estruture o conteúdo em slides usando Markdown:\n- Use # para título de cada slide (será 1 slide)\n- Use ## para slides de seção\n- Use **KPI**: Valor para métricas que virão como cards visuais (máx 4 por slide)\n- Use - bullets para listas (máx 6 itens por slide — seja conciso)\n- Use tabelas | Col | para dados tabulares (máx 15 linhas)\n- Estrutura recomendada: 1) Capa (# Título), 2) Resumo Executivo com KPIs, 3) Análise por Filial, 4) Top Clientes, 5) Top Produtos, 6) Análise Temporal, 7) Pontos de Atenção, 8) Conclusão/Recomendações\n- Linguagem executiva, focada em DECISÃO. Cada slide deve ter 1 mensagem clara.\n- Máximo 10-12 slides. Qualidade acima de quantidade."
         max_tok = 4000
     else:
         max_tok = 1500
@@ -1303,7 +1585,6 @@ DADOS ({data_label}):
                     texto_claude += bloco["text"]
 
             if texto_claude:
-                # Cria mensagem fake com a resposta do Claude para o gerador de PDF
                 class _FakeMsg:
                     def __init__(self, role, content):
                         self.role = role
@@ -1325,7 +1606,31 @@ DADOS ({data_label}):
         except Exception as e_pdf:
             import logging
             logging.warning(f"[IAF PDF] Erro ao gerar PDF após Claude: {e_pdf}")
-            # Cai no retorno normal se falhar
+
+    # ── PPTX: pega conteúdo gerado pelo Claude e converte ──
+    if gerar_pptx_apos_claude:
+        try:
+            texto_claude = ""
+            for bloco in resposta_json.get("content", []):
+                if bloco.get("type") == "text":
+                    texto_claude += bloco["text"]
+
+            if texto_claude:
+                html_pptx = gerar_pptx(texto_claude)
+                if html_pptx:
+                    n_slides = texto_claude.count('\n# ') + texto_claude.count('\n## ') + 1
+                    resposta_com_pptx = f"📊 **Apresentação gerada!** ({n_slides} slides)\n\n{html_pptx}\n\n---\n\n{texto_claude}"
+                    return JSONResponse({
+                        "id": resposta_json.get("id", "pptx"),
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": resposta_com_pptx}],
+                        "model": resposta_json.get("model", "local-pptxgenjs"),
+                        "stop_reason": "end_turn"
+                    })
+        except Exception as e_pptx:
+            import logging
+            logging.warning(f"[IAF PPTX] Erro ao gerar PPTX após Claude: {e_pptx}")
 
     return resposta_json
 
