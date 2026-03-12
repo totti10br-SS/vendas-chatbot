@@ -415,6 +415,23 @@ def dashboard():
         tipos = [{"tipo": r.DESC_DIVISAO2, "kg": round(r.kg,2), "fat": round(r.fat,2)}
                  for r in tipos_grp.itertuples()]
 
+        # Horário de modificação do arquivo no Google Drive
+        csv_modificado_str = "—"
+        try:
+            service = get_drive_service()
+            file_meta = service.files().get(
+                fileId=FILE_ID,
+                fields='modifiedTime'
+            ).execute()
+            modified_utc = file_meta.get('modifiedTime','')
+            if modified_utc:
+                from datetime import timezone
+                dt_utc = datetime.strptime(modified_utc, '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=timezone.utc)
+                dt_local = dt_utc.astimezone()
+                csv_modificado_str = dt_local.strftime('%d/%m/%Y %H:%M')
+        except:
+            pass
+
         dia_label = dia.strftime('%d/%m/%Y')
 
         return JSONResponse({
@@ -424,6 +441,7 @@ def dashboard():
             "kg":  round(kg, 2),
             "notas": notas,
             "ultima_nota": ultima_str,
+            "csv_modificado": csv_modificado_str,
             "top10": top10,
             "tipos": tipos
         })
@@ -465,6 +483,160 @@ def is_chart_query(pergunta: str) -> bool:
         'gráfico','grafico','chart','plotar','plot','visualiz',
         'evolução','evolucao','tendencia','tendência','barra','linha','pizza','pie'
     ])
+
+def is_pdf_query(pergunta: str) -> bool:
+    """Detecta se o usuário quer exportar PDF."""
+    pl = pergunta.lower()
+    return any(x in pl for x in ['pdf','exportar','exporta','gerar relatório','gerar relatorio','imprimir','download'])
+
+def gerar_pdf(historico_msgs: list) -> str:
+    """
+    Pega a última resposta do IAF no histórico e gera um PDF.
+    Retorna HTML com link de download em base64.
+    """
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import cm
+        from reportlab.lib import colors
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+        from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+        import re as _re
+
+        # Pega última resposta do assistant
+        ultima_resposta = ""
+        for msg in reversed(historico_msgs):
+            if msg.role == "assistant":
+                ultima_resposta = msg.content
+                break
+
+        if not ultima_resposta:
+            return None
+
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(
+            buf, pagesize=A4,
+            leftMargin=2*cm, rightMargin=2*cm,
+            topMargin=2*cm, bottomMargin=2*cm
+        )
+
+        # Cores Frinense
+        VERMELHO = colors.HexColor('#c0392b')
+        AMARELO  = colors.HexColor('#f5c800')
+        ESCURO   = colors.HexColor('#1a1a1a')
+        CINZA    = colors.HexColor('#444444')
+
+        styles = getSampleStyleSheet()
+        style_titulo = ParagraphStyle('titulo', fontSize=16, textColor=VERMELHO,
+                                       fontName='Helvetica-Bold', spaceAfter=4, leading=20)
+        style_h2     = ParagraphStyle('h2', fontSize=12, textColor=VERMELHO,
+                                       fontName='Helvetica-Bold', spaceBefore=10, spaceAfter=4)
+        style_normal = ParagraphStyle('normal', fontSize=9, textColor=ESCURO,
+                                       fontName='Helvetica', spaceAfter=3, leading=13)
+        style_bold   = ParagraphStyle('bold', fontSize=9, textColor=ESCURO,
+                                       fontName='Helvetica-Bold', spaceAfter=3)
+        style_small  = ParagraphStyle('small', fontSize=8, textColor=CINZA,
+                                       fontName='Helvetica', spaceAfter=2)
+
+        story = []
+
+        # Cabeçalho
+        story.append(Paragraph("IAF · ANALISTA COMERCIAL", style_titulo))
+        story.append(Paragraph("Frinense Alimentos — Relatório de Vendas", style_small))
+        story.append(Paragraph(f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}", style_small))
+        story.append(HRFlowable(width="100%", thickness=2, color=VERMELHO, spaceAfter=10))
+
+        # Processa markdown da resposta linha por linha
+        linhas = ultima_resposta.split('\n')
+        i = 0
+        while i < len(linhas):
+            linha = linhas[i].strip()
+
+            # Pula imagens base64
+            if '<img ' in linha:
+                i += 1
+                continue
+
+            # Título H1/H2
+            if linha.startswith('## '):
+                story.append(Paragraph(linha[3:], style_h2))
+            elif linha.startswith('# '):
+                story.append(Paragraph(linha[2:], style_titulo))
+
+            # Tabela markdown: detecta linha com |
+            elif linha.startswith('|') and '|' in linha[1:]:
+                tabela_linhas = []
+                while i < len(linhas) and linhas[i].strip().startswith('|'):
+                    l = linhas[i].strip()
+                    # Pula linha separadora (|---|---|)
+                    if not _re.match(r'^\|[\s\-\|]+\|$', l):
+                        colunas = [c.strip() for c in l.strip('|').split('|')]
+                        tabela_linhas.append(colunas)
+                    i += 1
+
+                if tabela_linhas:
+                    # Estilo da tabela
+                    t = Table(tabela_linhas, repeatRows=1)
+                    t.setStyle(TableStyle([
+                        ('BACKGROUND',  (0,0), (-1,0), VERMELHO),
+                        ('TEXTCOLOR',   (0,0), (-1,0), colors.white),
+                        ('FONTNAME',    (0,0), (-1,0), 'Helvetica-Bold'),
+                        ('FONTSIZE',    (0,0), (-1,-1), 8),
+                        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f9f9f9')]),
+                        ('GRID',        (0,0), (-1,-1), 0.3, colors.HexColor('#dddddd')),
+                        ('ALIGN',       (1,0), (-1,-1), 'RIGHT'),
+                        ('ALIGN',       (0,0), (0,-1), 'LEFT'),
+                        ('TOPPADDING',  (0,0), (-1,-1), 3),
+                        ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+                        ('LEFTPADDING', (0,0), (-1,-1), 5),
+                    ]))
+                    story.append(t)
+                    story.append(Spacer(1, 6))
+                continue
+
+            # Bullet
+            elif linha.startswith('- ') or linha.startswith('• '):
+                texto = linha[2:].strip()
+                texto = _re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', texto)
+                story.append(Paragraph(f"• {texto}", style_normal))
+
+            # Linha em branco
+            elif linha == '':
+                story.append(Spacer(1, 4))
+
+            # Texto normal com **negrito**
+            elif linha:
+                texto = _re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', linha)
+                story.append(Paragraph(texto, style_normal))
+
+            i += 1
+
+        # Rodapé
+        story.append(Spacer(1, 10))
+        story.append(HRFlowable(width="100%", thickness=1, color=VERMELHO, spaceAfter=4))
+        story.append(Paragraph("IAF · Frinense Alimentos · Documento gerado automaticamente", style_small))
+
+        doc.build(story)
+        buf.seek(0)
+        pdf_b64 = base64.b64encode(buf.read()).decode('utf-8')
+
+        # Retorna HTML com botão de download
+        nome_arquivo = f"IAF_Relatorio_{datetime.now().strftime('%d%m%Y_%H%M')}.pdf"
+        html = (
+            f'<div style="margin-top:8px;">'
+            f'<a href="data:application/pdf;base64,{pdf_b64}" download="{nome_arquivo}" '
+            f'style="display:inline-block;background:#c0392b;color:#fff;padding:8px 16px;'
+            f'border-radius:6px;text-decoration:none;font-family:Barlow Condensed,sans-serif;'
+            f'font-weight:700;font-size:13px;letter-spacing:.5px;">'
+            f'⬇ BAIXAR PDF</a>'
+            f'<span style="color:rgba(255,255,255,.5);font-size:10px;margin-left:10px;">{nome_arquivo}</span>'
+            f'</div>'
+        )
+        return html
+
+    except Exception as e:
+        return f"⚠️ Erro ao gerar PDF: {e}"
+
 
 # Paleta Frinense
 COR_PRIMARIA  = '#c0392b'   # vermelho
@@ -661,6 +833,20 @@ async def chat(req: ChatRequest):
         df = load_df()
         dff = filter_for_chat(df, pergunta_para_filtro)
         n = len(dff)
+
+        # ── PDF: intercepta antes de chamar Claude — zero tokens ──
+        if is_pdf_query(ultima):
+            html_pdf = gerar_pdf(req.messages)
+            if html_pdf:
+                resposta_md = f"📄 **Relatório PDF gerado!**\n\n{html_pdf}"
+                return JSONResponse({
+                    "id": "pdf",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": resposta_md}],
+                    "model": "local-reportlab",
+                    "stop_reason": "end_turn"
+                })
 
         # ── GRÁFICO: intercepta antes de chamar Claude — zero tokens ──
         if is_chart_query(ultima):
