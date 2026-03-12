@@ -237,7 +237,7 @@ def _finalize_filter(dff: pd.DataFrame, pl: str) -> pd.DataFrame:
                 dff = dff[mask]
 
     cols = ['NOME_FILIAL','DATA_MOVTO','NUM_DOCTO','COD_PRODUTO','DESC_PRODUTO','NOME_CLIENTE',
-            'NOM_VENDEDOR','QTDE_PRI','VALOR_LIQUIDO','DESC_DIVISAO2','DESC_DIVISAO3']
+            'NOM_VENDEDOR','COD_VENDEDOR','QTDE_PRI','VALOR_LIQUIDO','DESC_DIVISAO2','DESC_DIVISAO3']
 
     if any(x in pl for x in ['últimas vendas','ultimas vendas','ultima venda','última venda']):
         dff = dff.sort_values('DATA_MOVTO', ascending=False).head(15)
@@ -246,6 +246,15 @@ def _finalize_filter(dff: pd.DataFrame, pl: str) -> pd.DataFrame:
     m = re.search(r'vendedor[:\s]+([a-záéíóúâêîôûãõç\s]+)', pl)
     if m and len(m.group(1).strip()) > 2:
         dff = dff[dff['NOM_VENDEDOR'].str.lower().str.contains(m.group(1).strip(), na=False)]
+    else:
+        # Detecta código de vendedor: "cod 4063", "código 4063", "cod_vendedor 4063"
+        m_cod = re.search(r'cod(?:igo)?[_\s]+(?:vendedor[_\s]+)?(\d{3,6})', pl)
+        if m_cod:
+            cod = m_cod.group(1)
+            if 'COD_VENDEDOR' in dff.columns:
+                dff_cod = dff[dff['COD_VENDEDOR'].astype(str).str.strip() == cod]
+                if len(dff_cod) > 0:
+                    dff = dff_cod
 
     m = re.search(r'produto[:\s]+([a-záéíóúâêîôûãõç\s]+)', pl)
     if m and len(m.group(1).strip()) > 2:
@@ -305,12 +314,18 @@ def aggregate_for_summary(dff: pd.DataFrame) -> str:
         lines.append(f"{idx[1]}: {r.kg:,.2f} kg | R$ {r.fat:,.2f} | R$ {pm:.2f}/kg")
     lines.append("")
 
-    # Top 10 vendedores
-    lines.append("## TOP 10 VENDEDORES (por volume)")
-    por_vend = dff.groupby('NOM_VENDEDOR').agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum')).sort_values('kg', ascending=False).head(10)
-    for idx, r in por_vend.iterrows():
-        pm = r.fat/r.kg if r.kg > 0 else 0
-        lines.append(f"{idx}: {r.kg:,.2f} kg | R$ {r.fat:,.2f} | R$ {pm:.2f}/kg")
+    # Todos os vendedores (com código)
+    lines.append("## VENDEDORES (por volume)")
+    if 'COD_VENDEDOR' in dff.columns:
+        por_vend = dff.groupby(['COD_VENDEDOR','NOM_VENDEDOR']).agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum')).sort_values('kg', ascending=False)
+        for idx, r in por_vend.iterrows():
+            pm = r.fat/r.kg if r.kg > 0 else 0
+            lines.append(f"COD {idx[0]} | {idx[1]}: {r.kg:,.2f} kg | R$ {r.fat:,.2f} | R$ {pm:.2f}/kg")
+    else:
+        por_vend = dff.groupby('NOM_VENDEDOR').agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum')).sort_values('kg', ascending=False)
+        for idx, r in por_vend.iterrows():
+            pm = r.fat/r.kg if r.kg > 0 else 0
+            lines.append(f"{idx}: {r.kg:,.2f} kg | R$ {r.fat:,.2f} | R$ {pm:.2f}/kg")
     lines.append("")
 
     # Por tipo de carne
