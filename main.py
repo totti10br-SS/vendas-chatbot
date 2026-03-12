@@ -228,6 +228,49 @@ def _finalize_filter(dff: pd.DataFrame, pl: str) -> pd.DataFrame:
             dff = dff[dff['NOME_FILIAL'].str.upper() == val]
             break
 
+    # ── Filtro por UF / Estado ──
+    estados_map = {
+        r'\bes\b': 'ES', r'\brj\b': 'RJ', r'\bsp\b': 'SP', r'\bmg\b': 'MG',
+        r'\bba\b': 'BA', r'\bpr\b': 'PR', r'\bsc\b': 'SC', r'\brs\b': 'RS',
+        r'\bgo\b': 'GO', r'\bdf\b': 'DF', r'\bms\b': 'MS', r'\bmt\b': 'MT',
+        r'\bpa\b': 'PA', r'\bam\b': 'AM', r'\bce\b': 'CE', r'\bpe\b': 'PE',
+        r'\bma\b': 'MA', r'\bpi\b': 'PI', r'\brn\b': 'RN', r'\bpb\b': 'PB',
+        r'\bal\b': 'AL', r'\bse\b': 'SE', r'\bto\b': 'TO', r'\bro\b': 'RO',
+        r'\bac\b': 'AC', r'\brr\b': 'RR', r'\bap\b': 'AP',
+        r'esp[ii]rito\s+santo': 'ES',
+        r'rio\s+de\s+janeiro': 'RJ',
+        r's[ao]o\s+paulo': 'SP',
+        r'minas\s+gerais': 'MG',
+        r'bahia': 'BA',
+        r'paran[a]': 'PR',
+        r'santa\s+catarina': 'SC',
+        r'rio\s+grande\s+do\s+sul': 'RS',
+        r'goi[a]s': 'GO',
+        r'distrito\s+federal': 'DF',
+        r'mato\s+grosso\s+do\s+sul': 'MS',
+        r'mato\s+grosso': 'MT',
+        r'par[a]': 'PA',
+        r'amazonas': 'AM',
+        r'cear[a]': 'CE',
+        r'pernambuco': 'PE',
+        r'maranh[ao]o': 'MA',
+        r'piau[i]': 'PI',
+        r'rio\s+grande\s+do\s+norte': 'RN',
+        r'para[i]ba': 'PB',
+        r'alagoas': 'AL',
+        r'sergipe': 'SE',
+        r'tocantins': 'TO',
+        r'rond[o]nia': 'RO',
+        r'acre': 'AC',
+        r'roraima': 'RR',
+        r'amap[a]': 'AP',
+    }
+    if 'UF' in dff.columns:
+        for padrao, uf in estados_map.items():
+            if re.search(padrao, pl):
+                dff = dff[dff['UF'].str.upper() == uf]
+                break
+
     m_cliente = re.search(r'cliente[:\s]+([a-záéíóúâêîôûãõç\s]+)', pl)
     if m_cliente and len(m_cliente.group(1).strip()) > 2:
         dff = dff[dff['NOME_CLIENTE'].str.lower().str.contains(m_cliente.group(1).strip(), na=False)]
@@ -244,7 +287,7 @@ def _finalize_filter(dff: pd.DataFrame, pl: str) -> pd.DataFrame:
                 dff = dff[mask]
 
     cols = ['NOME_FILIAL','DATA_MOVTO','NUM_DOCTO','COD_PRODUTO','DESC_PRODUTO','NOME_CLIENTE',
-            'NOM_VENDEDOR','COD_VENDEDOR','QTDE_PRI','VALOR_LIQUIDO','DESC_DIVISAO2','DESC_DIVISAO3']
+            'NOM_VENDEDOR','COD_VENDEDOR','QTDE_PRI','VALOR_LIQUIDO','DESC_DIVISAO2','DESC_DIVISAO3','UF','CIDADE']
 
     if any(x in pl for x in ['últimas vendas','ultimas vendas','ultima venda','última venda']):
         dff = dff.sort_values('DATA_MOVTO', ascending=False).head(15)
@@ -351,6 +394,15 @@ def aggregate_for_summary(dff: pd.DataFrame) -> str:
             pm = r.fat/r.kg if r.kg > 0 else 0
             lines.append(f"{idx}: {r.kg:,.2f} kg | R$ {r.fat:,.2f} | R$ {pm:.2f}/kg")
     lines.append("")
+
+    # Por UF / Estado
+    if 'UF' in dff.columns:
+        lines.append("## POR ESTADO (UF)")
+        por_uf = dff.groupby('UF').agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'), notas=('NUM_DOCTO','nunique')).sort_values('kg', ascending=False)
+        for idx, r in por_uf.iterrows():
+            pm = r.fat/r.kg if r.kg > 0 else 0
+            lines.append(f"{idx}: {r.kg:,.2f} kg | R$ {r.fat:,.2f} | {r.notas} notas | R$ {pm:.2f}/kg")
+        lines.append("")
 
     # Por tipo de carne
     lines.append("## POR TIPO DE CARNE (DESC_DIVISAO2)")
@@ -983,6 +1035,7 @@ async def chat(req: ChatRequest):
 - Quando perguntado sobre "últimas vendas de um cliente" sem especificar o nome, pergunte qual cliente. Quando o cliente for informado, mostre uma tabela com colunas: DATA | NR NOTA | COD PRODUTO | DESCRIÇÃO | QTDE (kg) | R$/kg — ordenada por data decrescente — limitada aos últimos 15 registros
 - Quando perguntado sobre um período (mês, trimestre, semestre, ano ou intervalo de datas), APRESENTE os dados disponíveis diretamente, SEM mencionar datas ou períodos que não existem no dataset. NUNCA diga frases como "não há dados de X a Y", "os registros estão limitados a", "não tenho dados para esse período" — simplesmente apresente o que existe. Se há dados de 06/03 a 11/03, comece direto: "## Vendas de março/2026" e liste os dados. O usuário já sabe o que pediu.
 - Quando identificar que a pergunta envolve um período longo (mensal, trimestral, semestral ou anual) E o usuário não especificou o nível de detalhe, pergunte ao usuário qual o nível desejado, oferecendo opções claras: "1) Resumo executivo (totais por filial e top clientes) 2) Análise detalhada por dia 3) Ranking completo de produtos e vendedores 4) Comparativo entre filiais". Só processe após a confirmação — EXCETO se o usuário já deixou claro o que quer (ex: "quero um resumo", "me dê o ranking", "análise detalhada")
+- Filtro por estado/UF: o sistema reconhece siglas (ES, RJ, SP...) e nomes por extenso ("Espírito Santo", "Minas Gerais"...) filtrando automaticamente a coluna UF. Ao analisar por estado, destaque: volume total, faturamento, principais clientes, produtos mais vendidos e cidades atendidas
 - Busca de vendedor: o sistema tenta localizar pelo nome (busca parcial por palavras). Se os dados retornados estiverem VAZIOS e a pergunta mencionar um vendedor, informe que não localizou o vendedor pelo nome informado e sugira: "1) Verifique o nome exato no sistema 2) Tente buscar pelo código: ex: 'vendedor cod 4063'" — liste também até 5 vendedores disponíveis no período como sugestão, se houver dados.
 {personalidade}
 DADOS ({data_label}):
