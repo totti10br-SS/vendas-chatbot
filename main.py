@@ -243,9 +243,17 @@ def _finalize_filter(dff: pd.DataFrame, pl: str) -> pd.DataFrame:
         dff = dff.sort_values('DATA_MOVTO', ascending=False).head(15)
         return dff[[c for c in cols if c in dff.columns]]
 
+    # Filtro de ano dentro do _finalize_filter (para combinar com vendedor/cliente)
+    anos_pl = re.findall(r'\b(202[0-9])\b', pl)
+    if anos_pl:
+        dff = dff[dff['DATA_MOVTO'].dt.year == int(anos_pl[0])]
+
     m = re.search(r'vendedor[:\s]+([a-záéíóúâêîôûãõç\s]+)', pl)
-    if m and len(m.group(1).strip()) > 2:
-        dff = dff[dff['NOM_VENDEDOR'].str.lower().str.contains(m.group(1).strip(), na=False)]
+    if m:
+        # Limpa palavras de parada após o nome
+        nome_vend = re.split(r'\s+(?:em|de|no|na|para|do|da|nos|nas|\d{4})\b', m.group(1))[0].strip()
+        if len(nome_vend) > 2:
+            dff = dff[dff['NOM_VENDEDOR'].str.lower().str.contains(nome_vend, na=False)]
     else:
         # Detecta código de vendedor: "cod 4063", "código 4063", "cod_vendedor 4063"
         m_cod = re.search(r'cod(?:igo)?[_\s]+(?:vendedor[_\s]+)?(\d{3,6})', pl)
@@ -257,8 +265,10 @@ def _finalize_filter(dff: pd.DataFrame, pl: str) -> pd.DataFrame:
                     dff = dff_cod
 
     m = re.search(r'produto[:\s]+([a-záéíóúâêîôûãõç\s]+)', pl)
-    if m and len(m.group(1).strip()) > 2:
-        dff = dff[dff['DESC_PRODUTO'].str.lower().str.contains(m.group(1).strip(), na=False)]
+    if m:
+        nome_prod = re.split(r'\s+(?:em|de|no|na|para|do|da|\d{4})\b', m.group(1))[0].strip()
+        if len(nome_prod) > 2:
+            dff = dff[dff['DESC_PRODUTO'].str.lower().str.contains(nome_prod, na=False)]
 
     if len(dff) == 0:
         dff_orig = pd.DataFrame()  # retorna vazio — não força fallback 30 dias
