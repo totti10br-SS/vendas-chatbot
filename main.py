@@ -829,7 +829,10 @@ async def chat(req: ChatRequest):
                        'semana passada','semana anterior','esta semana','essa semana',
                        'ontem','hoje','trimestre','semestre','último mês','ultimo mes',
                        r'\d{1,2}/\d{2}/\d{2,4}']
-        return any(i in pl for i in indicadores[:-1]) or bool(re.search(indicadores[-1], pl)) or bool(re.search(r'[uú]ltimos?\s+\d+\s+(m[eê]s|dia|semana)', pl))
+        return (any(i in pl for i in indicadores[:-1])
+                or bool(re.search(indicadores[-1], pl))
+                or bool(re.search(r'[uú]ltimos?\s+\d+\s+(m[eê]s|dia|semana)', pl))
+                or bool(re.search(r'\b202[0-9]\b', pl)))  # ano explícito: 2025, 2026...
 
     pergunta_para_filtro = ultima
     if not tem_contexto_temporal(ultima):
