@@ -301,9 +301,11 @@ body.modo-vasco .welcome p strong{color:#fff;}
     <h1>IAF · Analista Comercial</h1>
     <p>Especialista em Indicadores de Vendas · Frinense Alimentos</p>
   </div>
-  <div class="header-right" style="display:flex;align-items:center;gap:10px;">
-    <button onclick="forceReload()" title="Recarregar dados do Drive" style="background:none;border:1px solid rgba(245,200,0,.3);border-radius:5px;padding:4px 8px;cursor:pointer;color:var(--yellow);font-size:11px;font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.5px;transition:all .2s;" onmouseover="this.style.background='rgba(245,200,0,.1)'" onmouseout="this.style.background='none'">↺ ATUALIZAR</button>
-    <div class="stat-pill"><div class="stat-dot"></div><span id="totalReg">—</span></div>
+  <div class="header-right" style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;">
+    <div style="display:flex;align-items:center;gap:8px;">
+      <div class="stat-pill"><div class="stat-dot"></div><span id="totalReg">—</span></div>
+      <button onclick="forceReload()" title="Recarregar dados do Drive" style="background:none;border:1px solid rgba(245,200,0,.3);border-radius:5px;padding:3px 8px;cursor:pointer;color:var(--yellow);font-size:10px;font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.5px;transition:all .2s;" onmouseover="this.style.background='rgba(245,200,0,.1)'" onmouseout="this.style.background='none'">↺ ATUALIZAR</button>
+    </div>
     <div class="stat-sub" id="csvData" style="color:rgba(245,200,0,.6);font-size:10px;">Atualizado em: —</div>
   </div>
 </header>
@@ -413,7 +415,7 @@ async function init(){
     if(!r.ok) throw new Error('Erro ao carregar');
     const d=await r.json();
     document.getElementById('totalReg').textContent=d.total_registros.toLocaleString('pt-BR')+' registros';
-    document.getElementById('csvData').textContent='Atualizado em: '+(d.csv_modificado||d.ultima_nota);
+    document.getElementById('csvData').textContent='Atualizado em: '+(d.csv_modificado&&d.csv_modificado!='—'?d.csv_modificado:d.ultima_nota);
     document.getElementById('kpiFat').textContent=fmtBRL(d.fat);
     document.getElementById('kpiKg').textContent=fmtKg(d.kg);
     ['diaLabel','diaLabel2','diaLabel3'].forEach(id=>document.getElementById(id).textContent=d.dia_label);
