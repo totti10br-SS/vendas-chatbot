@@ -207,6 +207,10 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
                 dff = dff[dff['DATA_MOVTO'] >= hoje - timedelta(weeks=n)]
             else:  # dias
                 dff = dff[dff['DATA_MOVTO'] >= hoje - timedelta(days=n)]
+        elif anos:
+            # Fallback: ano explicito sem outro filtro temporal
+            # Ex: 'vendedor FABIO POLI em 2025', 'clientes de 2025'
+            dff = dff[dff['DATA_MOVTO'].dt.year == int(anos[0])]
 
     return _finalize_filter(dff, pl)
 
@@ -243,19 +247,13 @@ def _finalize_filter(dff: pd.DataFrame, pl: str) -> pd.DataFrame:
         dff = dff.sort_values('DATA_MOVTO', ascending=False).head(15)
         return dff[[c for c in cols if c in dff.columns]]
 
-    # Filtro de ano dentro do _finalize_filter (para combinar com vendedor/cliente)
-    anos_pl = re.findall(r'\b(202[0-9])\b', pl)
-    if anos_pl:
-        dff = dff[dff['DATA_MOVTO'].dt.year == int(anos_pl[0])]
-
+    # Filtro de vendedor
     m = re.search(r'vendedor[:\s]+([a-záéíóúâêîôûãõç\s]+)', pl)
     if m:
-        # Limpa palavras de parada após o nome
         nome_vend = re.split(r'\s+(?:em|de|no|na|para|do|da|nos|nas|\d{4})\b', m.group(1))[0].strip()
         if len(nome_vend) > 2:
             dff = dff[dff['NOM_VENDEDOR'].str.lower().str.contains(nome_vend, na=False)]
     else:
-        # Detecta código de vendedor: "cod 4063", "código 4063", "cod_vendedor 4063"
         m_cod = re.search(r'cod(?:igo)?[_\s]+(?:vendedor[_\s]+)?(\d{3,6})', pl)
         if m_cod:
             cod = m_cod.group(1)
