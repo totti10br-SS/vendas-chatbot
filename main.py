@@ -566,179 +566,356 @@ def is_pdf_query(pergunta: str) -> bool:
     return any(x in pl for x in ['pdf','exportar','exporta','gerar relatório','gerar relatorio','imprimir','download'])
 
 def gerar_pdf(historico_msgs: list) -> str:
-    """
-    Pega a última resposta do IAF no histórico e gera um PDF.
-    Retorna HTML com link de download em base64.
-    """
+    """Gera PDF executivo profissional com layout Frinense."""
     try:
         from reportlab.lib.pagesizes import A4
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.styles import ParagraphStyle
         from reportlab.lib.units import cm
         from reportlab.lib import colors
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
-        from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+        from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
+                                        Table, TableStyle, HRFlowable, KeepTogether)
+        from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT, TA_JUSTIFY
+        from reportlab.pdfgen import canvas as rl_canvas
         import re as _re
 
-        # Pega última resposta do assistant
         ultima_resposta = ""
         for msg in reversed(historico_msgs):
             if msg.role == "assistant":
                 ultima_resposta = msg.content
                 break
-
         if not ultima_resposta:
             return None
 
+        C_RED      = colors.HexColor('#c0392b')
+        C_RED_DRK  = colors.HexColor('#7b241c')
+        C_YELLOW   = colors.HexColor('#f5c800')
+        C_BLACK    = colors.HexColor('#1a1a1a')
+        C_DARK     = colors.HexColor('#2c3e50')
+        C_GRAY_D   = colors.HexColor('#555555')
+        C_GRAY_M   = colors.HexColor('#888888')
+        C_GRAY_L   = colors.HexColor('#f4f4f4')
+        C_GRAY_LN  = colors.HexColor('#e0e0e0')
+        C_WHITE    = colors.white
+        C_GREEN    = colors.HexColor('#1a6b3a')
+        C_BLUE_DRK = colors.HexColor('#1a3a5c')
+
+        PAGE_W, PAGE_H = A4
+        ML = 1.8*cm
+        CONTENT_W = PAGE_W - 2*ML
+
+        def P(name, **kw):
+            d = dict(fontName='Helvetica', fontSize=9, leading=13,
+                     textColor=C_DARK, spaceAfter=2)
+            d.update(kw)
+            return ParagraphStyle(name, **d)
+
+        sH1    = P('h1', fontSize=15, fontName='Helvetica-Bold', textColor=C_RED,
+                   spaceBefore=10, spaceAfter=6, leading=19)
+        sH2    = P('h2', fontSize=11, fontName='Helvetica-Bold', textColor=C_WHITE,
+                   leading=14)
+        sH3    = P('h3', fontSize=10, fontName='Helvetica-Bold', textColor=C_DARK,
+                   spaceBefore=6, spaceAfter=2, leading=13)
+        sBody  = P('bd', fontSize=9, leading=14, spaceAfter=3, alignment=TA_JUSTIFY)
+        sBul   = P('bl', fontSize=9, leading=13, leftIndent=14, spaceAfter=3)
+        sSmall = P('sm', fontSize=7.5, textColor=C_GRAY_M, leading=10)
+        sKpiV  = P('kv', fontSize=16, fontName='Helvetica-Bold', textColor=C_RED,
+                   leading=20, alignment=TA_CENTER)
+        sKpiL  = P('kl', fontSize=7, textColor=C_GRAY_M, leading=9, alignment=TA_CENTER)
+        sKpiS  = P('ks', fontSize=8, textColor=C_GRAY_D, leading=10, alignment=TA_CENTER)
+        sTblH  = P('th', fontSize=8, fontName='Helvetica-Bold', textColor=C_WHITE,
+                   alignment=TA_CENTER, leading=11)
+        sTblD  = P('td', fontSize=8, textColor=C_DARK, alignment=TA_LEFT, leading=11)
+        sTblDR = P('tr', fontSize=8, textColor=C_DARK, alignment=TA_RIGHT, leading=11)
+
+        class FrinesseCanvas(rl_canvas.Canvas):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self._saved_page_states = []
+            def showPage(self):
+                self._saved_page_states.append(dict(self.__dict__))
+                self._startPage()
+            def save(self):
+                total = len(self._saved_page_states)
+                for state in self._saved_page_states:
+                    self.__dict__.update(state)
+                    self._draw_page(total)
+                    super().showPage()
+                super().save()
+            def _draw_page(self, total):
+                self.saveState()
+                pg = self._pageNumber
+                # Header faixa vermelha
+                self.setFillColor(C_RED)
+                self.rect(0, PAGE_H - 1.7*cm, PAGE_W, 1.7*cm, fill=1, stroke=0)
+                # Accent top amarelo
+                self.setFillColor(C_YELLOW)
+                self.rect(0, PAGE_H - 0.2*cm, PAGE_W, 0.2*cm, fill=1, stroke=0)
+                # Coluna preta
+                self.setFillColor(C_BLACK)
+                self.rect(0, PAGE_H - 1.7*cm, 0.5*cm, 1.7*cm, fill=1, stroke=0)
+                # Textos
+                self.setFillColor(C_WHITE)
+                self.setFont('Helvetica-Bold', 11)
+                self.drawString(ML, PAGE_H - 1.05*cm, 'IAF  ANALISTA COMERCIAL')
+                self.setFont('Helvetica', 8)
+                self.setFillColor(colors.HexColor('#ffcccc'))
+                self.drawString(ML, PAGE_H - 1.42*cm, 'Frinense Alimentos - Relatorio de Vendas')
+                self.setFont('Helvetica', 7.5)
+                self.setFillColor(colors.HexColor('#ffdddd'))
+                data_str = datetime.now().strftime('%d/%m/%Y %H:%M')
+                self.drawRightString(PAGE_W - ML, PAGE_H - 1.05*cm, data_str)
+                self.setFillColor(C_YELLOW)
+                self.setFont('Helvetica-Bold', 7.5)
+                self.drawRightString(PAGE_W - ML, PAGE_H - 1.40*cm, f'Pagina {pg} de {total}')
+                # Footer
+                self.setFillColor(C_GRAY_L)
+                self.rect(0, 0, PAGE_W, 0.85*cm, fill=1, stroke=0)
+                self.setStrokeColor(C_GRAY_LN)
+                self.setLineWidth(0.5)
+                self.line(0, 0.85*cm, PAGE_W, 0.85*cm)
+                self.setStrokeColor(C_RED)
+                self.setLineWidth(2)
+                self.line(0, 0.85*cm, 2.5*cm, 0.85*cm)
+                self.setFont('Helvetica', 7)
+                self.setFillColor(C_GRAY_M)
+                self.drawCentredString(PAGE_W/2, 0.3*cm,
+                    'IAF  Frinense Alimentos  Documento gerado automaticamente  Uso interno')
+                self.restoreState()
+
         buf = io.BytesIO()
-        doc = SimpleDocTemplate(
-            buf, pagesize=A4,
-            leftMargin=2*cm, rightMargin=2*cm,
-            topMargin=2*cm, bottomMargin=2*cm
-        )
-
-        # Cores Frinense
-        VERMELHO = colors.HexColor('#c0392b')
-        AMARELO  = colors.HexColor('#f5c800')
-        ESCURO   = colors.HexColor('#1a1a1a')
-        CINZA    = colors.HexColor('#444444')
-
-        styles = getSampleStyleSheet()
-        style_titulo = ParagraphStyle('titulo', fontSize=16, textColor=VERMELHO,
-                                       fontName='Helvetica-Bold', spaceAfter=4, leading=20)
-        style_h2     = ParagraphStyle('h2', fontSize=12, textColor=VERMELHO,
-                                       fontName='Helvetica-Bold', spaceBefore=10, spaceAfter=4)
-        style_normal = ParagraphStyle('normal', fontSize=9, textColor=ESCURO,
-                                       fontName='Helvetica', spaceAfter=3, leading=13)
-        style_bold   = ParagraphStyle('bold', fontSize=9, textColor=ESCURO,
-                                       fontName='Helvetica-Bold', spaceAfter=3)
-        style_small  = ParagraphStyle('small', fontSize=8, textColor=CINZA,
-                                       fontName='Helvetica', spaceAfter=2)
+        doc = SimpleDocTemplate(buf, pagesize=A4,
+            leftMargin=ML, rightMargin=ML,
+            topMargin=2.0*cm, bottomMargin=1.1*cm,
+            title="IAF - Relatorio de Vendas Frinense")
 
         story = []
+        kpi_buffer = []
 
-        # Cabeçalho
-        story.append(Paragraph("IAF · ANALISTA COMERCIAL", style_titulo))
-        story.append(Paragraph("Frinense Alimentos — Relatório de Vendas", style_small))
-        story.append(Paragraph(f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}", style_small))
-        story.append(HRFlowable(width="100%", thickness=2, color=VERMELHO, spaceAfter=10))
+        def flush_kpis():
+            if not kpi_buffer: return
+            n = len(kpi_buffer)
+            col_w = CONTENT_W / n
+            rows = [
+                [Paragraph(k[0], sKpiL) for k in kpi_buffer],
+                [Paragraph(k[1], sKpiV) for k in kpi_buffer],
+                [Paragraph(k[2], sKpiS) for k in kpi_buffer],
+            ]
+            t = Table(rows, colWidths=[col_w]*n)
+            t.setStyle(TableStyle([
+                ('BACKGROUND',    (0,0), (-1,0), C_GRAY_L),
+                ('BACKGROUND',    (0,1), (-1,1), C_WHITE),
+                ('BACKGROUND',    (0,2), (-1,2), C_GRAY_L),
+                ('BOX',           (0,0), (-1,-1), 0.5, C_GRAY_LN),
+                ('LINEBEFORE',    (1,0), (-1,-1), 0.5, C_GRAY_LN),
+                ('LINEBELOW',     (0,0), (-1,0), 0.5, C_GRAY_LN),
+                ('LINEBELOW',     (0,1), (-1,1), 0.5, C_GRAY_LN),
+                ('ALIGN',         (0,0), (-1,-1), 'CENTER'),
+                ('VALIGN',        (0,0), (-1,-1), 'MIDDLE'),
+                ('TOPPADDING',    (0,0), (-1,0), 5),
+                ('BOTTOMPADDING', (0,0), (-1,0), 4),
+                ('TOPPADDING',    (0,1), (-1,1), 8),
+                ('BOTTOMPADDING', (0,1), (-1,1), 8),
+                ('TOPPADDING',    (0,2), (-1,2), 4),
+                ('BOTTOMPADDING', (0,2), (-1,2), 5),
+            ]))
+            story.append(KeepTogether([t, Spacer(1, 10)]))
+            kpi_buffer.clear()
 
-        # Processa markdown da resposta linha por linha
+        def section_bar(txt, bg=None):
+            bg = bg or C_RED
+            bar = Table([[Paragraph(txt, sH2)]], colWidths=[CONTENT_W])
+            bar.setStyle(TableStyle([
+                ('BACKGROUND',    (0,0), (-1,-1), bg),
+                ('LEFTPADDING',   (0,0), (-1,-1), 10),
+                ('RIGHTPADDING',  (0,0), (-1,-1), 6),
+                ('TOPPADDING',    (0,0), (-1,-1), 7),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 7),
+            ]))
+            story.append(Spacer(1, 9))
+            story.append(bar)
+            story.append(Spacer(1, 5))
+
+        def sub_bar(txt):
+            bar = Table([[Paragraph(txt, sH3)]], colWidths=[CONTENT_W])
+            bar.setStyle(TableStyle([
+                ('LINEBELOW',     (0,0), (-1,-1), 1, C_RED),
+                ('LEFTPADDING',   (0,0), (-1,-1), 2),
+                ('TOPPADDING',    (0,0), (-1,-1), 4),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+            ]))
+            story.append(Spacer(1, 5))
+            story.append(bar)
+            story.append(Spacer(1, 3))
+
+        EMOJI_MAP = {
+            '\U0001f4ca':'[Graf]','\U0001f4c8':'[Alta]','\U0001f4c9':'[Baixa]',
+            '\u2705':'[OK]','\u274c':'[X]','\u26a0\ufe0f':'[!]','\u26a0':'[!]',
+            '\U0001f4a1':'[Insight]','\U0001f534':'[*]','\U0001f7e1':'[*]',
+            '\U0001f7e2':'[*]','\u2b50':'[*]','\U0001f3c6':'[Top]',
+            '\U0001f4e6':'[Prod]','\U0001f464':'[Vend]','\U0001f4b0':'[R$]',
+            '\U0001f3af':'[Alvo]','\U0001f4c5':'[Data]','\U0001f3ed':'[Fil]',
+            '\u25a0':'[+]','\u25a0\u25a0':'[-]',
+        }
+
+        def fmt_md(txt):
+            for e, s in EMOJI_MAP.items():
+                txt = txt.replace(e, s)
+            txt = txt.encode('latin-1', 'replace').decode('latin-1')
+            txt = _re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', txt)
+            txt = _re.sub(r'\*(.+?)\*', r'<i>\1</i>', txt)
+            return txt
+
+        # Capa
         linhas = ultima_resposta.split('\n')
-        i = 0
+        titulo_doc = "Relatorio de Vendas"
+        idx_start = 0
+        for ii, ll in enumerate(linhas[:6]):
+            ll2 = ll.strip()
+            if ll2.startswith('# ') and not ll2.startswith('## '):
+                titulo_doc = fmt_md(ll2[2:].strip())
+                idx_start = ii + 1; break
+            elif ll2.startswith('## '):
+                titulo_doc = fmt_md(ll2[3:].strip())
+                idx_start = ii + 1; break
+
+        capa = Table([[Paragraph(titulo_doc,
+                        P('cap', fontSize=17, fontName='Helvetica-Bold', textColor=C_WHITE,
+                          leading=21, alignment=TA_LEFT))]],
+                     colWidths=[CONTENT_W])
+        capa.setStyle(TableStyle([
+            ('BACKGROUND',    (0,0), (-1,-1), C_RED_DRK),
+            ('LEFTPADDING',   (0,0), (-1,-1), 14),
+            ('RIGHTPADDING',  (0,0), (-1,-1), 14),
+            ('TOPPADDING',    (0,0), (-1,-1), 14),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 14),
+            ('LINEBELOW',     (0,0), (-1,-1), 3, C_YELLOW),
+        ]))
+        story.append(capa)
+        story.append(Spacer(1, 10))
+
+        i = idx_start
         while i < len(linhas):
             linha = linhas[i].strip()
 
-            # Pula imagens base64
-            if '<img ' in linha:
-                i += 1
-                continue
+            if '<img ' in linha or linha.startswith('<div') or linha.startswith('<a '):
+                i += 1; continue
 
-            # Título H1/H2
-            if linha.startswith('## '):
-                story.append(Paragraph(linha[3:], style_h2))
-            elif linha.startswith('# '):
-                story.append(Paragraph(linha[2:], style_titulo))
+            if linha.startswith('# ') and not linha.startswith('## '):
+                flush_kpis()
+                story.append(Paragraph(fmt_md(linha[2:]), sH1))
 
-            # Tabela markdown: detecta linha com |
+            elif linha.startswith('## '):
+                flush_kpis()
+                txt = linha[3:].strip()
+                kw_neg = ['fraco','oportunidade','risco','critico','falha','dependencia','queda','baixo']
+                kw_pos = ['forte','destaque','top','melhor','sucesso','alto','crescimento']
+                if any(x in txt.lower() for x in kw_neg):
+                    section_bar(fmt_md(txt), bg=C_BLUE_DRK)
+                elif any(x in txt.lower() for x in kw_pos):
+                    section_bar(fmt_md(txt), bg=C_GREEN)
+                else:
+                    section_bar(fmt_md(txt), bg=C_RED)
+
+            elif linha.startswith('### '):
+                flush_kpis()
+                sub_bar(fmt_md(linha[4:]))
+
+            elif _re.match(r'^-{3,}$', linha):
+                flush_kpis()
+                story.append(Spacer(1, 6))
+                story.append(HRFlowable(width="100%", thickness=1, color=C_GRAY_LN, spaceAfter=6))
+
             elif linha.startswith('|') and '|' in linha[1:]:
-                tabela_linhas = []
+                flush_kpis()
+                tab_linhas = []
                 while i < len(linhas) and linhas[i].strip().startswith('|'):
                     l = linhas[i].strip()
-                    # Pula linha separadora (|---|---|)
-                    if not _re.match(r'^\|[\s\-\|]+\|$', l):
-                        colunas = [c.strip() for c in l.strip('|').split('|')]
-                        tabela_linhas.append(colunas)
+                    if not _re.match(r'^\|[\s\-\|:]+\|$', l):
+                        cols = [fmt_md(c.strip()) for c in l.strip('|').split('|')]
+                        tab_linhas.append(cols)
                     i += 1
-
-                if tabela_linhas:
-                    # Estilo da tabela
-                    t = Table(tabela_linhas, repeatRows=1)
+                if tab_linhas:
+                    nc = max(len(r) for r in tab_linhas)
+                    tab_linhas = [r + ['']*(nc - len(r)) for r in tab_linhas]
+                    if nc == 2:
+                        cws = [CONTENT_W*0.55, CONTENT_W*0.45]
+                    elif nc == 3:
+                        cws = [CONTENT_W*0.44, CONTENT_W*0.29, CONTENT_W*0.27]
+                    elif nc == 4:
+                        cws = [CONTENT_W*0.37, CONTENT_W*0.22, CONTENT_W*0.22, CONTENT_W*0.19]
+                    else:
+                        cws = [CONTENT_W/nc]*nc
+                    rows_p = []
+                    for ri, row in enumerate(tab_linhas):
+                        if ri == 0:
+                            rows_p.append([Paragraph(c, sTblH) for c in row])
+                        else:
+                            fmted = []
+                            for ci, c in enumerate(row):
+                                is_num = bool(_re.match(r'^[\d\-R\$%\+]', c.strip()))
+                                fmted.append(Paragraph(c, sTblDR if (is_num and ci > 0) else sTblD))
+                            rows_p.append(fmted)
+                    t = Table(rows_p, colWidths=cws, repeatRows=1)
                     t.setStyle(TableStyle([
-                        ('BACKGROUND',  (0,0), (-1,0), VERMELHO),
-                        ('TEXTCOLOR',   (0,0), (-1,0), colors.white),
-                        ('FONTNAME',    (0,0), (-1,0), 'Helvetica-Bold'),
-                        ('FONTSIZE',    (0,0), (-1,-1), 8),
-                        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f9f9f9')]),
-                        ('GRID',        (0,0), (-1,-1), 0.3, colors.HexColor('#dddddd')),
-                        ('ALIGN',       (1,0), (-1,-1), 'RIGHT'),
-                        ('ALIGN',       (0,0), (0,-1), 'LEFT'),
-                        ('TOPPADDING',  (0,0), (-1,-1), 3),
-                        ('BOTTOMPADDING', (0,0), (-1,-1), 3),
-                        ('LEFTPADDING', (0,0), (-1,-1), 5),
+                        ('BACKGROUND',    (0,0), (-1,0), C_RED),
+                        ('ROWBACKGROUNDS',(0,1), (-1,-1), [C_WHITE, C_GRAY_L]),
+                        ('GRID',          (0,0), (-1,-1), 0.3, C_GRAY_LN),
+                        ('LINEBELOW',     (0,0), (-1,0), 2, C_YELLOW),
+                        ('VALIGN',        (0,0), (-1,-1), 'MIDDLE'),
+                        ('TOPPADDING',    (0,0), (-1,-1), 5),
+                        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+                        ('LEFTPADDING',   (0,0), (-1,-1), 7),
+                        ('RIGHTPADDING',  (0,0), (-1,-1), 7),
                     ]))
-                    story.append(t)
-                    story.append(Spacer(1, 6))
+                    story.append(KeepTogether([t, Spacer(1, 8)]))
                 continue
 
-            # Bullet
-            elif linha.startswith('- ') or linha.startswith('• '):
-                texto = linha[2:].strip()
-                texto = _re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', texto)
-                story.append(Paragraph(f"• {texto}", style_normal))
+            elif linha.startswith('- ') or linha.startswith('* ') or linha.startswith('- '):
+                flush_kpis()
+                txt = fmt_md(linha[2:].strip())
+                icon = '<font color="#c0392b">&#9658;</font>' if txt.startswith('<b>') else '<font color="#aaaaaa">&#8226;</font>'
+                story.append(Paragraph(f'{icon}  {txt}', sBul))
 
-            # Linha em branco
             elif linha == '':
                 story.append(Spacer(1, 4))
 
-            # Texto normal com **negrito**
             elif linha:
-                texto = _re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', linha)
-                story.append(Paragraph(texto, style_normal))
+                flush_kpis()
+                story.append(Paragraph(fmt_md(linha), sBody))
 
             i += 1
 
-        # Rodapé
-        story.append(Spacer(1, 10))
-        story.append(HRFlowable(width="100%", thickness=1, color=VERMELHO, spaceAfter=4))
-        story.append(Paragraph("IAF · Frinense Alimentos · Documento gerado automaticamente", style_small))
+        flush_kpis()
 
-        doc.build(story)
+        story.append(Spacer(1, 16))
+        story.append(HRFlowable(width="100%", thickness=0.5, color=C_GRAY_LN))
+        story.append(Spacer(1, 4))
+        story.append(Paragraph(
+            f'Documento gerado pelo IAF em {datetime.now().strftime("%d/%m/%Y as %H:%M")}  |  Frinense Alimentos',
+            sSmall))
+
+        doc.build(story, canvasmaker=FrinesseCanvas)
         buf.seek(0)
         pdf_b64 = base64.b64encode(buf.read()).decode('utf-8')
 
-        # Retorna HTML com botão de download
-        nome_arquivo = f"IAF_Relatorio_{datetime.now().strftime('%d%m%Y_%H%M')}.pdf"
+        nome = f"IAF_Relatorio_{datetime.now().strftime('%d%m%Y_%H%M')}.pdf"
         html = (
             f'<div style="margin-top:8px;">'
-            f'<a href="data:application/pdf;base64,{pdf_b64}" download="{nome_arquivo}" '
-            f'style="display:inline-block;background:#c0392b;color:#fff;padding:8px 16px;'
-            f'border-radius:6px;text-decoration:none;font-family:Barlow Condensed,sans-serif;'
-            f'font-weight:700;font-size:13px;letter-spacing:.5px;">'
-            f'⬇ BAIXAR PDF</a>'
-            f'<span style="color:rgba(255,255,255,.5);font-size:10px;margin-left:10px;">{nome_arquivo}</span>'
+            f'<a href="data:application/pdf;base64,{pdf_b64}" download="{nome}" '
+            f'style="display:inline-flex;align-items:center;gap:6px;background:#c0392b;'
+            f'color:#fff;padding:9px 18px;border-radius:6px;text-decoration:none;'
+            f'font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;'
+            f'letter-spacing:.5px;border:1px solid rgba(245,200,0,.4);">'
+            f'&#8595; BAIXAR PDF</a>'
+            f'<span style="color:rgba(255,255,255,.4);font-size:10px;margin-left:10px;">{nome}</span>'
             f'</div>'
         )
         return html
 
     except Exception as e:
-        return f"⚠️ Erro ao gerar PDF: {e}"
+        import traceback
+        return f"Erro ao gerar PDF: {e}\n{traceback.format_exc()}"
 
-
-# Paleta Frinense
-COR_PRIMARIA  = '#c0392b'   # vermelho
-COR_SECUNDARIA = '#f5c800'  # amarelo
-COR_BG        = '#1a1a1a'
-COR_GRID      = '#2e2e2e'
-COR_TEXTO     = '#e0e0e0'
-CORES_SERIES  = ['#c0392b','#f5c800','#e67e22','#27ae60','#2980b9','#8e44ad','#16a085','#d35400']
-
-def _fig_to_base64(fig) -> str:
-    buf = io.BytesIO()
-    fig.savefig(buf, format='png', bbox_inches='tight', facecolor=COR_BG, dpi=120)
-    plt.close(fig)
-    buf.seek(0)
-    return base64.b64encode(buf.read()).decode('utf-8')
-
-def _setup_ax(ax, titulo: str = ""):
-    ax.set_facecolor(COR_BG)
-    ax.tick_params(colors=COR_TEXTO, labelsize=8)
-    ax.xaxis.label.set_color(COR_TEXTO)
-    ax.yaxis.label.set_color(COR_TEXTO)
-    for spine in ax.spines.values():
-        spine.set_edgecolor(COR_GRID)
-    ax.grid(axis='y', color=COR_GRID, linewidth=0.5, linestyle='--')
-    if titulo:
-        ax.set_title(titulo, color=COR_TEXTO, fontsize=10, pad=8)
 
 def gerar_grafico(dff: pd.DataFrame, pergunta: str) -> str:
     """
