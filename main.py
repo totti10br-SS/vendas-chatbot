@@ -1164,19 +1164,8 @@ async def chat(req: ChatRequest):
         logging.warning(f"[IAF DEBUG] dff apos filter_for_chat={len(dff)} | anos_detectados={anos_debug}")
         n = len(dff)
 
-        # ── PDF: intercepta antes de chamar Claude — zero tokens ──
-        if is_pdf_query(ultima):
-            html_pdf = gerar_pdf(req.messages)
-            if html_pdf:
-                resposta_md = f"📄 **Relatório PDF gerado!**\n\n{html_pdf}"
-                return JSONResponse({
-                    "id": "pdf",
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": resposta_md}],
-                    "model": "local-reportlab",
-                    "stop_reason": "end_turn"
-                })
+        # ── PDF: flag para processar após Claude gerar o conteúdo ──
+        gerar_pdf_apos_claude = is_pdf_query(ultima)
 
         # ── GRÁFICO: intercepta antes de chamar Claude — zero tokens ──
         if is_chart_query(ultima):
@@ -1282,20 +1271,63 @@ async def chat(req: ChatRequest):
 DADOS ({data_label}):
 {sales_data}"""
 
-    async with httpx.AsyncClient(timeout=60) as client:
+    # Se for PDF, instrui o Claude a gerar conteúdo analítico completo em Markdown puro
+    if gerar_pdf_apos_claude:
+        system += "\n\nIMPORTANTE: O usuário quer um PDF. Gere uma análise completa e detalhada em Markdown puro (sem HTML, sem base64, sem <img>). Use ## títulos, ### subtítulos, tabelas com |, bullets com -. Seja extenso e analítico — o conteúdo será convertido em PDF profissional."
+        max_tok = 4000
+    else:
+        max_tok = 1500
+
+    async with httpx.AsyncClient(timeout=90) as client:
         r = await client.post(
             "https://api.anthropic.com/v1/messages",
             headers={"Content-Type":"application/json",
                      "x-api-key":CLAUDE_KEY,
                      "anthropic-version":"2023-06-01"},
             json={"model":"claude-haiku-4-5-20251001",
-                  "max_tokens":1500,
+                  "max_tokens":max_tok,
                   "system":system,
                   "messages":[m.dict() for m in req.messages]}
         )
     if r.status_code != 200:
         raise HTTPException(status_code=r.status_code, detail=r.text)
-    return r.json()
+
+    resposta_json = r.json()
+
+    # ── PDF: pega conteúdo gerado pelo Claude e converte ──
+    if gerar_pdf_apos_claude:
+        try:
+            texto_claude = ""
+            for bloco in resposta_json.get("content", []):
+                if bloco.get("type") == "text":
+                    texto_claude += bloco["text"]
+
+            if texto_claude:
+                # Cria mensagem fake com a resposta do Claude para o gerador de PDF
+                class _FakeMsg:
+                    def __init__(self, role, content):
+                        self.role = role
+                        self.content = content
+
+                msgs_com_resposta = list(req.messages) + [_FakeMsg("assistant", texto_claude)]
+                html_pdf = gerar_pdf(msgs_com_resposta)
+
+                if html_pdf:
+                    resposta_com_pdf = f"📄 **Relatório PDF gerado!**\n\n{html_pdf}\n\n---\n\n{texto_claude}"
+                    return JSONResponse({
+                        "id": resposta_json.get("id", "pdf"),
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": resposta_com_pdf}],
+                        "model": resposta_json.get("model", "local-reportlab"),
+                        "stop_reason": "end_turn"
+                    })
+        except Exception as e_pdf:
+            import logging
+            logging.warning(f"[IAF PDF] Erro ao gerar PDF após Claude: {e_pdf}")
+            # Cai no retorno normal se falhar
+
+    return resposta_json
 
 @app.get("/health")
 def health():
