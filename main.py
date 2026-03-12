@@ -571,6 +571,50 @@ def detalhe_cliente(nome: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/tipo/{tipo}")
+def detalhe_tipo(tipo: str):
+    """Retorna clientes e produtos do tipo de carne no dia de referência."""
+    try:
+        df = load_df()
+        dia = get_dia_referencia(df)
+        df_dia = df[df['DATA_MOVTO'].dt.date == dia]
+        df_tipo = df_dia[df_dia['DESC_DIVISAO2'].str.upper() == tipo.upper()]
+
+        fat_total = float(df_tipo['VALOR_LIQUIDO'].sum())
+        kg_total  = float(df_tipo['QTDE_PRI'].sum())
+        cx_total  = float(df_tipo['QTDE_AUX'].sum()) if 'QTDE_AUX' in df_tipo.columns else 0
+        notas     = int(df_tipo['NUM_DOCTO'].nunique())
+        pm        = round(fat_total / kg_total, 2) if kg_total > 0 else 0
+
+        # Top clientes do tipo
+        clientes = (df_tipo.groupby('NOME_CLIENTE')
+                    .agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'))
+                    .sort_values('kg', ascending=False)
+                    .head(10).reset_index())
+        clientes_list = [{"nome": r.NOME_CLIENTE, "kg": round(r.kg,2), "fat": round(r.fat,2)}
+                         for r in clientes.itertuples()]
+
+        # Top produtos do tipo
+        produtos = (df_tipo.groupby('DESC_PRODUTO')
+                    .agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'))
+                    .sort_values('kg', ascending=False)
+                    .head(10).reset_index())
+        produtos_list = [{"nome": r.DESC_PRODUTO, "kg": round(r.kg,2), "fat": round(r.fat,2)}
+                         for r in produtos.itertuples()]
+
+        return JSONResponse({
+            "tipo": tipo,
+            "fat_total": round(fat_total,2),
+            "kg_total":  round(kg_total,2),
+            "cx_total":  round(cx_total,0),
+            "notas":     notas,
+            "pm":        pm,
+            "clientes":  clientes_list,
+            "produtos":  produtos_list
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 def is_chart_query(pergunta: str) -> bool:
     """Detecta se o usuário quer um gráfico."""
     pl = pergunta.lower()

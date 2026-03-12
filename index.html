@@ -170,7 +170,8 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:3px;ba
 .insight-empty{font-size:13px;color:var(--muted);text-align:center;padding:12px 0;}
 .tipo-carne-box{background:var(--surface2);border:1px solid var(--border);border-top:2px solid var(--yellow);border-radius:7px;padding:9px 12px;margin-top:10px;}
 .tipo-carne-title{font-family:'Barlow Condensed',sans-serif;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;font-weight:700;margin-bottom:7px;}
-.tipo-carne-row{display:flex;align-items:center;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04);}
+.tipo-carne-row{display:flex;align-items:center;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04);cursor:pointer;border-radius:3px;transition:background .15s;}
+.tipo-carne-row:hover{background:rgba(204,0,0,.1);}
 .tipo-carne-row:last-child{border-bottom:none;}
 .tc-nome{font-size:11px;color:var(--text2);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:8px;}
 .tc-kg{font-family:'Barlow Condensed',sans-serif;font-size:12px;color:var(--yellow);font-weight:700;flex-shrink:0;}
@@ -436,15 +437,18 @@ async function init(){
     // Popula box Tipo de Carne fixo com totais do dia
     if(d.tipos && d.tipos.length){
       const lista = document.getElementById('tipoCarneLista');
+      const dataLabel = d.dia_label || '';
       lista.innerHTML = d.tipos.map(t=>`
-        <div class="tipo-carne-row">
+        <div class="tipo-carne-row" style="cursor:pointer" onclick="openTipo('${t.tipo.replace(/'/g,"\\'")}')">
           <div class="tc-nome">${t.tipo}</div>
           <div class="tc-kg">${fmtKg(t.kg)}</div>
           <div class="tc-fat">${fmtBRL(t.fat)}</div>
+          <div style="color:var(--muted);font-size:11px;padding-left:4px">›</div>
         </div>`).join('');
       document.getElementById('tipoCarne').style.display='block';
-      window._tiposDia = document.getElementById('tipoCarneLista').innerHTML;
-      document.querySelector('.tipo-carne-title').textContent = '📦 Tipo de Carne · Total do Dia';
+      window._tiposDia = lista.innerHTML;
+      window._tiposDiaLabel = dataLabel;
+      document.querySelector('.tipo-carne-title').textContent = `📦 Tipo de Carne · ${dataLabel}`;
     }
     document.getElementById('dashboard').style.display='flex';
     document.getElementById('initLoader').remove();
@@ -523,10 +527,56 @@ async function openCliente(nome){
   }
 }
 
+async function openTipo(tipo){
+  document.getElementById('sidePanel').classList.add('open');
+  document.getElementById('panelTitle').textContent = tipo.length>26 ? tipo.substring(0,26)+'…' : tipo;
+  document.getElementById('panelContent').innerHTML='<div class="panel-loading">Carregando...</div>';
+  try{
+    const r = await fetch('/tipo/'+encodeURIComponent(tipo));
+    const d = await r.json();
+    const pm = d.pm.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const cxStr = d.cx_total > 0 ? `<div class="panel-kpi"><div class="panel-kpi-label">Caixas</div><div class="panel-kpi-val">${d.cx_total.toLocaleString('pt-BR')} cx</div></div>` : '';
+    const cliHTML = d.clientes.map((c,i)=>`
+      <div class="prod-row" style="cursor:pointer" onclick="openCliente('${c.nome.replace(/'/g,"\\'")}')">
+        <div class="prod-nome"><span style="color:var(--muted);font-size:10px;margin-right:5px">${i+1}</span>${c.nome}</div>
+        <div class="prod-vals">
+          <div class="prod-kg">${fmtKg(c.kg)}</div>
+          <div class="prod-r">${fmtBRL(c.fat)}</div>
+        </div>
+      </div>`).join('');
+    const prodHTML = d.produtos.map(p=>{
+      const ppm = p.kg>0 ? (p.fat/p.kg).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}) : '—';
+      return `<div class="prod-row">
+        <div class="prod-nome">${p.nome}</div>
+        <div class="prod-vals">
+          <div class="prod-kg">${fmtKg(p.kg)}</div>
+          <div class="prod-r">${fmtBRL(p.fat)}</div>
+          <div class="prod-pm">R$ ${ppm}/kg</div>
+        </div>
+      </div>`;
+    }).join('');
+    document.getElementById('panelContent').innerHTML=`
+      <div class="panel-cliente-nome">${d.tipo}</div>
+      <div class="panel-totais">
+        <div class="panel-kpi"><div class="panel-kpi-label">Volume</div><div class="panel-kpi-val">${fmtKg(d.kg_total)}</div></div>
+        <div class="panel-kpi"><div class="panel-kpi-label">Faturamento</div><div class="panel-kpi-val">${fmtBRL(d.fat_total)}</div></div>
+        ${cxStr}
+        <div class="panel-kpi"><div class="panel-kpi-label">R$/kg médio</div><div class="panel-kpi-val">R$ ${pm}</div></div>
+        <div class="panel-kpi"><div class="panel-kpi-label">Notas</div><div class="panel-kpi-val">${d.notas}</div></div>
+      </div>
+      <div class="prod-section-label">Top Clientes</div>
+      ${cliHTML||'<p style="color:var(--muted);font-size:12px">Sem dados</p>'}
+      <div class="prod-section-label" style="margin-top:10px">Top Produtos</div>
+      ${prodHTML||'<p style="color:var(--muted);font-size:12px">Sem dados</p>'}`;
+  }catch(e){
+    document.getElementById('panelContent').innerHTML=`<p style="color:var(--yellow)">Erro: ${e.message}</p>`;
+  }
+}
+
 function closePanel(){
   document.getElementById('sidePanel').classList.remove('open');
-  // Volta título e dados ao total do dia
-  document.querySelector('.tipo-carne-title').textContent = '📦 Tipo de Carne · Total do Dia';
+  const lbl = window._tiposDiaLabel || 'Total do Dia';
+  document.querySelector('.tipo-carne-title').textContent = `📦 Tipo de Carne · ${lbl}`;
   if(window._tiposDia){
     document.getElementById('tipoCarneLista').innerHTML = window._tiposDia;
   }
