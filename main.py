@@ -1418,6 +1418,24 @@ async def chat(req: ChatRequest):
                 pergunta_para_filtro = msg_anterior
                 break
 
+    # ── Se a pergunta atual menciona "dessa nota" sem número, tenta extrair NR NOTA do histórico ──
+    pl_ult = ultima.lower()
+    tem_ref_nota = any(x in pl_ult for x in ['dessa nota','desta nota','detalhe da nota','detalhes da nota',
+                                               'detalhes dessa','detalhe dessa','itens da nota','itens dessa'])
+    nr_nota_historico = None
+    if tem_ref_nota and not re.search(r'\d{4,8}', ultima):
+        # Procura número de nota em todas as mensagens (usuário e assistente)
+        for m in reversed(req.messages[:-1]):
+            match = re.search(r'\b(?:nr\.?\s*(?:nota\s*)?|nota\s*(?:fiscal\s*)?|num\.?\s*docto\s*)(\d{4,8})\b', m.content, re.IGNORECASE)
+            if not match:
+                # Tenta pegar qualquer número de 5-6 dígitos que pareça NR NOTA
+                match = re.search(r'\b(1[0-9]{4,5}|[2-9][0-9]{4,5})\b', m.content)
+            if match:
+                nr_nota_historico = match.group(1)
+                break
+    if nr_nota_historico:
+        pergunta_para_filtro = f"nota {nr_nota_historico} {pergunta_para_filtro}"
+
     try:
         df = load_df()
         import logging
@@ -1491,7 +1509,9 @@ async def chat(req: ChatRequest):
 
         is_nota_query = any(x in pergunta_para_filtro.lower() for x in [
             'última nota','ultima nota','último pedido','ultimo pedido',
-            'nota ','nr nota','nr_nota','numero da nota','número da nota'
+            'nota ','nr nota','nr_nota','numero da nota','número da nota',
+            'dessa nota','desta nota','detalhe da nota','detalhes da nota',
+            'detalhes dessa','detalhe dessa','itens da nota','itens dessa nota'
         ]) or bool(re.search(r'\bnr?\s*(?:nota|docto|doc)?\s*[:\s#]?\s*\d{3,8}\b', pergunta_para_filtro.lower()))
 
         if (n > 1500 or is_summary_query(pergunta_para_filtro) or is_summary_query(ultima)) and not is_nota_query:
@@ -1569,6 +1589,13 @@ async def chat(req: ChatRequest):
 - Filtro UF: reconhece siglas (ES, RJ...) e nomes por extenso. Destaque: volume, faturamento, clientes, produtos, cidades
 - Vendedor não encontrado: sugira busca por código e liste até 5 disponíveis no período
 - Apresente dados disponíveis SEM mencionar o que não existe. Nunca diga "não tenho dados de X"
+
+## DETALHE DE NOTA FISCAL
+- Quando o usuário pedir detalhes de uma nota E os dados contiverem apenas 1 NUM_DOCTO (todos os registros são da mesma nota): exiba tabela completa linha a linha:
+  | # | PRODUTO | COD | DIVISÃO | QTDE kg | CX | VALOR | R$/kg |
+  Depois: totais (kg total, cx total, faturamento total, preço médio), cliente, filial, vendedor, data
+- Quando o usuário pedir "detalhes dessa nota" ou "detalhe da nota X" mas os dados contiverem MÚLTIPLOS NUM_DOCTO: pergunte "Qual o número da nota? (ex: nr 184828)" — NÃO diga que não tem acesso aos dados
+- NUNCA diga que não tem acesso a detalhes transacionais — você tem acesso completo ao CSV com todos os itens
 
 {personalidade}
 DADOS ({data_label}):
