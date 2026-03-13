@@ -283,20 +283,42 @@ def _finalize_filter(dff: pd.DataFrame, pl: str) -> pd.DataFrame:
                 dff = dff[dff['UF'].str.upper() == uf]
                 break
 
-    m_cliente = re.search(r'cliente[:\s]+([a-záéíóúâêîôûãõç\s]+)', pl)
-    if m_cliente and len(m_cliente.group(1).strip()) > 2:
-        dff = dff[dff['NOME_CLIENTE'].str.lower().str.contains(m_cliente.group(1).strip(), na=False)]
-    elif not any(x in pl for x in ['produto','vendedor','filial','ranking','comparar','top','total','resumo',
-                                    'março','marco','janeiro','fevereiro','abril','maio','junho','julho',
-                                    'agosto','setembro','outubro','novembro','dezembro','trimestre','semestre']):
-        palavras = [p for p in pl.split() if len(p) > 3 and p not in
-                    ['últimas','ultimas','vendas','venda','quais','qual','como','foram','mais','este',
-                     'essa','esse','para','pela','pelo','mês','mes','ano','2025','2026']]
-        if palavras:
-            termo = ' '.join(palavras[:3])
-            mask = dff['NOME_CLIENTE'].str.lower().str.contains(termo, na=False)
+    # ── Filtro por cliente ──
+    # Prioridade 1: padrão explícito "cliente: NOME" ou "para o NOME" ou "do cliente NOME"
+    m_cliente = re.search(r'(?:cliente[:\s]+|para\s+(?:o|a)\s+|do\s+cliente\s+)([a-záéíóúâêîôûãõç0-9\s]+)', pl)
+    if m_cliente:
+        nome_cli = re.split(r'\s+(?:em|de|no|na|para|do|da|\d{4})\b', m_cliente.group(1))[0].strip()
+        if len(nome_cli) > 2:
+            mask = dff['NOME_CLIENTE'].str.lower().str.contains(nome_cli, na=False)
             if mask.sum() > 0:
                 dff = dff[mask]
+    else:
+        # Prioridade 2: busca livre — palavras que não são stop-words comuns
+        stopwords = {'últimas','ultimas','vendas','venda','quais','qual','como','foram','mais','este',
+                     'essa','esse','para','pela','pelo','mês','mes','ano','2025','2026','2024','2023',
+                     'analise','análise','resumo','faca','fazer','quero','cliente','clientes','filial',
+                     'produto','vendedor','ranking','comparar','total','faça','faz','uma','uns','umas',
+                     'dados','traz','traga','mostra','mostre','lista','liste','apresenta','analisa',
+                     'sobre','com','sem','entre','desde','ate','até','ontem','hoje','semana','março',
+                     'marco','janeiro','fevereiro','abril','maio','junho','julho','agosto','setembro',
+                     'outubro','novembro','dezembro','trimestre','semestre','periodo','período'}
+        nao_tem_filtro_especifico = not any(x in pl for x in [
+            'produto:','vendedor:','filial:','ranking','comparar','top ','total geral'])
+        if nao_tem_filtro_especifico:
+            palavras = [p for p in pl.split() if len(p) > 3 and p not in stopwords]
+            if palavras:
+                # Tenta combinações de 1, 2 e 3 palavras consecutivas
+                achou = False
+                for tam in [3, 2, 1]:
+                    for i in range(len(palavras) - tam + 1):
+                        termo = ' '.join(palavras[i:i+tam])
+                        mask = dff['NOME_CLIENTE'].str.lower().str.contains(termo, na=False)
+                        if mask.sum() > 0:
+                            dff = dff[mask]
+                            achou = True
+                            break
+                    if achou:
+                        break
 
     cols = ['NOME_FILIAL','DATA_MOVTO','NUM_DOCTO','COD_PRODUTO','DESC_PRODUTO','NOME_CLIENTE',
             'NOM_VENDEDOR','COD_VENDEDOR','QTDE_PRI','QTDE_AUX','VALOR_LIQUIDO','DESC_DIVISAO2','DESC_DIVISAO3','UF','CIDADE']
@@ -1605,6 +1627,7 @@ async def chat(req: ChatRequest):
 - Filtro UF: reconhece siglas (ES, RJ...) e nomes por extenso. Destaque: volume, faturamento, clientes, produtos, cidades
 - Vendedor não encontrado: sugira busca por código e liste até 5 disponíveis no período
 - Apresente dados disponíveis SEM mencionar o que não existe. Nunca diga "não tenho dados de X"
+- "Análise de [cliente] em [período]": se os dados já vierem filtrados por cliente (1 único NOME_CLIENTE), exiba tabela completa de todas as compras (DATA | NR NOTA | PRODUTO | KG | CX | R$ | R$/kg), depois totais e comparativo. Não resuma — mostre tudo.
 - "Ontem" / períodos sem movimento: se os dados recebidos forem de uma data diferente do dia literal pedido, processe normalmente e informe apenas UMA linha no início: "_(Dados de DD/MM/AA — dia útil anterior disponível)_". Não peça confirmação, não ofereça opções, vá direto à análise.
 
 ## DETALHE DE NOTA FISCAL
