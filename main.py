@@ -100,6 +100,10 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str, ctx: dict = None) -> pd.Dat
             ctx['cnpj_filtrado'] = raiz
             logging.warning(f"[IAF DEBUG CNPJ] dff apos filtro CNPJ={len(dff)}")
         else:
+            # CNPJ não existe — zera dff e marca ctx para não buscar por nome
+            ctx['cnpj_nao_encontrado'] = raiz
+            ctx['cnpj_filtrado'] = raiz  # marca mesmo assim para bloquear filtro de cliente
+            dff = dff.iloc[0:0].copy()
             ctx['aviso'] = f"⚠️ Nenhum cliente encontrado com CNPJ raiz {raiz}."
 
     # ── Intervalo de datas explícito: "de DD/MM/YYYY a DD/MM/YYYY" ──
@@ -414,7 +418,8 @@ def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None, df_orig: pd.D
                          'dados','traz','traga','mostra','mostre','lista','liste','apresenta','analisa',
                          'sobre','com','sem','entre','desde','ate','até','ontem','hoje','semana','março',
                          'marco','janeiro','fevereiro','abril','maio','junho','julho','agosto','setembro',
-                         'outubro','novembro','dezembro','trimestre','semestre','periodo','período'}
+                         'outubro','novembro','dezembro','trimestre','semestre','periodo','período',
+                         'cnpj','cpfcgc','raiz','cpf','cgc','numero','número'}
             nao_tem_filtro_especifico = not any(x in pl for x in [
                 'produto:','vendedor:','filial:','ranking','comparar','top ','total geral'])
             if nao_tem_filtro_especifico:
