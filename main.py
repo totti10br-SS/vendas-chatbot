@@ -83,7 +83,12 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str, ctx: dict = None) -> pd.Dat
     hoje = datetime.now()
 
     # ── Filtro por CNPJ raiz — roda PRIMEIRO, antes de qualquer filtro temporal ──
+    # Detecta: "cnpj 73849952", "cnpj raiz 73849952", "cnpj: 73.849.952/0001-34"
+    # Também detecta número isolado de 8+ dígitos quando contexto menciona "cnpj"
     m_cnpj_pre = re.search(r'cnpj\s*(?:raiz\s*)?[:\s]*(\d[\d\.\-\/]{7,17}\d|\d{8,14})', pl)
+    if not m_cnpj_pre and 'cnpj' in pl:
+        # Contexto tem "cnpj" mas número pode estar separado (ex: "qual o cnpj? \n 73849952")
+        m_cnpj_pre = re.search(r'\b(\d{8,14})\b', pl)
     if m_cnpj_pre and 'CPF_CGC' in dff.columns:
         digits = re.sub(r'\D', '', m_cnpj_pre.group(1))
         raiz = digits[:8]
@@ -1581,6 +1586,13 @@ async def chat(req: ChatRequest):
     if nr_nota_historico:
         pergunta_para_filtro = f"nota {nr_nota_historico} {pergunta_para_filtro}"
 
+    # ── Se usuário respondeu só com número de 8 dígitos e contexto anterior menciona "cnpj" ──
+    if re.match(r'^\s*\d{8,14}\s*$', ultima):
+        # Verifica se mensagem anterior (assistente ou usuário) menciona cnpj
+        msgs_recentes = [m.content for m in reversed(req.messages[:-1])][:3]
+        if any('cnpj' in m.lower() for m in msgs_recentes):
+            pergunta_para_filtro = f"cnpj {ultima.strip()}"
+
     try:
         df = load_df()
         import logging
@@ -1797,7 +1809,7 @@ async def chat(req: ChatRequest):
 - Período sem detalhe especificado (mensal/trimestral/anual): ofereça 4 opções antes de processar: "1) Resumo executivo 2) Análise por dia 3) Ranking produtos/vendedores 4) Comparativo filiais"
 - EXCEÇÃO: se o usuário já especificou o que quer ("resumo", "ranking", "análise detalhada"), processe direto
 - Filtro UF: reconhece siglas (ES, RJ...) e nomes por extenso. Destaque: volume, faturamento, clientes, produtos, cidades
-- Busca por CNPJ: aceita "cnpj 73849952" (raiz 8 dígitos) ou "cnpj 73.849.952/0001-34" (completo). Se o CSV não tiver coluna CNPJ, oriente o usuário a buscar pelo nome do cliente.
+- Busca por CNPJ: o CSV TEM coluna CNPJ (campo CPF_CGC). Aceita "cnpj 73849952" (raiz 8 dígitos) ou completo. NUNCA diga que o CSV não tem CNPJ. Se os dados retornados já estiverem filtrados por CNPJ, analise normalmente sem comentar sobre a coluna.
 - Vendedor não encontrado: sugira busca por código e liste até 5 disponíveis no período
 - Apresente dados disponíveis SEM mencionar o que não existe. Nunca diga "não tenho dados de X"
 - "Análise de [cliente] em [período]": se os dados já vierem filtrados por cliente (1 único NOME_CLIENTE), exiba tabela completa de todas as compras (DATA | NR NOTA | PRODUTO | KG | CX | R$ | R$/kg), depois totais e comparativo. Não resuma — mostre tudo.
