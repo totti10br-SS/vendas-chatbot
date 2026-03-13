@@ -1,4 +1,5 @@
 import os
+import logging
 os.environ.setdefault('TZ', 'America/Sao_Paulo')
 try:
     import time; time.tzset()
