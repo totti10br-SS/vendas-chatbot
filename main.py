@@ -367,6 +367,7 @@ def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None, df_orig: pd.D
 
     # Prioridade 1: padrão explícito "cliente: NOME" ou "para o NOME" ou "do cliente NOME" ou "o cliente NOME"
     m_cliente = re.search(r'(?:cliente[:\s]+|para\s+(?:o|a)\s+|do\s+cliente\s+|o\s+cliente\s+)([a-záéíóúâêîôûãõç0-9\s]+)', pl)
+    logging.warning(f"[IAF DEBUG FINALIZE] dff={len(dff)} | cnpj_filtrado={ctx.get('cnpj_filtrado')} | m_cliente={'SIM:'+m_cliente.group(1)[:20] if m_cliente else 'NAO'}")
     if m_cliente and ctx.get('cnpj_filtrado'):
         # CNPJ já aplicado — ignorar extração de nome de cliente para não zerar dff
         m_cliente = None
