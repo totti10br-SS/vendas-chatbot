@@ -292,11 +292,13 @@ def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None, df_orig: pd.D
     # ── Filtro por CNPJ raiz ou COD_CLIENTE ──
     # Padrões reconhecidos:
     #   "cnpj 73849952"  /  "cnpj 73.849.952/0001-34"  /  "codigo cliente 18676"
-    m_cnpj = re.search(r'cnpj[:\s]+(\d[\d\.\-\/\s]{7,17}\d)', pl)
+    # Detecta "cnpj 73849952" / "cnpj raiz 73849952" / "cnpj: 73.849.952/0001-34"
+    m_cnpj = re.search(r'cnpj\s*(?:raiz\s*)?[:\s]*(\d[\d\.\-\/]{7,17}\d|\d{8,14})', pl)
     if m_cnpj:
         digits = re.sub(r'\D', '', m_cnpj.group(1))
         raiz = digits[:8]
         if 'CPF_CGC' in dff.columns:
+            # Remove pontuação do CPF_CGC (ex: "73.849.952/0001-34" → "73849952000134")
             cnpj_col = dff['CPF_CGC'].astype(str).str.replace(r'\D', '', regex=True)
             mask_cnpj = cnpj_col.str.startswith(raiz)
             if mask_cnpj.sum() > 0:
@@ -1589,6 +1591,10 @@ async def chat(req: ChatRequest):
         import re as _re2
         anos_debug = _re2.findall(r'\b(202[0-9])\b', pergunta_para_filtro)
         logging.warning(f"[IAF DEBUG] dff apos filter_for_chat={len(dff)} | anos_detectados={anos_debug}")
+        # Log CPF_CGC para diagnóstico de busca por CNPJ
+        if 'cnpj' in pergunta_para_filtro.lower() and 'CPF_CGC' in df.columns:
+            amostras = df['CPF_CGC'].dropna().astype(str).unique()[:5].tolist()
+            logging.warning(f"[IAF DEBUG] CPF_CGC amostras={amostras}")
         n = len(dff)
 
         # ── PDF / PPTX: flags para processar após Claude gerar o conteúdo ──
@@ -1604,7 +1610,7 @@ async def chat(req: ChatRequest):
         )
         # Também detecta padrão simples: "qual cnpj raiz do atakarejo"
         m_cnpj_simple = re.search(
-            r'(?:cnpj|cpf.?cgc)\s+(?:raiz\s+)?(?:do?|da)?\s*([a-záéíóúâêîôûãõç0-9\s]{3,30})',
+            r'cnpj\s*(?:raiz\s*)?(?:do?|da)?\s*([a-záéíóúâêîôûãõç][a-záéíóúâêîôûãõç0-9\s]{2,30})',
             ultima.lower()
         )
         nome_para_cnpj = None
