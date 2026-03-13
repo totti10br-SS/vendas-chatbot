@@ -53,11 +53,11 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;ba
 .cliente-row:hover{border-left-color:var(--yellow);background:var(--surface3);}
 .c-rank{font-family:'Bebas Neue',sans-serif;font-size:13px;color:rgba(245,200,0,.4);width:14px;flex-shrink:0;text-align:center;}
 .cliente-row:hover .c-rank{color:var(--yellow);}
-.c-nome{font-size:11px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px;flex-shrink:1;}
-.c-vals{display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:6px;}
-.c-kg{font-family:'Barlow Condensed',sans-serif;font-size:12px;color:var(--yellow);font-weight:700;white-space:nowrap;}
+.c-nome{font-size:11px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:260px;flex-shrink:0;}
+.c-vals{display:flex;align-items:center;gap:8px;flex-shrink:0;}
+.c-kg{font-family:'Barlow Condensed',sans-serif;font-size:12px;color:var(--yellow);font-weight:700;white-space:nowrap;width:90px;}
 .c-fat{font-size:10px;color:#fff;white-space:nowrap;}
-.c-arrow{font-size:11px;color:rgba(255,255,255,.3);flex-shrink:0;}
+.c-arrow{font-size:11px;color:rgba(255,255,255,.3);flex-shrink:0;margin-left:4px;}
 
 /* MAIN LAYOUT */
 .main-wrap{flex:1;display:flex;overflow:hidden;}
@@ -152,7 +152,7 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;ba
 .panel-loading{text-align:center;padding:20px;color:#fff;font-size:13px;}
 
 /* INSIGHT LATERAL */
-.insight-panel{position:fixed;right:0;top:0;width:42px;z-index:100;transition:width .3s ease;display:flex;flex-direction:column;}
+.insight-panel{position:fixed;right:0;top:110px;width:42px;z-index:100;transition:width .3s ease;display:flex;flex-direction:column;}
 .insight-panel.expanded{width:340px;}
 .insight-tab{background:var(--red);color:var(--yellow);writing-mode:vertical-rl;text-orientation:mixed;padding:16px 10px;font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:700;letter-spacing:1.5px;cursor:pointer;border-radius:0 0 0 6px;white-space:nowrap;display:flex;align-items:center;gap:6px;box-shadow:-3px 0 10px rgba(0,0,0,.4);transition:background .2s;flex-shrink:0;}
 .insight-tab:hover{background:var(--red-dark);}
@@ -313,6 +313,11 @@ body.modo-vasco .welcome p strong{color:#fff;}
   </div>
 </header>
 
+<!-- BARRA DE POSIÇÃO — data única centralizada -->
+<div id="posicaoBar" style="display:none;background:#1a1a1a;border-bottom:1px solid rgba(245,200,0,.15);padding:3px 18px;font-family:'Barlow Condensed',sans-serif;font-size:11px;color:rgba(255,255,255,.5);letter-spacing:.5px;">
+  Posição em: <span id="posicaoData" style="color:var(--yellow);font-weight:700;">—</span>
+</div>
+
 <!-- DASHBOARD COMPACTO -->
 <div class="dashboard" id="dashboard" style="display:none">
   <div style="display:flex;flex-direction:column;gap:0;flex-shrink:0;">
@@ -321,13 +326,11 @@ body.modo-vasco .welcome p strong{color:#fff;}
         <div class="kpi-mini-label">Faturamento</div>
         <div class="kpi-mini-value" id="kpiFat">—</div>
         <div class="kpi-mini-sub">R$</div>
-        <div class="kpi-dia" id="diaLabel">—</div>
       </div>
       <div class="kpi-mini">
         <div class="kpi-mini-label">Volume</div>
         <div class="kpi-mini-value" id="kpiKg">—</div>
         <div class="kpi-mini-sub">kg</div>
-        <div class="kpi-dia" id="diaLabel2">—</div>
       </div>
     </div>
     <div class="tipo-carne-box" id="tipoCarne" style="display:none">
@@ -340,7 +343,7 @@ body.modo-vasco .welcome p strong{color:#fff;}
 
   <div class="top-clientes">
     <div class="top-header">
-      <div class="top-title">Top 5 Clientes · <span id="diaLabel3">—</span></div>
+      <div class="top-title">Top 5 Clientes</div>
     </div>
     <div class="clientes-list" id="clientesList"></div>
   </div>
@@ -418,10 +421,13 @@ async function init(){
     if(!r.ok) throw new Error('Erro ao carregar');
     const d=await r.json();
     document.getElementById('totalReg').textContent=d.total_registros.toLocaleString('pt-BR')+' registros';
-    document.getElementById('csvData').textContent='Atualizado em: '+(d.csv_modificado&&d.csv_modificado!='—'?d.csv_modificado:d.ultima_nota);
+    const atualizadoStr = (d.csv_modificado&&d.csv_modificado!='—'?d.csv_modificado:d.ultima_nota);
+    document.getElementById('csvData').textContent='Atualizado em: '+atualizadoStr;
+    // Barra de posição única no topo
+    document.getElementById('posicaoData').textContent = atualizadoStr;
+    document.getElementById('posicaoBar').style.display='block';
     document.getElementById('kpiFat').textContent=fmtBRL(d.fat);
     document.getElementById('kpiKg').textContent=fmtKg(d.kg);
-    ['diaLabel','diaLabel2','diaLabel3'].forEach(id=>document.getElementById(id).textContent=d.dia_label);
 
     const list=document.getElementById('clientesList');
     d.top10.slice(0,5).forEach((c,i)=>{
@@ -451,7 +457,7 @@ async function init(){
       document.getElementById('tipoCarne').style.display='block';
       window._tiposDia = lista.innerHTML;
       window._tiposDiaLabel = dataLabel;
-      document.querySelector('.tipo-carne-title').textContent = `📦 Tipo de Carne · ${dataLabel}`;
+      document.querySelector('.tipo-carne-title').textContent = `📦 Tipo de Carne`;
     }
     document.getElementById('dashboard').style.display='flex';
     document.getElementById('initLoader').remove();
@@ -583,8 +589,7 @@ async function openTipo(tipo){
 
 function closePanel(){
   document.getElementById('sidePanel').classList.remove('open');
-  const lbl = window._tiposDiaLabel || 'Total do Dia';
-  document.querySelector('.tipo-carne-title').textContent = `📦 Tipo de Carne · ${lbl}`;
+  document.querySelector('.tipo-carne-title').textContent = `📦 Tipo de Carne`;
   if(window._tiposDia){
     document.getElementById('tipoCarneLista').innerHTML = window._tiposDia;
   }
