@@ -292,20 +292,33 @@ def _finalize_filter(dff: pd.DataFrame, pl: str) -> pd.DataFrame:
         candidatos = dff[mask]['NOME_CLIENTE'].str.lower().unique()
         if len(candidatos) == 1:
             return dff[mask], True
-        # Múltiplos clientes — escolhe o com menor distância de edição para o termo
-        def dist(a, b):
-            # distância simples: comprimento da diferença entre conjuntos de chars
-            la, lb = len(a), len(b)
-            dp = list(range(lb + 1))
-            for i, ca in enumerate(a):
-                ndp = [i + 1]
-                for j, cb in enumerate(b):
-                    ndp.append(min(dp[j] + (0 if ca == cb else 1), dp[j+1] + 1, ndp[j] + 1))
-                dp = ndp
-            return dp[lb]
-        melhor = min(candidatos, key=lambda c: dist(termo, c))
+
+        def score(nome, termo):
+            # Prioridade 1: nome começa com o termo (ex: "atakarejo distribuidor" começa com "atakarejo")
+            if nome.startswith(termo):
+                return 0
+            palavras_nome = nome.split()
+            # Prioridade 2: alguma palavra do nome é EXATAMENTE o termo
+            if termo in palavras_nome:
+                return 1
+            # Prioridade 3: termo é a primeira palavra significativa do nome
+            if palavras_nome and palavras_nome[0] == termo:
+                return 2
+            # Prioridade 4: distância de edição entre termo e a palavra mais parecida do nome
+            def levenshtein(a, b):
+                dp = list(range(len(b) + 1))
+                for ca in a:
+                    ndp = [dp[0] + 1]
+                    for j, cb in enumerate(b):
+                        ndp.append(min(dp[j] + (0 if ca == cb else 1), dp[j+1] + 1, ndp[j] + 1))
+                    dp = ndp
+                return dp[len(b)]
+            min_dist = min(levenshtein(termo, p) for p in palavras_nome)
+            # Penaliza nomes mais longos (termo "atakarejo" em "VALIM ATAKAREJO 1,5" deve perder)
+            return 10 + min_dist + len(palavras_nome)
+
+        melhor = min(candidatos, key=lambda c: score(c, termo))
         mask_melhor = dff['NOME_CLIENTE'].str.lower() == melhor
-        # Se só 1 registro com esse nome exato, expande para contains do melhor
         if mask_melhor.sum() == 0:
             mask_melhor = dff['NOME_CLIENTE'].str.lower().str.contains(melhor[:10], na=False)
         return dff[mask_melhor], True
