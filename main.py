@@ -72,8 +72,10 @@ def get_dia_referencia(df: pd.DataFrame):
     ultimo = df['DATA_MOVTO'].dropna().dt.date.max()
     return ultimo
 
-def filter_for_chat(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
-    """Filtra dados para o chat baseado na pergunta."""
+def filter_for_chat(df: pd.DataFrame, pergunta: str, ctx: dict = None) -> pd.DataFrame:
+    """Filtra dados para o chat baseado na pergunta. ctx é um dict opcional onde avisos são escritos."""
+    if ctx is None:
+        ctx = {}
     pl = pergunta.lower()
     dff = df.copy()
 
@@ -90,7 +92,7 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
             dff = dff[(dff['DATA_MOVTO'] >= d1) & (dff['DATA_MOVTO'] <= d2 + timedelta(days=1))]
         except:
             pass
-        return _finalize_filter(dff, pl)
+        return _finalize_filter(dff, pl, ctx)
 
     # ── Ano explícito ──
     anos = re.findall(r'\b(202[0-9])\b', pergunta)
@@ -118,14 +120,14 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
         d1 = pd.Timestamp(ano_ini, mes_ini, 1)
         d2 = pd.Timestamp(ano_fim, mes_fim + 1, 1) - timedelta(days=1) if mes_fim < 12 else pd.Timestamp(ano_fim + 1, 1, 1) - timedelta(days=1)
         dff = dff[(dff['DATA_MOVTO'] >= d1) & (dff['DATA_MOVTO'] <= d2)]
-        return _finalize_filter(dff, pl)
+        return _finalize_filter(dff, pl, ctx)
 
     elif len(meses_encontrados) == 1:
         _, mes_encontrado, ano_mes = meses_encontrados[0]
         ano_usar = ano_mes or ano_ref
         dff = dff[(dff['DATA_MOVTO'].dt.month == mes_encontrado) &
                   (dff['DATA_MOVTO'].dt.year == ano_usar)]
-        return _finalize_filter(dff, pl)
+        return _finalize_filter(dff, pl, ctx)
 
     # ── Trimestre ──
     if 'trimestre' in pl or '1º tri' in pl or 'primeiro trimestre' in pl:
@@ -138,7 +140,7 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
         dff = dff[(dff['DATA_MOVTO'].dt.month >= mes_ini) &
                   (dff['DATA_MOVTO'].dt.month <= mes_fim) &
                   (dff['DATA_MOVTO'].dt.year == ano_ref)]
-        return _finalize_filter(dff, pl)
+        return _finalize_filter(dff, pl, ctx)
 
     # ── Semestre ──
     if 'semestre' in pl:
@@ -146,12 +148,12 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
             dff = dff[(dff['DATA_MOVTO'].dt.month <= 6) & (dff['DATA_MOVTO'].dt.year == ano_ref)]
         else:
             dff = dff[(dff['DATA_MOVTO'].dt.month >= 7) & (dff['DATA_MOVTO'].dt.year == ano_ref)]
-        return _finalize_filter(dff, pl)
+        return _finalize_filter(dff, pl, ctx)
 
     # ── Ano inteiro ──
     if 'ano' in pl and anos:
         dff = dff[dff['DATA_MOVTO'].dt.year == ano_ref]
-        return _finalize_filter(dff, pl)
+        return _finalize_filter(dff, pl, ctx)
 
     # ── Relativos ──
     # "mês passado" / "mes passado" → mês anterior completo
@@ -227,10 +229,12 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
             # Ex: 'vendedor FABIO POLI em 2025', 'clientes de 2025'
             dff = dff[dff['DATA_MOVTO'].dt.year == int(anos[0])]
 
-    return _finalize_filter(dff, pl)
+    return _finalize_filter(dff, pl, ctx)
 
 
-def _finalize_filter(dff: pd.DataFrame, pl: str) -> pd.DataFrame:
+def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None) -> pd.DataFrame:
+    if ctx is None:
+        ctx = {}
     """Aplica filtros de filial/cliente/vendedor/produto e limita tamanho."""
     hoje = datetime.now()
 
@@ -337,7 +341,7 @@ def _finalize_filter(dff: pd.DataFrame, pl: str) -> pd.DataFrame:
                 sugestoes = dff[mask_global]['NOME_CLIENTE'].unique()[:3].tolist() if mask_global.sum() > 0 else []
                 # Esvazia dff para não contaminar com dados de outros clientes/vendedores
                 dff = dff.iloc[0:0].copy()
-                dff._iaf_cliente_nao_encontrado = (nome_cli, sugestoes)
+                ctx['cliente_nao_encontrado'] = (nome_cli, sugestoes)
     else:
         # Prioridade 2: busca livre — palavras que não são stop-words comuns
         stopwords = {'últimas','ultimas','vendas','venda','quais','qual','como','foram','mais','este',
@@ -1529,7 +1533,8 @@ async def chat(req: ChatRequest):
             df2025 = df[df['DATA_MOVTO'].dt.year == 2025]
             vends = sorted(df2025['NOM_VENDEDOR'].dropna().unique().tolist()) if 'NOM_VENDEDOR' in df2025.columns else []
             logging.warning(f"[IAF DEBUG] vendedores em 2025 ({len(df2025)} regs): {vends[:20]}")
-        dff = filter_for_chat(df, pergunta_para_filtro)
+        ctx_filtro = {}
+        dff = filter_for_chat(df, pergunta_para_filtro, ctx_filtro)
         import re as _re2
         anos_debug = _re2.findall(r'\b(202[0-9])\b', pergunta_para_filtro)
         logging.warning(f"[IAF DEBUG] dff apos filter_for_chat={len(dff)} | anos_detectados={anos_debug}")
@@ -1589,8 +1594,8 @@ async def chat(req: ChatRequest):
                 vends_str = "indisponível"
             aviso_extra = f" | ⚠️ VENDEDOR '{nome_buscado.upper()}' NÃO LOCALIZADO — sugerir busca por código (ex: 'vendedor cod XXXX') | Vendedores disponíveis no período: {vends_str}"
 
-        # Verifica se cliente não foi encontrado (flag setada no filter_for_chat)
-        cli_nao_encontrado = getattr(dff, '_iaf_cliente_nao_encontrado', None)
+        # Verifica se cliente não foi encontrado (flag escrita no ctx pelo filter_for_chat)
+        cli_nao_encontrado = ctx_filtro.get('cliente_nao_encontrado')
         if cli_nao_encontrado:
             nome_cli_buscado, sugestoes_cli = cli_nao_encontrado
             sug_str = " | ".join(sugestoes_cli) if sugestoes_cli else "nenhum encontrado no período"
