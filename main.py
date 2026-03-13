@@ -183,8 +183,20 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
 
     elif 'ontem' in pl:
         dia = hoje - timedelta(days=1)
-        dff = dff[(dff['DATA_MOVTO'] >= pd.Timestamp(dia.date())) &
-                  (dff['DATA_MOVTO'] < pd.Timestamp(hoje.date()))]
+        dff_ontem = dff[(dff['DATA_MOVTO'] >= pd.Timestamp(dia.date())) &
+                        (dff['DATA_MOVTO'] < pd.Timestamp(hoje.date()))]
+        if len(dff_ontem) > 0:
+            dff = dff_ontem
+        else:
+            # Não há dados de ontem — usa o penúltimo dia com dados disponíveis
+            dias_disp = sorted(dff['DATA_MOVTO'].dt.date.unique(), reverse=True)
+            if len(dias_disp) >= 2:
+                dia_ant = dias_disp[1]  # penúltimo dia (o último é o dia de referência)
+            elif len(dias_disp) == 1:
+                dia_ant = dias_disp[0]
+            else:
+                dia_ant = dia.date()
+            dff = dff[dff['DATA_MOVTO'].dt.date == dia_ant]
 
     elif 'hoje' in pl:
         dff = dff[dff['DATA_MOVTO'] >= pd.Timestamp(hoje.date())]
@@ -1593,6 +1605,7 @@ async def chat(req: ChatRequest):
 - Filtro UF: reconhece siglas (ES, RJ...) e nomes por extenso. Destaque: volume, faturamento, clientes, produtos, cidades
 - Vendedor não encontrado: sugira busca por código e liste até 5 disponíveis no período
 - Apresente dados disponíveis SEM mencionar o que não existe. Nunca diga "não tenho dados de X"
+- "Ontem" / períodos sem movimento: se os dados recebidos forem de uma data diferente do dia literal pedido, processe normalmente e informe apenas UMA linha no início: "_(Dados de DD/MM/AA — dia útil anterior disponível)_". Não peça confirmação, não ofereça opções, vá direto à análise.
 
 ## DETALHE DE NOTA FISCAL
 - Quando o usuário pedir detalhes de uma nota E os dados contiverem apenas 1 NUM_DOCTO (todos os registros são da mesma nota): exiba tabela completa linha a linha:
