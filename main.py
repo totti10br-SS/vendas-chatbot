@@ -1550,7 +1550,8 @@ async def chat(req: ChatRequest):
         msgs_usuario = [m.content for m in reversed(req.messages) if m.role == "user"]
         for msg_anterior in msgs_usuario[1:4]:  # pula a atual, olha até 3 anteriores
             if tem_contexto_temporal(msg_anterior):
-                pergunta_para_filtro = msg_anterior
+                # Combina: período da mensagem anterior + filtros específicos da atual (CNPJ, cliente, etc.)
+                pergunta_para_filtro = msg_anterior + " " + ultima
                 break
 
     # ── Se a pergunta atual menciona "dessa nota" sem número, tenta extrair NR NOTA do histórico ──
@@ -1590,6 +1591,13 @@ async def chat(req: ChatRequest):
         if 'cnpj' in pergunta_para_filtro.lower() and 'CPF_CGC' in df.columns:
             amostras = df['CPF_CGC'].dropna().astype(str).unique()[:5].tolist()
             logging.warning(f"[IAF DEBUG] CPF_CGC amostras={amostras}")
+            # Busca específica pela raiz mencionada
+            m_raiz_log = re.search(r'cnpj\s*(?:raiz\s*)?[:\s]*(\d{8,14})', pergunta_para_filtro.lower())
+            if m_raiz_log:
+                raiz_log = re.sub(r'\D','',m_raiz_log.group(1))[:8]
+                col_limpa = df['CPF_CGC'].astype(str).str.replace(r'\D','',regex=True)
+                encontrados = df[col_limpa.str.startswith(raiz_log)]['NOME_CLIENTE'].unique()[:3].tolist()
+                logging.warning(f"[IAF DEBUG] raiz={raiz_log} → clientes encontrados no df TOTAL: {encontrados}")
         n = len(dff)
 
         # ── PDF / PPTX: flags para processar após Claude gerar o conteúdo ──
