@@ -562,14 +562,18 @@ def dashboard():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/cliente/{nome}")
+@app.get("/cliente/{nome:path}")
 def detalhe_cliente(nome: str):
     """Retorna produtos comprados pelo cliente no dia de referência."""
     try:
         df = load_df()
         dia = get_dia_referencia(df)
         df_dia = df[df['DATA_MOVTO'].dt.date == dia]
-        df_cli = df_dia[df_dia['NOME_CLIENTE'].str.upper() == nome.upper()]
+        # Busca tolerante: tenta match exato primeiro, depois contains
+        mask_exato = df_dia['NOME_CLIENTE'].str.upper() == nome.upper()
+        if mask_exato.sum() == 0:
+            mask_exato = df_dia['NOME_CLIENTE'].str.upper().str.contains(nome.upper()[:20], na=False)
+        df_cli = df_dia[mask_exato]
 
         fat_total = float(df_cli['VALOR_LIQUIDO'].sum())
         kg_total  = float(df_cli['QTDE_PRI'].sum())
