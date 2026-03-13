@@ -92,7 +92,7 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str, ctx: dict = None) -> pd.Dat
             dff = dff[(dff['DATA_MOVTO'] >= d1) & (dff['DATA_MOVTO'] <= d2 + timedelta(days=1))]
         except:
             pass
-        return _finalize_filter(dff, pl, ctx)
+        return _finalize_filter(dff, pl, ctx, df)
 
     # ── Ano explícito ──
     anos = re.findall(r'\b(202[0-9])\b', pergunta)
@@ -120,14 +120,14 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str, ctx: dict = None) -> pd.Dat
         d1 = pd.Timestamp(ano_ini, mes_ini, 1)
         d2 = pd.Timestamp(ano_fim, mes_fim + 1, 1) - timedelta(days=1) if mes_fim < 12 else pd.Timestamp(ano_fim + 1, 1, 1) - timedelta(days=1)
         dff = dff[(dff['DATA_MOVTO'] >= d1) & (dff['DATA_MOVTO'] <= d2)]
-        return _finalize_filter(dff, pl, ctx)
+        return _finalize_filter(dff, pl, ctx, df)
 
     elif len(meses_encontrados) == 1:
         _, mes_encontrado, ano_mes = meses_encontrados[0]
         ano_usar = ano_mes or ano_ref
         dff = dff[(dff['DATA_MOVTO'].dt.month == mes_encontrado) &
                   (dff['DATA_MOVTO'].dt.year == ano_usar)]
-        return _finalize_filter(dff, pl, ctx)
+        return _finalize_filter(dff, pl, ctx, df)
 
     # ── Trimestre ──
     if 'trimestre' in pl or '1º tri' in pl or 'primeiro trimestre' in pl:
@@ -140,7 +140,7 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str, ctx: dict = None) -> pd.Dat
         dff = dff[(dff['DATA_MOVTO'].dt.month >= mes_ini) &
                   (dff['DATA_MOVTO'].dt.month <= mes_fim) &
                   (dff['DATA_MOVTO'].dt.year == ano_ref)]
-        return _finalize_filter(dff, pl, ctx)
+        return _finalize_filter(dff, pl, ctx, df)
 
     # ── Semestre ──
     if 'semestre' in pl:
@@ -148,12 +148,12 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str, ctx: dict = None) -> pd.Dat
             dff = dff[(dff['DATA_MOVTO'].dt.month <= 6) & (dff['DATA_MOVTO'].dt.year == ano_ref)]
         else:
             dff = dff[(dff['DATA_MOVTO'].dt.month >= 7) & (dff['DATA_MOVTO'].dt.year == ano_ref)]
-        return _finalize_filter(dff, pl, ctx)
+        return _finalize_filter(dff, pl, ctx, df)
 
     # ── Ano inteiro ──
     if 'ano' in pl and anos:
         dff = dff[dff['DATA_MOVTO'].dt.year == ano_ref]
-        return _finalize_filter(dff, pl, ctx)
+        return _finalize_filter(dff, pl, ctx, df)
 
     # ── Relativos ──
     # "mês passado" / "mes passado" → mês anterior completo
@@ -229,12 +229,14 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str, ctx: dict = None) -> pd.Dat
             # Ex: 'vendedor FABIO POLI em 2025', 'clientes de 2025'
             dff = dff[dff['DATA_MOVTO'].dt.year == int(anos[0])]
 
-    return _finalize_filter(dff, pl, ctx)
+    return _finalize_filter(dff, pl, ctx, df)
 
 
-def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None) -> pd.DataFrame:
+def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None, df_orig: pd.DataFrame = None) -> pd.DataFrame:
     if ctx is None:
         ctx = {}
+    if df_orig is None:
+        df_orig = dff
     """Aplica filtros de filial/cliente/vendedor/produto e limita tamanho."""
     hoje = datetime.now()
 
@@ -327,21 +329,38 @@ def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None) -> pd.DataFra
             mask_melhor = dff['NOME_CLIENTE'].str.lower().str.contains(melhor[:10], na=False)
         return dff[mask_melhor], True
 
-    # Prioridade 1: padrão explícito "cliente: NOME" ou "para o NOME" ou "do cliente NOME"
-    m_cliente = re.search(r'(?:cliente[:\s]+|para\s+(?:o|a)\s+|do\s+cliente\s+)([a-záéíóúâêîôûãõç0-9\s]+)', pl)
+    # Prioridade 1: padrão explícito "cliente: NOME" ou "para o NOME" ou "do cliente NOME" ou "o cliente NOME"
+    m_cliente = re.search(r'(?:cliente[:\s]+|para\s+(?:o|a)\s+|do\s+cliente\s+|o\s+cliente\s+)([a-záéíóúâêîôûãõç0-9\s]+)', pl)
     if m_cliente:
-        nome_cli = re.split(r'\s+(?:em|de|no|na|para|do|da|\d{4})\b', m_cliente.group(1))[0].strip()
+        # Corta em palavras de parada: preposições, ano, verbos comuns
+        nome_cli = re.split(
+            r'\s+(?:em|de|no|na|para|do|da|dos|das|nos|nas|com|\d{4}|'
+            r'comprou|compra|compras|fez|teve|tem|faz|realizou|realizou|pediu|pedidos|'
+            r'quanto|qual|quais|como|quando|onde|quanto)\b',
+            m_cliente.group(1)
+        )[0].strip()
+        # Limpa artigos soltos no início
+        nome_cli = re.sub(r'^(o|a|os|as|um|uma)\s+', '', nome_cli).strip()
         if len(nome_cli) > 2:
             dff_cli, achou = _melhor_cliente(dff, nome_cli)
             if achou:
                 dff = dff_cli
             else:
-                # Cliente não encontrado no período — sugere nomes próximos
-                mask_global = dff['NOME_CLIENTE'].str.lower().str.contains(nome_cli[:5], na=False)
-                sugestoes = dff[mask_global]['NOME_CLIENTE'].unique()[:3].tolist() if mask_global.sum() > 0 else []
-                # Esvazia dff para não contaminar com dados de outros clientes/vendedores
-                dff = dff.iloc[0:0].copy()
-                ctx['cliente_nao_encontrado'] = (nome_cli, sugestoes)
+                # Não achou no período — busca em todo o df (sem filtro de período) para sugerir
+                mask_global = df_orig['NOME_CLIENTE'].str.lower().str.contains(nome_cli[:5], na=False)
+                sugestoes = df_orig[mask_global]['NOME_CLIENTE'].unique()[:3].tolist() if mask_global.sum() > 0 else []
+                if len(sugestoes) == 1:
+                    # Só 1 candidato — usa automaticamente sem perguntar
+                    mask_auto = dff['NOME_CLIENTE'].str.lower().str.contains(sugestoes[0][:10].lower(), na=False)
+                    if mask_auto.sum() > 0:
+                        dff = dff[mask_auto]
+                    else:
+                        # Candidato existe mas não no período filtrado
+                        dff = dff.iloc[0:0].copy()
+                        ctx['cliente_nao_encontrado'] = (nome_cli, sugestoes)
+                else:
+                    dff = dff.iloc[0:0].copy()
+                    ctx['cliente_nao_encontrado'] = (nome_cli, sugestoes)
     else:
         # Prioridade 2: busca livre — palavras que não são stop-words comuns
         stopwords = {'últimas','ultimas','vendas','venda','quais','qual','como','foram','mais','este',
