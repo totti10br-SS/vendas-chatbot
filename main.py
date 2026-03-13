@@ -82,16 +82,17 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str, ctx: dict = None) -> pd.Dat
     hoje = datetime.now()
 
     # ── Filtro por CNPJ raiz — roda PRIMEIRO, antes de qualquer filtro temporal ──
-    # Detecta "cnpj 73849952" / "cnpj raiz 73849952" / "cnpj: 73.849.952/0001-34"
     m_cnpj_pre = re.search(r'cnpj\s*(?:raiz\s*)?[:\s]*(\d[\d\.\-\/]{7,17}\d|\d{8,14})', pl)
     if m_cnpj_pre and 'CPF_CGC' in dff.columns:
         digits = re.sub(r'\D', '', m_cnpj_pre.group(1))
         raiz = digits[:8]
         cnpj_col = dff['CPF_CGC'].astype(str).str.replace(r'\D', '', regex=True)
         mask_cnpj = cnpj_col.str.startswith(raiz)
+        logging.warning(f"[IAF DEBUG CNPJ] raiz={raiz} | dff antes={len(dff)} | mask_sum={mask_cnpj.sum()}")
         if mask_cnpj.sum() > 0:
             dff = dff[mask_cnpj]
             ctx['cnpj_filtrado'] = raiz
+            logging.warning(f"[IAF DEBUG CNPJ] dff apos filtro CNPJ={len(dff)}")
         else:
             ctx['aviso'] = f"⚠️ Nenhum cliente encontrado com CNPJ raiz {raiz}."
 
@@ -360,6 +361,9 @@ def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None, df_orig: pd.D
 
     # Prioridade 1: padrão explícito "cliente: NOME" ou "para o NOME" ou "do cliente NOME" ou "o cliente NOME"
     m_cliente = re.search(r'(?:cliente[:\s]+|para\s+(?:o|a)\s+|do\s+cliente\s+|o\s+cliente\s+)([a-záéíóúâêîôûãõç0-9\s]+)', pl)
+    if m_cliente and ctx.get('cnpj_filtrado'):
+        # CNPJ já aplicado — ignorar extração de nome de cliente para não zerar dff
+        m_cliente = None
     if m_cliente:
         # Corta em palavras de parada: preposições, ano, verbos comuns
         nome_cli = re.split(
@@ -392,30 +396,34 @@ def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None, df_orig: pd.D
                     ctx['cliente_nao_encontrado'] = (nome_cli, sugestoes)
     else:
         # Prioridade 2: busca livre — palavras que não são stop-words comuns
-        stopwords = {'últimas','ultimas','vendas','venda','quais','qual','como','foram','mais','este',
-                     'essa','esse','para','pela','pelo','mês','mes','ano','2025','2026','2024','2023',
-                     'analise','análise','resumo','faca','fazer','quero','cliente','clientes','filial',
-                     'produto','vendedor','ranking','comparar','total','faça','faz','uma','uns','umas',
-                     'dados','traz','traga','mostra','mostre','lista','liste','apresenta','analisa',
-                     'sobre','com','sem','entre','desde','ate','até','ontem','hoje','semana','março',
-                     'marco','janeiro','fevereiro','abril','maio','junho','julho','agosto','setembro',
-                     'outubro','novembro','dezembro','trimestre','semestre','periodo','período'}
-        nao_tem_filtro_especifico = not any(x in pl for x in [
-            'produto:','vendedor:','filial:','ranking','comparar','top ','total geral'])
-        if nao_tem_filtro_especifico:
-            palavras = [p for p in pl.split() if len(p) > 3 and p not in stopwords]
-            if palavras:
-                achou = False
-                for tam in [3, 2, 1]:
-                    for i in range(len(palavras) - tam + 1):
-                        termo = ' '.join(palavras[i:i+tam])
-                        dff_cli, ok = _melhor_cliente(dff, termo)
-                        if ok:
-                            dff = dff_cli
-                            achou = True
+        # Não roda se CNPJ já foi filtrado (evita falso match em "raiz", "cnpj", etc.)
+        if ctx.get('cnpj_filtrado'):
+            pass
+        else:
+            stopwords = {'últimas','ultimas','vendas','venda','quais','qual','como','foram','mais','este',
+                         'essa','esse','para','pela','pelo','mês','mes','ano','2025','2026','2024','2023',
+                         'analise','análise','resumo','faca','fazer','quero','cliente','clientes','filial',
+                         'produto','vendedor','ranking','comparar','total','faça','faz','uma','uns','umas',
+                         'dados','traz','traga','mostra','mostre','lista','liste','apresenta','analisa',
+                         'sobre','com','sem','entre','desde','ate','até','ontem','hoje','semana','março',
+                         'marco','janeiro','fevereiro','abril','maio','junho','julho','agosto','setembro',
+                         'outubro','novembro','dezembro','trimestre','semestre','periodo','período'}
+            nao_tem_filtro_especifico = not any(x in pl for x in [
+                'produto:','vendedor:','filial:','ranking','comparar','top ','total geral'])
+            if nao_tem_filtro_especifico:
+                palavras = [p for p in pl.split() if len(p) > 3 and p not in stopwords]
+                if palavras:
+                    achou = False
+                    for tam in [3, 2, 1]:
+                        for i in range(len(palavras) - tam + 1):
+                            termo = ' '.join(palavras[i:i+tam])
+                            dff_cli, ok = _melhor_cliente(dff, termo)
+                            if ok:
+                                dff = dff_cli
+                                achou = True
+                                break
+                        if achou:
                             break
-                    if achou:
-                        break
 
     cols = ['NOME_FILIAL','DATA_MOVTO','NUM_DOCTO','COD_PRODUTO','DESC_PRODUTO','NOME_CLIENTE',
             'NOM_VENDEDOR','COD_VENDEDOR','QTDE_PRI','QTDE_AUX','VALOR_LIQUIDO','DESC_DIVISAO2','DESC_DIVISAO3','UF','CIDADE','CPF_CGC']
@@ -1598,6 +1606,11 @@ async def chat(req: ChatRequest):
                 col_limpa = df['CPF_CGC'].astype(str).str.replace(r'\D','',regex=True)
                 encontrados = df[col_limpa.str.startswith(raiz_log)]['NOME_CLIENTE'].unique()[:3].tolist()
                 logging.warning(f"[IAF DEBUG] raiz={raiz_log} → clientes encontrados no df TOTAL: {encontrados}")
+            # Mostra CPF_CGC real do Atakarejo para diagnóstico
+            mask_atak = df['NOME_CLIENTE'].str.lower().str.contains('atakarejo', na=False)
+            if mask_atak.sum() > 0:
+                cnpjs_atak = df[mask_atak]['CPF_CGC'].dropna().astype(str).unique()[:5].tolist()
+                logging.warning(f"[IAF DEBUG] CPF_CGC do ATAKAREJO no CSV: {cnpjs_atak}")
         n = len(dff)
 
         # ── PDF / PPTX: flags para processar após Claude gerar o conteúdo ──
