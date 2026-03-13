@@ -289,6 +289,31 @@ def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None, df_orig: pd.D
                 dff = dff[dff['UF'].str.upper() == uf]
                 break
 
+    # ── Filtro por CNPJ raiz ou COD_CLIENTE ──
+    # Padrões reconhecidos:
+    #   "cnpj 73849952"  /  "cnpj 73.849.952/0001-34"  /  "codigo cliente 18676"
+    m_cnpj = re.search(r'cnpj[:\s]+(\d[\d\.\-\/\s]{7,17}\d)', pl)
+    if m_cnpj:
+        digits = re.sub(r'\D', '', m_cnpj.group(1))
+        raiz = digits[:8]
+        if 'CPF_CGC' in dff.columns:
+            cnpj_col = dff['CPF_CGC'].astype(str).str.replace(r'\D', '', regex=True)
+            mask_cnpj = cnpj_col.str.startswith(raiz)
+            if mask_cnpj.sum() > 0:
+                dff = dff[mask_cnpj]
+            else:
+                ctx['aviso'] = f"⚠️ Nenhum cliente encontrado com CNPJ raiz {raiz} no período."
+        else:
+            ctx['aviso'] = f"⚠️ Coluna CPF_CGC não encontrada no CSV."
+
+    # Busca por código numérico de cliente: "cod cliente 18676" / "cliente cod 18676"
+    m_cod_cli = re.search(r'(?:cod(?:igo)?[_\s]+cliente[_\s]+|cliente[_\s]+cod(?:igo)?[_\s]+)(\d{3,6})', pl)
+    if m_cod_cli and 'COD_CLIENTE' in dff.columns:
+        cod = m_cod_cli.group(1)
+        mask_cod = dff['COD_CLIENTE'].astype(str).str.strip() == cod
+        if mask_cod.sum() > 0:
+            dff = dff[mask_cod]
+
     # ── Filtro por cliente ──
     def _melhor_cliente(dff, termo):
         """Retorna df filtrado pelo cliente mais parecido com o termo buscado."""
@@ -297,7 +322,10 @@ def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None, df_orig: pd.D
             return dff, False
         candidatos = dff[mask]['NOME_CLIENTE'].str.lower().unique()
         if len(candidatos) == 1:
-            return dff[mask], True
+            # Mesmo com 1 candidato, usa prefixo para pegar todas as variações do grupo
+            prefixo = candidatos[0][:20].strip()
+            mask_pref = dff['NOME_CLIENTE'].str.lower().str.contains(re.escape(prefixo), na=False)
+            return dff[mask_pref], True
 
         def score(nome, termo):
             # Prioridade 1: nome começa com o termo (ex: "atakarejo distribuidor" começa com "atakarejo")
@@ -324,9 +352,13 @@ def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None, df_orig: pd.D
             return 10 + min_dist + len(palavras_nome)
 
         melhor = min(candidatos, key=lambda c: score(c, termo))
-        mask_melhor = dff['NOME_CLIENTE'].str.lower() == melhor
+        # Usa os primeiros 20 chars do melhor nome para capturar todas as variações do grupo
+        # Ex: "ATAKAREJO DISTRIBUIDOR" pega todos os CNPJs diferentes do mesmo grupo
+        prefixo = melhor[:20].strip()
+        mask_melhor = dff['NOME_CLIENTE'].str.lower().str.contains(re.escape(prefixo), na=False)
         if mask_melhor.sum() == 0:
-            mask_melhor = dff['NOME_CLIENTE'].str.lower().str.contains(melhor[:10], na=False)
+            # Fallback: match exato
+            mask_melhor = dff['NOME_CLIENTE'].str.lower() == melhor
         return dff[mask_melhor], True
 
     # Prioridade 1: padrão explícito "cliente: NOME" ou "para o NOME" ou "do cliente NOME" ou "o cliente NOME"
@@ -389,7 +421,7 @@ def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None, df_orig: pd.D
                         break
 
     cols = ['NOME_FILIAL','DATA_MOVTO','NUM_DOCTO','COD_PRODUTO','DESC_PRODUTO','NOME_CLIENTE',
-            'NOM_VENDEDOR','COD_VENDEDOR','QTDE_PRI','QTDE_AUX','VALOR_LIQUIDO','DESC_DIVISAO2','DESC_DIVISAO3','UF','CIDADE']
+            'NOM_VENDEDOR','COD_VENDEDOR','QTDE_PRI','QTDE_AUX','VALOR_LIQUIDO','DESC_DIVISAO2','DESC_DIVISAO3','UF','CIDADE','CPF_CGC']
 
     if any(x in pl for x in ['últimas vendas','ultimas vendas','ultima venda','última venda']):
         dff = dff.sort_values('DATA_MOVTO', ascending=False).head(15)
@@ -1563,6 +1595,44 @@ async def chat(req: ChatRequest):
         gerar_pdf_apos_claude  = is_pdf_query(ultima)
         gerar_pptx_apos_claude = is_pptx_query(ultima) and not gerar_pdf_apos_claude
 
+        # ── CONSULTA DE CNPJ: intercepta antes de chamar Claude — zero tokens ──
+        m_cnpj_query = re.search(
+            r'(?:qual|me\s+(?:diz|fala|passa|mostra?)|cnpj|cpf.?cgc)\b.{0,30}'
+            r'(?:cnpj|cpf.?cgc|raiz).{0,20}(?:cliente[:\s]+|do\s+|da\s+|de\s+)?'
+            r'([a-záéíóúâêîôûãõç0-9\s]{3,40})',
+            ultima.lower()
+        )
+        # Também detecta padrão simples: "qual cnpj raiz do atakarejo"
+        m_cnpj_simple = re.search(
+            r'(?:cnpj|cpf.?cgc)\s+(?:raiz\s+)?(?:do?|da)?\s*([a-záéíóúâêîôûãõç0-9\s]{3,30})',
+            ultima.lower()
+        )
+        nome_para_cnpj = None
+        if m_cnpj_simple:
+            nome_para_cnpj = m_cnpj_simple.group(1).strip()
+        elif m_cnpj_query:
+            nome_para_cnpj = m_cnpj_query.group(1).strip()
+
+        if nome_para_cnpj and 'CPF_CGC' in dff.columns and 'NOME_CLIENTE' in dff.columns:
+            # Busca o cliente pelo nome
+            mask_cli = df['NOME_CLIENTE'].str.lower().str.contains(nome_para_cnpj[:8], na=False)
+            if mask_cli.sum() > 0:
+                rows = df[mask_cli][['NOME_CLIENTE','CPF_CGC']].dropna()
+                rows['raiz'] = rows['CPF_CGC'].astype(str).str.replace(r'\D','',regex=True).str[:8]
+                raizes = rows.groupby('raiz')['NOME_CLIENTE'].first().reset_index()
+                linhas = []
+                for _, r in raizes.iterrows():
+                    linhas.append(f"**{r['NOME_CLIENTE']}** — CNPJ raiz: `{r['raiz']}`")
+                resposta_md = "\n".join(linhas) if linhas else f"Nenhum cliente encontrado com '{nome_para_cnpj}'."
+                return JSONResponse({
+                    "id": "cnpj_query",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": resposta_md}],
+                    "model": "local-lookup",
+                    "stop_reason": "end_turn"
+                })
+
         # ── GRÁFICO: intercepta antes de chamar Claude — zero tokens ──
         if is_chart_query(ultima):
             html_grafico = gerar_grafico(dff, ultima)
@@ -1619,6 +1689,10 @@ async def chat(req: ChatRequest):
             nome_cli_buscado, sugestoes_cli = cli_nao_encontrado
             sug_str = " | ".join(sugestoes_cli) if sugestoes_cli else "nenhum encontrado no período"
             aviso_extra += f" | ⚠️ CLIENTE '{nome_cli_buscado.upper()}' NÃO ENCONTRADO NO PERÍODO — informe ao usuário e sugira: {sug_str}"
+
+        # Aviso genérico do ctx (ex: CNPJ sem coluna)
+        if ctx_filtro.get('aviso'):
+            aviso_extra += f" | {ctx_filtro['aviso']}"
 
         is_nota_query = any(x in pergunta_para_filtro.lower() for x in [
             'última nota','ultima nota','último pedido','ultimo pedido',
@@ -1700,6 +1774,7 @@ async def chat(req: ChatRequest):
 - Período sem detalhe especificado (mensal/trimestral/anual): ofereça 4 opções antes de processar: "1) Resumo executivo 2) Análise por dia 3) Ranking produtos/vendedores 4) Comparativo filiais"
 - EXCEÇÃO: se o usuário já especificou o que quer ("resumo", "ranking", "análise detalhada"), processe direto
 - Filtro UF: reconhece siglas (ES, RJ...) e nomes por extenso. Destaque: volume, faturamento, clientes, produtos, cidades
+- Busca por CNPJ: aceita "cnpj 73849952" (raiz 8 dígitos) ou "cnpj 73.849.952/0001-34" (completo). Se o CSV não tiver coluna CNPJ, oriente o usuário a buscar pelo nome do cliente.
 - Vendedor não encontrado: sugira busca por código e liste até 5 disponíveis no período
 - Apresente dados disponíveis SEM mencionar o que não existe. Nunca diga "não tenho dados de X"
 - "Análise de [cliente] em [período]": se os dados já vierem filtrados por cliente (1 único NOME_CLIENTE), exiba tabela completa de todas as compras (DATA | NR NOTA | PRODUTO | KG | CX | R$ | R$/kg), depois totais e comparativo. Não resuma — mostre tudo.
