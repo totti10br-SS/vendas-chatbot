@@ -81,6 +81,20 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str, ctx: dict = None) -> pd.Dat
 
     hoje = datetime.now()
 
+    # ── Filtro por CNPJ raiz — roda PRIMEIRO, antes de qualquer filtro temporal ──
+    # Detecta "cnpj 73849952" / "cnpj raiz 73849952" / "cnpj: 73.849.952/0001-34"
+    m_cnpj_pre = re.search(r'cnpj\s*(?:raiz\s*)?[:\s]*(\d[\d\.\-\/]{7,17}\d|\d{8,14})', pl)
+    if m_cnpj_pre and 'CPF_CGC' in dff.columns:
+        digits = re.sub(r'\D', '', m_cnpj_pre.group(1))
+        raiz = digits[:8]
+        cnpj_col = dff['CPF_CGC'].astype(str).str.replace(r'\D', '', regex=True)
+        mask_cnpj = cnpj_col.str.startswith(raiz)
+        if mask_cnpj.sum() > 0:
+            dff = dff[mask_cnpj]
+            ctx['cnpj_filtrado'] = raiz
+        else:
+            ctx['aviso'] = f"⚠️ Nenhum cliente encontrado com CNPJ raiz {raiz}."
+
     # ── Intervalo de datas explícito: "de DD/MM/YYYY a DD/MM/YYYY" ──
     m_range = re.search(r'(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})\s+a[té]?\s+(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})', pl)
     if m_range:
@@ -288,25 +302,6 @@ def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None, df_orig: pd.D
             if re.search(padrao, pl):
                 dff = dff[dff['UF'].str.upper() == uf]
                 break
-
-    # ── Filtro por CNPJ raiz ou COD_CLIENTE ──
-    # Padrões reconhecidos:
-    #   "cnpj 73849952"  /  "cnpj 73.849.952/0001-34"  /  "codigo cliente 18676"
-    # Detecta "cnpj 73849952" / "cnpj raiz 73849952" / "cnpj: 73.849.952/0001-34"
-    m_cnpj = re.search(r'cnpj\s*(?:raiz\s*)?[:\s]*(\d[\d\.\-\/]{7,17}\d|\d{8,14})', pl)
-    if m_cnpj:
-        digits = re.sub(r'\D', '', m_cnpj.group(1))
-        raiz = digits[:8]
-        if 'CPF_CGC' in dff.columns:
-            # Remove pontuação do CPF_CGC (ex: "73.849.952/0001-34" → "73849952000134")
-            cnpj_col = dff['CPF_CGC'].astype(str).str.replace(r'\D', '', regex=True)
-            mask_cnpj = cnpj_col.str.startswith(raiz)
-            if mask_cnpj.sum() > 0:
-                dff = dff[mask_cnpj]
-            else:
-                ctx['aviso'] = f"⚠️ Nenhum cliente encontrado com CNPJ raiz {raiz} no período."
-        else:
-            ctx['aviso'] = f"⚠️ Coluna CPF_CGC não encontrada no CSV."
 
     # Busca por código numérico de cliente: "cod cliente 18676" / "cliente cod 18676"
     m_cod_cli = re.search(r'(?:cod(?:igo)?[_\s]+cliente[_\s]+|cliente[_\s]+cod(?:igo)?[_\s]+)(\d{3,6})', pl)
