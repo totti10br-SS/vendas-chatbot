@@ -284,14 +284,40 @@ def _finalize_filter(dff: pd.DataFrame, pl: str) -> pd.DataFrame:
                 break
 
     # ── Filtro por cliente ──
+    def _melhor_cliente(dff, termo):
+        """Retorna df filtrado pelo cliente mais parecido com o termo buscado."""
+        mask = dff['NOME_CLIENTE'].str.lower().str.contains(termo, na=False)
+        if mask.sum() == 0:
+            return dff, False
+        candidatos = dff[mask]['NOME_CLIENTE'].str.lower().unique()
+        if len(candidatos) == 1:
+            return dff[mask], True
+        # Múltiplos clientes — escolhe o com menor distância de edição para o termo
+        def dist(a, b):
+            # distância simples: comprimento da diferença entre conjuntos de chars
+            la, lb = len(a), len(b)
+            dp = list(range(lb + 1))
+            for i, ca in enumerate(a):
+                ndp = [i + 1]
+                for j, cb in enumerate(b):
+                    ndp.append(min(dp[j] + (0 if ca == cb else 1), dp[j+1] + 1, ndp[j] + 1))
+                dp = ndp
+            return dp[lb]
+        melhor = min(candidatos, key=lambda c: dist(termo, c))
+        mask_melhor = dff['NOME_CLIENTE'].str.lower() == melhor
+        # Se só 1 registro com esse nome exato, expande para contains do melhor
+        if mask_melhor.sum() == 0:
+            mask_melhor = dff['NOME_CLIENTE'].str.lower().str.contains(melhor[:10], na=False)
+        return dff[mask_melhor], True
+
     # Prioridade 1: padrão explícito "cliente: NOME" ou "para o NOME" ou "do cliente NOME"
     m_cliente = re.search(r'(?:cliente[:\s]+|para\s+(?:o|a)\s+|do\s+cliente\s+)([a-záéíóúâêîôûãõç0-9\s]+)', pl)
     if m_cliente:
         nome_cli = re.split(r'\s+(?:em|de|no|na|para|do|da|\d{4})\b', m_cliente.group(1))[0].strip()
         if len(nome_cli) > 2:
-            mask = dff['NOME_CLIENTE'].str.lower().str.contains(nome_cli, na=False)
-            if mask.sum() > 0:
-                dff = dff[mask]
+            dff_cli, achou = _melhor_cliente(dff, nome_cli)
+            if achou:
+                dff = dff_cli
     else:
         # Prioridade 2: busca livre — palavras que não são stop-words comuns
         stopwords = {'últimas','ultimas','vendas','venda','quais','qual','como','foram','mais','este',
@@ -307,14 +333,13 @@ def _finalize_filter(dff: pd.DataFrame, pl: str) -> pd.DataFrame:
         if nao_tem_filtro_especifico:
             palavras = [p for p in pl.split() if len(p) > 3 and p not in stopwords]
             if palavras:
-                # Tenta combinações de 1, 2 e 3 palavras consecutivas
                 achou = False
                 for tam in [3, 2, 1]:
                     for i in range(len(palavras) - tam + 1):
                         termo = ' '.join(palavras[i:i+tam])
-                        mask = dff['NOME_CLIENTE'].str.lower().str.contains(termo, na=False)
-                        if mask.sum() > 0:
-                            dff = dff[mask]
+                        dff_cli, ok = _melhor_cliente(dff, termo)
+                        if ok:
+                            dff = dff_cli
                             achou = True
                             break
                     if achou:
