@@ -331,6 +331,13 @@ def _finalize_filter(dff: pd.DataFrame, pl: str) -> pd.DataFrame:
             dff_cli, achou = _melhor_cliente(dff, nome_cli)
             if achou:
                 dff = dff_cli
+            else:
+                # Cliente não encontrado no período — sugere nomes próximos
+                mask_global = dff['NOME_CLIENTE'].str.lower().str.contains(nome_cli[:5], na=False)
+                sugestoes = dff[mask_global]['NOME_CLIENTE'].unique()[:3].tolist() if mask_global.sum() > 0 else []
+                # Esvazia dff para não contaminar com dados de outros clientes/vendedores
+                dff = dff.iloc[0:0].copy()
+                dff._iaf_cliente_nao_encontrado = (nome_cli, sugestoes)
     else:
         # Prioridade 2: busca livre — palavras que não são stop-words comuns
         stopwords = {'últimas','ultimas','vendas','venda','quais','qual','como','foram','mais','este',
@@ -1571,17 +1578,23 @@ async def chat(req: ChatRequest):
         # Para resumos com muitos dados, usa agregação em vez de CSV bruto
         # Verifica se vendedor não foi encontrado
         vendedor_nao_encontrado = getattr(dff, '_iaf_vendedor_nao_encontrado', None)
-        aviso_vendedor = ""
+        aviso_extra = ""
         if vendedor_nao_encontrado or (n == 0 and re.search(r'vendedor', pergunta_para_filtro.lower())):
             nome_buscado = vendedor_nao_encontrado or "informado"
-            # Lista vendedores disponíveis no período como sugestão
             try:
                 df_periodo = filter_for_chat(df, pergunta_para_filtro.lower().replace('vendedor','').strip())
                 vends_disp = df_periodo['NOM_VENDEDOR'].dropna().value_counts().head(5).index.tolist() if 'NOM_VENDEDOR' in df_periodo.columns else []
                 vends_str = " | ".join(vends_disp) if vends_disp else "nenhum"
             except:
                 vends_str = "indisponível"
-            aviso_vendedor = f" | ⚠️ VENDEDOR '{nome_buscado.upper()}' NÃO LOCALIZADO — sugerir busca por código (ex: 'vendedor cod XXXX') | Vendedores disponíveis no período: {vends_str}"
+            aviso_extra = f" | ⚠️ VENDEDOR '{nome_buscado.upper()}' NÃO LOCALIZADO — sugerir busca por código (ex: 'vendedor cod XXXX') | Vendedores disponíveis no período: {vends_str}"
+
+        # Verifica se cliente não foi encontrado (flag setada no filter_for_chat)
+        cli_nao_encontrado = getattr(dff, '_iaf_cliente_nao_encontrado', None)
+        if cli_nao_encontrado:
+            nome_cli_buscado, sugestoes_cli = cli_nao_encontrado
+            sug_str = " | ".join(sugestoes_cli) if sugestoes_cli else "nenhum encontrado no período"
+            aviso_extra += f" | ⚠️ CLIENTE '{nome_cli_buscado.upper()}' NÃO ENCONTRADO NO PERÍODO — informe ao usuário e sugira: {sug_str}"
 
         is_nota_query = any(x in pergunta_para_filtro.lower() for x in [
             'última nota','ultima nota','último pedido','ultimo pedido',
@@ -1592,12 +1605,12 @@ async def chat(req: ChatRequest):
 
         if (n > 1500 or is_summary_query(pergunta_para_filtro) or is_summary_query(ultima)) and not is_nota_query:
             sales_data = aggregate_for_summary(dff)
-            data_label = f"DADOS AGREGADOS ({n} registros originais){' | ' + periodo_label if periodo_label else ''}{aviso_vendedor}"
+            data_label = f"DADOS AGREGADOS ({n} registros originais){' | ' + periodo_label if periodo_label else ''}{aviso_extra}"
         else:
             dff = dff.copy()
             dff['DATA_MOVTO'] = dff['DATA_MOVTO'].dt.strftime('%d/%m/%y')
             sales_data = dff.to_csv(sep=';', index=False)
-            data_label = f"{n} registros{' | ' + periodo_label if periodo_label else ''}{aviso_vendedor}"
+            data_label = f"{n} registros{' | ' + periodo_label if periodo_label else ''}{aviso_extra}"
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao carregar dados: {e}")
 
