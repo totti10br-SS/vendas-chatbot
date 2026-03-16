@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IA3 · Analista Comercial 3F</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --blue:#0066CC;--blue-dark:#004EA0;
+  --cyan:#00C8E0;--cyan-dim:rgba(0,200,224,.12);
+  --bg:#0d1117;--surface:#161b22;--surface2:#1e2430;--surface3:#252d3a;
+  --border:rgba(255,255,255,.08);--border-c:rgba(0,200,224,.2);
+  --text:#FFFFFF;--text2:#C8C8C8;--muted:#666;
+}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);height:100dvh;display:flex;flex-direction:column;overflow:hidden;}
+
+header{background:var(--blue);padding:0 14px;height:42px;display:flex;align-items:center;gap:10px;box-shadow:0 2px 10px rgba(0,0,0,.5);flex-shrink:0;position:relative;}
+header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;background:var(--cyan);}
+.logo-box{width:28px;height:28px;border-radius:8px;background:var(--cyan);display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 0 0 1.5px rgba(255,255,255,.3);}
+.logo-box span{font-family:'Bebas Neue',sans-serif;font-size:14px;color:#000;letter-spacing:1px;}
+.header-info h1{font-family:'Barlow Condensed',sans-serif;font-size:15px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#fff;}
+.header-info p{font-size:10px;color:rgba(255,255,255,.7);}
+.header-right{margin-left:auto;display:flex;align-items:center;gap:10px;}
+.stat-pill{display:flex;align-items:center;gap:5px;font-family:'Barlow Condensed',sans-serif;font-size:12px;color:var(--cyan);font-weight:700;letter-spacing:.5px;}
+.stat-dot{width:6px;height:6px;border-radius:50%;background:var(--cyan);animation:pulse 2s infinite;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.btn-menu{background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);color:#fff;padding:4px 12px;border-radius:6px;font-family:'Barlow Condensed',sans-serif;font-size:12px;font-weight:700;cursor:pointer;letter-spacing:.5px;text-decoration:none;display:flex;align-items:center;gap:4px;}
+.btn-menu:hover{background:rgba(255,255,255,.25);}
+
+.dashboard{background:var(--surface);border-bottom:1px solid rgba(0,102,204,.25);padding:6px 14px;display:flex;gap:10px;align-items:center;flex-shrink:0;}
+.kpi-group{display:flex;gap:6px;flex-shrink:0;}
+.kpi-mini{background:var(--surface2);border:1px solid var(--border);border-left:2px solid var(--cyan);border-radius:6px;padding:4px 10px;min-width:0;}
+.kpi-mini-label{font-family:'Barlow Condensed',sans-serif;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;}
+.kpi-mini-value{font-family:'Bebas Neue',sans-serif;font-size:18px;color:var(--cyan);line-height:1.1;letter-spacing:.5px;}
+.kpi-mini-sub{font-size:10px;color:#fff;}
+.dash-divider{width:1px;background:rgba(255,255,255,.07);align-self:stretch;flex-shrink:0;}
+
+.top-clientes{flex:0 0 auto;width:520px;}
+.top-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;}
+.top-title{font-family:'Barlow Condensed',sans-serif;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;font-weight:700;}
+.top-title span{color:var(--cyan);}
+.clientes-list{display:flex;flex-direction:column;gap:3px;}
+.cliente-row{display:flex;align-items:center;gap:6px;background:var(--surface2);border:1px solid var(--border);border-left:2px solid var(--blue);border-radius:4px;padding:4px 8px;cursor:pointer;transition:all .15s;}
+.cliente-row:hover{border-left-color:var(--cyan);background:var(--surface3);}
+.c-rank{font-family:'Bebas Neue',sans-serif;font-size:13px;color:rgba(0,200,224,.4);width:14px;flex-shrink:0;text-align:center;}
+.c-nome{font-size:11px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:160px;flex-shrink:0;}
+.c-vals{display:flex;align-items:center;gap:8px;flex-shrink:0;}
+.c-kg{font-family:'Barlow Condensed',sans-serif;font-size:12px;color:var(--cyan);font-weight:600;white-space:nowrap;width:80px;}
+.c-fat{font-size:12px;color:#fff;font-weight:600;}
+.c-arrow{font-size:11px;color:rgba(255,255,255,.3);margin-left:4px;}
+
+.main-wrap{flex:1;display:flex;overflow:hidden;}
+.left-col{flex:1;display:flex;flex-direction:column;overflow:hidden;}
+#messages{flex:1;overflow-y:auto;padding:14px 12px 8px;display:flex;flex-direction:column;gap:14px;scroll-behavior:smooth;}
+#messages::-webkit-scrollbar{width:3px;}
+#messages::-webkit-scrollbar-thumb{background:rgba(0,102,204,.3);border-radius:2px;}
+
+.welcome{margin:auto;text-align:center;max-width:480px;animation:fadeUp .5s ease;}
+@keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.welcome h2{font-family:'Bebas Neue',sans-serif;font-size:32px;letter-spacing:2px;color:#fff;line-height:1;margin-bottom:8px;}
+.welcome h2 span{color:var(--cyan);}
+.welcome p{font-size:14px;color:var(--text2);line-height:1.6;margin-bottom:18px;}
+.welcome p strong{color:var(--cyan);font-weight:700;}
+.suggestions{display:flex;flex-wrap:wrap;gap:7px;justify-content:center;}
+.suggestion{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:7px 14px;font-size:13px;cursor:pointer;transition:all .2s;color:var(--text2);font-weight:500;}
+.suggestion:hover{border-color:var(--cyan);color:var(--cyan);background:var(--cyan-dim);}
+
+.message{display:flex;gap:10px;animation:fadeUp .25s ease;max-width:98%;width:98%;}
+.message.user{align-self:flex-end;flex-direction:row-reverse;}
+.msg-avatar{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0;margin-top:2px;font-family:'Bebas Neue',sans-serif;letter-spacing:.3px;}
+.message.assistant .msg-avatar{background:var(--blue);color:var(--cyan);border:1.5px solid var(--cyan);}
+.message.user .msg-avatar{background:var(--surface2);border:1px solid var(--border);color:var(--muted);font-size:13px;}
+.bubble{padding:11px 15px;border-radius:10px;font-size:14px;line-height:1.7;flex:1;min-width:0;word-break:break-word;overflow-wrap:anywhere;}
+.message.assistant .bubble{background:var(--surface);border:1px solid var(--border);border-radius:3px 10px 10px 10px;color:var(--text);}
+.message.user .bubble{background:var(--blue-dark);border-radius:10px 3px 10px 10px;color:#fff;}
+.bubble h2,.bubble h3{font-family:'Barlow Condensed',sans-serif;font-weight:700;color:var(--cyan);margin:12px 0 6px;text-transform:uppercase;font-size:14px;border-bottom:1px solid var(--border-c);padding-bottom:3px;}
+.bubble h2:first-child,.bubble h3:first-child{margin-top:0;}
+.bubble strong{color:var(--cyan);font-weight:700;}
+.bubble p{margin-bottom:8px;}.bubble p:last-child{margin-bottom:0;}
+.bubble ul{margin:6px 0 6px 17px;}.bubble li{margin-bottom:4px;color:#fff;}
+.bubble table{width:100%;border-collapse:collapse;margin:10px 0;font-size:13px;display:block;overflow-x:auto;}
+.bubble th{background:rgba(0,102,204,.2);padding:7px 11px;text-align:left;font-family:'Barlow Condensed',sans-serif;font-weight:700;color:var(--cyan);font-size:12px;text-transform:uppercase;border-bottom:1px solid rgba(0,102,204,.3);}
+.bubble td{padding:7px 11px;border-bottom:1px solid rgba(255,255,255,.05);color:#fff;}
+.bubble tr:last-child td{border-bottom:none;}
+.bubble tr:hover td{background:rgba(0,102,204,.05);}
+.typing .bubble{display:flex;gap:5px;align-items:center;padding:12px 15px;}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--cyan);animation:bounce .9s infinite;}
+.dot:nth-child(2){animation-delay:.15s}.dot:nth-child(3){animation-delay:.3s}
+@keyframes bounce{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-6px)}}
+
+.input-wrap{padding:10px 12px;background:var(--surface);border-top:1px solid var(--border);flex-shrink:0;}
+.input-row{display:flex;gap:8px;align-items:flex-end;}
+#userInput{flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 14px;color:#fff;font-family:'Barlow',sans-serif;font-size:14px;resize:none;min-height:42px;max-height:120px;outline:none;transition:border-color .2s;}
+#userInput:focus{border-color:var(--cyan);}
+#userInput::placeholder{color:var(--muted);}
+.btn-send{width:42px;height:42px;border-radius:10px;background:var(--blue);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background .2s;}
+.btn-send:hover{background:var(--cyan);}
+.btn-send svg{width:18px;height:18px;fill:white;}
+.btn-send:hover svg{fill:#000;}
+.input-hint{font-size:10px;color:var(--muted);margin-top:5px;text-align:center;}
+
+.badge-ia3{background:rgba(0,200,224,.1);border:1px solid rgba(0,200,224,.3);color:var(--cyan);padding:2px 8px;border-radius:4px;font-size:10px;font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:1px;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo-box"><span>IA3</span></div>
+  <div class="header-info">
+    <h1>IA3 · Analista Comercial 3F</h1>
+    <p>Powered by Claude · Dados Power BI</p>
+  </div>
+  <div class="header-right">
+    <div class="stat-pill"><div class="stat-dot"></div><span id="hdr-data">--/--/----</span></div>
+    <a href="/menu" class="btn-menu">⬅ Menu</a>
+  </div>
+</header>
+
+<div class="dashboard">
+  <div class="kpi-group">
+    <div class="kpi-mini">
+      <div class="kpi-mini-label">Faturamento Mês</div>
+      <div class="kpi-mini-value" id="kpi-fat">R$ --</div>
+      <div class="kpi-mini-sub" id="kpi-fat-sub">--</div>
+    </div>
+    <div class="kpi-mini">
+      <div class="kpi-mini-label">Qtde Mês</div>
+      <div class="kpi-mini-value" id="kpi-qtde">--</div>
+      <div class="kpi-mini-sub">unidades</div>
+    </div>
+    <div class="kpi-mini">
+      <div class="kpi-mini-label">Margem Bruta</div>
+      <div class="kpi-mini-value" id="kpi-margem">--%</div>
+      <div class="kpi-mini-sub">TOTVEND - TOTCUSTO</div>
+    </div>
+  </div>
+  <div class="dash-divider"></div>
+  <div class="top-clientes">
+    <div class="top-header">
+      <div class="top-title">Top Clientes <span id="top-periodo">este mês</span></div>
+    </div>
+    <div class="clientes-list" id="top-list">
+      <div style="font-size:11px;color:var(--muted);padding:4px 0">Carregando...</div>
+    </div>
+  </div>
+</div>
+
+<div class="main-wrap">
+  <div class="left-col">
+    <div id="messages">
+      <div class="welcome">
+        <h2>Olá! Sou o <span>IA3</span></h2>
+        <p>Seu analista de vendas da <strong>3F</strong>.<br>Faça perguntas sobre faturamento, produtos, clientes, vendedores e rotas.</p>
+        <div class="suggestions">
+          <div class="suggestion" onclick="sendSuggestion(this)">Vendas de hoje</div>
+          <div class="suggestion" onclick="sendSuggestion(this)">Top 10 clientes este mês</div>
+          <div class="suggestion" onclick="sendSuggestion(this)">Ranking vendedores 2026</div>
+          <div class="suggestion" onclick="sendSuggestion(this)">Produtos mais vendidos</div>
+          <div class="suggestion" onclick="sendSuggestion(this)">Margem bruta por filial</div>
+          <div class="suggestion" onclick="sendSuggestion(this)">Comparativo mensal 2025 vs 2026</div>
+        </div>
+      </div>
+    </div>
+    <div class="input-wrap">
+      <div class="input-row">
+        <textarea id="userInput" placeholder="Pergunte sobre vendas, produtos, clientes..." rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+        <button class="btn-send" onclick="sendMessage()">
+          <svg viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2z"/></svg>
+        </button>
+      </div>
+      <div class="input-hint">Enter para enviar · Shift+Enter para nova linha</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '';
+let history = [];
+let kpiLoaded = false;
+
+// Data no header
+const now = new Date();
+document.getElementById('hdr-data').textContent = now.toLocaleDateString('pt-BR');
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+}
+
+function sendSuggestion(el) {
+  document.getElementById('userInput').value = el.textContent;
+  sendMessage();
+}
+
+function addMessage(role, content) {
+  const wrap = document.getElementById('messages');
+  const welcome = wrap.querySelector('.welcome');
+  if (welcome) welcome.remove();
+
+  const div = document.createElement('div');
+  div.className = `message ${role}`;
+  const avatar = role === 'assistant' ? 'IA3' : '👤';
+  div.innerHTML = `
+    <div class="msg-avatar">${avatar}</div>
+    <div class="bubble">${role === 'assistant' ? renderMarkdown(content) : escHtml(content)}</div>`;
+  wrap.appendChild(div);
+  wrap.scrollTop = wrap.scrollHeight;
+  return div;
+}
+
+function escHtml(t) {
+  return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function renderMarkdown(text) {
+  return text
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/^### (.+)$/gm,'<h3>$1</h3>')
+    .replace(/^## (.+)$/gm,'<h2>$1</h2>')
+    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g,'<em>$1</em>')
+    .replace(/`(.+?)`/g,'<code style="background:rgba(0,200,224,.1);padding:1px 5px;border-radius:3px;font-size:12px">$1</code>')
+    .replace(/^\| (.+) \|$/gm, (_, row) => {
+      const cells = row.split(' | ');
+      return '<tr>' + cells.map(c => `<td>${c.trim()}</td>`).join('') + '</tr>';
+    })
+    .replace(/(<tr>.*<\/tr>\n?)+/gs, m => `<table><tbody>${m}</tbody></table>`)
+    .replace(/^- (.+)$/gm,'<li>$1</li>')
+    .replace(/(<li>.*<\/li>\n?)+/gs, m => `<ul>${m}</ul>`)
+    .replace(/\n\n/g,'</p><p>')
+    .replace(/\n/g,'<br>')
+    .replace(/^(.+)$/s, '<p>$1</p>');
+}
+
+async function sendMessage() {
+  const input = document.getElementById('userInput');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  input.style.height = 'auto';
+
+  addMessage('user', text);
+  history.push({ role: 'user', content: text });
+
+  const typing = document.createElement('div');
+  typing.className = 'message assistant typing';
+  typing.innerHTML = '<div class="msg-avatar">IA3</div><div class="bubble"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
+  document.getElementById('messages').appendChild(typing);
+  document.getElementById('messages').scrollTop = 999999;
+
+  try {
+    const res = await fetch(`${API}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: history })
+    });
+    const data = await res.json();
+    const reply = data.content?.[0]?.text || 'Erro ao processar resposta.';
+    typing.remove();
+    addMessage('assistant', reply);
+    history.push({ role: 'assistant', content: reply });
+    if (history.length > 20) history = history.slice(-20);
+  } catch(e) {
+    typing.remove();
+    addMessage('assistant', '❌ Erro de conexão com o servidor.');
+  }
+}
+
+// KPIs automáticos
+async function loadKPIs() {
+  if (kpiLoaded) return;
+  try {
+    const res = await fetch(`${API}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'Responda APENAS com JSON no formato {"fat":"R$ X,X M","qtde":"X.XXX","margem":"XX%","top":[{"n":"NOME","v":"R$ X,X M"},{"n":"NOME","v":"R$ X,X M"},{"n":"NOME","v":"R$ X,X M"}]} com os dados de faturamento, quantidade, margem bruta e top 3 clientes do mês atual. Sem texto, apenas o JSON.' }] })
+    });
+    const data = await res.json();
+    const text = data.content?.[0]?.text || '';
+    const match = text.match(/\{[\s\S]*\}/);
+    if (match) {
+      const kpi = JSON.parse(match[0]);
+      document.getElementById('kpi-fat').textContent = kpi.fat || 'R$ --';
+      document.getElementById('kpi-qtde').textContent = kpi.qtde || '--';
+      document.getElementById('kpi-margem').textContent = kpi.margem || '--%';
+      if (kpi.top && kpi.top.length) {
+        document.getElementById('top-list').innerHTML = kpi.top.map((c,i) =>
+          `<div class="cliente-row" onclick="document.getElementById('userInput').value='Análise do cliente ${c.n} este mês';sendMessage()">
+            <span class="c-rank">${i+1}</span>
+            <span class="c-nome">${c.n}</span>
+            <span class="c-vals"><span class="c-fat">${c.v}</span><span class="c-arrow">›</span></span>
+          </div>`
+        ).join('');
+      }
+      kpiLoaded = true;
+    }
+  } catch(e) { console.log('KPI load error', e); }
+}
+
+setTimeout(loadKPIs, 1500);
+</script>
+</body>
+</html>

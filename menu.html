@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Central de IA · Frinense</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;}
+:root{
+  --bg:#0d1117;--surface:#161b22;--surface2:#1e2430;--border:rgba(255,255,255,.08);
+  --text:#fff;--muted:#666;
+}
+body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;}
+
+.logo-area{text-align:center;margin-bottom:48px;}
+.logo-area h1{font-family:'Bebas Neue',sans-serif;font-size:42px;letter-spacing:4px;line-height:1;}
+.logo-area p{font-size:14px;color:var(--muted);margin-top:8px;letter-spacing:1px;text-transform:uppercase;}
+
+.cards{display:flex;gap:24px;flex-wrap:wrap;justify-content:center;}
+
+.card{width:280px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:32px 24px;text-align:center;cursor:pointer;text-decoration:none;color:var(--text);transition:all .25s;position:relative;overflow:hidden;}
+.card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;transition:opacity .25s;}
+.card.iaf::before{background:linear-gradient(90deg,#CC0000,#F5C800);}
+.card.ia3::before{background:linear-gradient(90deg,#0066CC,#00C8E0);}
+.card:hover{transform:translateY(-4px);border-color:rgba(255,255,255,.2);box-shadow:0 12px 40px rgba(0,0,0,.4);}
+
+.card-badge{display:inline-flex;align-items:center;justify-content:center;width:64px;height:64px;border-radius:16px;font-family:'Bebas Neue',sans-serif;font-size:28px;letter-spacing:2px;margin-bottom:18px;}
+.card.iaf .card-badge{background:rgba(204,0,0,.15);color:#CC0000;border:1.5px solid rgba(204,0,0,.3);}
+.card.ia3 .card-badge{background:rgba(0,102,204,.15);color:#00C8E0;border:1.5px solid rgba(0,102,204,.3);}
+.card:hover.iaf .card-badge{background:rgba(204,0,0,.25);}
+.card:hover.ia3 .card-badge{background:rgba(0,102,204,.25);}
+
+.card h2{font-family:'Barlow Condensed',sans-serif;font-size:20px;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;}
+.card.iaf h2{color:#F5C800;}
+.card.ia3 h2{color:#00C8E0;}
+
+.card p{font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:20px;}
+.card ul{list-style:none;text-align:left;margin-bottom:24px;}
+.card ul li{font-size:12px;color:rgba(255,255,255,.6);padding:4px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px;}
+.card ul li:last-child{border-bottom:none;}
+.card ul li::before{content:'›';font-size:14px;}
+.card.iaf ul li::before{color:#F5C800;}
+.card.ia3 ul li::before{color:#00C8E0;}
+
+.btn-entrar{display:block;width:100%;padding:11px;border-radius:10px;font-family:'Barlow Condensed',sans-serif;font-size:15px;font-weight:700;letter-spacing:1px;text-transform:uppercase;border:none;cursor:pointer;transition:all .2s;}
+.card.iaf .btn-entrar{background:#CC0000;color:#F5C800;}
+.card.iaf .btn-entrar:hover{background:#F5C800;color:#CC0000;}
+.card.ia3 .btn-entrar{background:#0066CC;color:#00C8E0;}
+.card.ia3 .btn-entrar:hover{background:#00C8E0;color:#000;}
+
+.footer{margin-top:40px;font-size:11px;color:var(--muted);text-align:center;letter-spacing:.5px;}
+</style>
+</head>
+<body>
+
+<div class="logo-area">
+  <h1>Central de <span style="color:#666">IA</span></h1>
+  <p>Escolha o assistente que deseja usar</p>
+</div>
+
+<div class="cards">
+
+  <a href="/" class="card iaf">
+    <div class="card-badge">IAF</div>
+    <h2>IAF · Frinense</h2>
+    <p>Analista comercial da Frinense Alimentos. Dados do sistema ERP via SQL Server.</p>
+    <ul>
+      <li>Vendas por filial e vendedor</li>
+      <li>Análise por UF e cliente</li>
+      <li>Relatórios PDF e PowerPoint</li>
+      <li>Dados atualizados diariamente</li>
+    </ul>
+    <button class="btn-entrar">Entrar no IAF →</button>
+  </a>
+
+  <a href="/ia3" class="card ia3">
+    <div class="card-badge">IA3</div>
+    <h2>IA3 · 3F Painel</h2>
+    <p>Analista comercial da 3F. Dados extraídos diretamente do Power BI.</p>
+    <ul>
+      <li>Dados do painel 3F Power BI</li>
+      <li>Análise por grupo e departamento</li>
+      <li>Margem bruta e custo</li>
+      <li>Calendário e sazonalidade</li>
+    </ul>
+    <button class="btn-entrar">Entrar no IA3 →</button>
+  </a>
+
+</div>
+
+<div class="footer">Powered by Claude · Anthropic · Frinense Alimentos</div>
+
+</body>
+</html>

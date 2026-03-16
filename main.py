@@ -1928,3 +1928,209 @@ def reload_vendas():
         return {"status":"ok","message":"CSV carregado com sucesso"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================================
+#  IA3 — Analista Comercial 3F (Power BI)
+# ============================================================
+
+import io as _io
+
+FILE_ID_IA3 = os.environ.get("DRIVE_FILE_ID_IA3", "19BeRqI6iDqvW2RqF3Nk2qPEN5Sl3blrH")
+
+def load_df_ia3() -> pd.DataFrame:
+    """Carrega vendas3f.csv do Google Drive — sem cache."""
+    service = get_drive_service()
+    req = service.files().get_media(fileId=FILE_ID_IA3)
+    buf = _io.BytesIO()
+    dl = MediaIoBaseDownload(buf, req)
+    done = False
+    while not done:
+        _, done = dl.next_chunk()
+    buf.seek(0)
+    df = pd.read_csv(buf, encoding='utf-8-sig', low_memory=False)
+    df['DATASAIDA']     = pd.to_datetime(df['DATASAIDA'], errors='coerce')
+    df['TOTVEND']       = pd.to_numeric(df['TOTVEND'],       errors='coerce').fillna(0)
+    df['TOTCUSTO']      = pd.to_numeric(df['TOTCUSTO'],      errors='coerce').fillna(0)
+    df['QTDE']          = pd.to_numeric(df['QTDE'],          errors='coerce').fillna(0)
+    df['QTDEKG']        = pd.to_numeric(df['QTDEKG'],        errors='coerce').fillna(0)
+    df['VALORDESCONTO'] = pd.to_numeric(df['VALORDESCONTO'], errors='coerce').fillna(0)
+    return df
+
+def filter_ia3(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
+    pl = pergunta.lower()
+    dff = df.copy()
+    hoje = datetime.now()
+
+    m_range = re.search(r'(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})\s+a[té]?\s+(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})', pl)
+    if m_range:
+        try:
+            d1 = datetime(int(m_range.group(3)) if len(m_range.group(3))==4 else 2000+int(m_range.group(3)), int(m_range.group(2)), int(m_range.group(1)))
+            d2 = datetime(int(m_range.group(6)) if len(m_range.group(6))==4 else 2000+int(m_range.group(6)), int(m_range.group(5)), int(m_range.group(4)))
+            return dff[(dff['DATASAIDA'] >= d1) & (dff['DATASAIDA'] <= d2 + timedelta(days=1))]
+        except: pass
+
+    anos = re.findall(r'\b(202[0-9])\b', pergunta)
+    ano_ref = int(anos[0]) if anos else hoje.year
+
+    meses_map = {'janeiro':1,'fevereiro':2,'março':3,'marco':3,'abril':4,'maio':5,'junho':6,
+                 'julho':7,'agosto':8,'setembro':9,'outubro':10,'novembro':11,'dezembro':12}
+    meses_enc = []
+    for nome, num in meses_map.items():
+        for m in re.finditer(nome, pl):
+            trecho = pl[m.start():m.start()+30]
+            al = re.search(r'202[0-9]', trecho)
+            meses_enc.append((m.start(), num, int(al.group()) if al else None))
+    meses_enc.sort(key=lambda x: x[0])
+
+    if len(meses_enc) >= 2:
+        _, mi, ai = meses_enc[0]; _, mf, af = meses_enc[-1]
+        ai = ai or ano_ref; af = af or ano_ref
+        d1 = pd.Timestamp(ai, mi, 1)
+        d2 = pd.Timestamp(af, mf+1, 1) - timedelta(days=1) if mf < 12 else pd.Timestamp(af+1, 1, 1) - timedelta(days=1)
+        return dff[(dff['DATASAIDA'] >= d1) & (dff['DATASAIDA'] <= d2)]
+    elif len(meses_enc) == 1:
+        _, mes, ames = meses_enc[0]
+        dff = dff[(dff['DATASAIDA'].dt.month == mes) & (dff['DATASAIDA'].dt.year == (ames or ano_ref))]
+        return _finalize_ia3(dff, pl, df)
+
+    if 'trimestre' in pl:
+        tri = 1
+        if '2º tri' in pl or 'segundo trimestre' in pl: tri = 2
+        elif '3º tri' in pl or 'terceiro trimestre' in pl: tri = 3
+        elif '4º tri' in pl or 'quarto trimestre' in pl: tri = 4
+        mi = (tri-1)*3+1
+        dff = dff[(dff['DATASAIDA'].dt.month >= mi) & (dff['DATASAIDA'].dt.month <= mi+2) & (dff['DATASAIDA'].dt.year == ano_ref)]
+    elif any(x in pl for x in ['mês passado','mes passado','mês anterior','mes anterior']):
+        p = hoje.replace(day=1); ump = p - timedelta(days=1); pmp = ump.replace(day=1)
+        dff = dff[(dff['DATASAIDA'] >= pd.Timestamp(pmp)) & (dff['DATASAIDA'] <= pd.Timestamp(ump))]
+    elif any(x in pl for x in ['este mês','esse mês','este mes','esse mes','mês atual','mes atual']):
+        dff = dff[dff['DATASAIDA'] >= pd.Timestamp(hoje.replace(day=1))]
+    elif any(x in pl for x in ['esta semana','essa semana']):
+        dff = dff[dff['DATASAIDA'] >= pd.Timestamp(hoje - timedelta(days=hoje.weekday()))]
+    elif 'ontem' in pl:
+        dia = hoje - timedelta(days=1)
+        d_ontem = dff[(dff['DATASAIDA'] >= pd.Timestamp(dia.date())) & (dff['DATASAIDA'] < pd.Timestamp(hoje.date()))]
+        dff = d_ontem if len(d_ontem) > 0 else dff
+    elif 'hoje' in pl:
+        dff = dff[dff['DATASAIDA'] >= pd.Timestamp(hoje.date())]
+    elif any(x in pl for x in ['último mês','ultimo mes','ultimos 30']):
+        dff = dff[dff['DATASAIDA'] >= hoje - timedelta(days=30)]
+    else:
+        m_rel = re.search(r'[uú]ltimos?\s+(\d+)\s+(m[eê]s(?:es)?|dia[s]?|semana[s]?)', pl)
+        if m_rel:
+            n = int(m_rel.group(1)); u = m_rel.group(2)
+            if 'm' in u:
+                p = hoje.replace(day=1); mes = p.month - n; ano = p.year + (mes-1)//12; mes = ((mes-1)%12)+1
+                dff = dff[dff['DATASAIDA'] >= pd.Timestamp(ano, mes, 1)]
+            elif 'semana' in u: dff = dff[dff['DATASAIDA'] >= hoje - timedelta(weeks=n)]
+            else: dff = dff[dff['DATASAIDA'] >= hoje - timedelta(days=n)]
+        elif anos:
+            dff = dff[dff['DATASAIDA'].dt.year == int(anos[0])]
+
+    return _finalize_ia3(dff, pl, df)
+
+def _finalize_ia3(dff, pl, df_orig):
+    if 'NOMEFILIAL' in dff.columns:
+        for f in dff['NOMEFILIAL'].dropna().unique():
+            if str(f).lower() in pl:
+                dff = dff[dff['NOMEFILIAL'].str.lower() == f.lower()]; break
+    estados = {r'\bes\b':'ES',r'\brj\b':'RJ',r'\bsp\b':'SP',r'\bmg\b':'MG',r'\bba\b':'BA',r'\bpr\b':'PR'}
+    if 'UF' in dff.columns:
+        for p, uf in estados.items():
+            if re.search(p, pl): dff = dff[dff['UF'].str.upper() == uf]; break
+    m_c = re.search(r'(?:cliente[:\s]+|para\s+(?:o|a)\s+|do\s+cliente\s+)([a-záéíóúâêîôûãõç0-9\s]+)', pl)
+    if m_c and 'NOMECLIENTE' in dff.columns:
+        nc = re.split(r'\s+(?:em|de|no|na|\d{4})\b', m_c.group(1))[0].strip()
+        if len(nc) > 2:
+            mk = dff['NOMECLIENTE'].str.lower().str.contains(nc[:15], na=False)
+            if mk.sum() > 0: dff = dff[mk]
+    m_v = re.search(r'vendedor[:\s]+([a-záéíóúâêîôûãõç\s]+)', pl)
+    if m_v and 'NOMEVENDEDOR' in dff.columns:
+        nv = m_v.group(1).strip()[:20]
+        mk = dff['NOMEVENDEDOR'].str.lower().str.contains(nv, na=False)
+        if mk.sum() > 0: dff = dff[mk]
+    m_p = re.search(r'produto[:\s]+([a-záéíóúâêîôûãõç0-9\s]+)', pl)
+    if m_p and 'DESCRICAOPRODUTO' in dff.columns:
+        np_ = m_p.group(1).strip()[:20]
+        mk = dff['DESCRICAOPRODUTO'].str.lower().str.contains(np_, na=False)
+        if mk.sum() > 0: dff = dff[mk]
+    if len(dff) > 1200: dff = dff.sample(n=1200, random_state=42)
+    return dff
+
+@app.get("/menu", response_class=HTMLResponse)
+def menu():
+    try:
+        with open("menu.html", "r", encoding="utf-8") as f:
+            return f.read()
+    except:
+        return "<h1>Menu</h1><a href='/'>IAF</a> | <a href='/ia3'>IA3</a>"
+
+@app.get("/ia3", response_class=HTMLResponse)
+def ia3():
+    try:
+        with open("index_ia3.html", "r", encoding="utf-8") as f:
+            return f.read()
+    except:
+        return "<h1>IA3 online</h1>"
+
+@app.post("/chat-ia3")
+async def chat_ia3(req: ChatRequest):
+    df = load_df_ia3()
+    pergunta = next((m.content for m in reversed(req.messages) if m.role == "user"), "")
+    dff = filter_ia3(df, pergunta)
+
+    dia_ref = df['DATASAIDA'].dropna().dt.date.max()
+    data_label = f"Referência: {dia_ref.strftime('%d/%m/%Y') if hasattr(dia_ref, 'strftime') else dia_ref}"
+
+    cols_display = [c for c in [
+        'DATASAIDA','Ano','Mês','Nome do Mês','Trimestre','Dia da Semana',
+        'NRNOTAFISCAL','NOMEFILIAL','NOME_FILIAL',
+        'NOMEVENDEDOR','NOMEROTA','NOMECLIENTE','CIDADE','UF',
+        'DESCRICAOPRODUTO','NOMECURTO','NOMEGRUPO','NOMESUBGRUPO','NOMEDEPARTAMENTO',
+        'UND','ATIVO','QTDE','QTDEKG','TOTVEND','TOTCUSTO','VALORDESCONTO',
+        'DESCRICAOCONDPGVENDA'
+    ] if c in dff.columns]
+
+    sales_data = dff[cols_display].to_string(index=False, max_rows=400) if len(dff) > 0 else "Nenhum dado encontrado para o período/filtro solicitado."
+
+    system = f"""Você é o IA3 — Analista Comercial da empresa 3F.
+Analisa dados de vendas extraídos do Power BI da 3F.
+
+## COLUNAS DISPONÍVEIS
+- DATASAIDA: data da venda | Ano, Mês, Trimestre, Dia da Semana: calendário
+- NOMEFILIAL / NOME_FILIAL: filial | NOMEVENDEDOR: vendedor | NOMEROTA: rota
+- NOMECLIENTE: cliente | CIDADE, UF: localização
+- DESCRICAOPRODUTO / NOMECURTO: produto
+- NOMEGRUPO, NOMESUBGRUPO, NOMEDEPARTAMENTO: hierarquia de produto
+- QTDE: quantidade | QTDEKG: peso em kg
+- TOTVEND: faturamento | TOTCUSTO: custo | VALORDESCONTO: desconto
+- DESCRICAOCONDPGVENDA: condição de pagamento
+
+## COMPORTAMENTO
+- Responda sempre em português brasileiro
+- Vá direto ao dado — sem "Olá", "Claro!", "Com prazer"
+- Use Markdown: ## títulos, **negrito**, tabelas com | Col |
+- Valores: R$ X.XXX,XX | Quantidades: X.XXX | Datas: DD/MM/AA
+- MARGEM BRUTA = TOTVEND - TOTCUSTO | MARGEM % = (TOTVEND-TOTCUSTO)/TOTVEND*100
+- PREÇO MÉDIO R$/kg = TOTVEND / QTDEKG
+- Sempre calcule variação vs período anterior quando possível
+- Finalize com 💡 Insight: [ação ou oportunidade]
+- Anomalias > 20%: ⚠️ Atenção:
+- Nunca invente dados
+
+DADOS ({data_label}):
+{sales_data}"""
+
+    async with httpx.AsyncClient(timeout=90) as client:
+        r = await client.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={"Content-Type":"application/json","x-api-key":CLAUDE_KEY,"anthropic-version":"2023-06-01"},
+            json={"model":"claude-haiku-4-5-20251001","max_tokens":1500,"system":system,"messages":[m.dict() for m in req.messages]}
+        )
+    if r.status_code != 200:
+        raise HTTPException(status_code=r.status_code, detail=r.text)
+    return r.json()
+
+@app.get("/health-ia3")
+def health_ia3():
+    return {"status":"ok","sistema":"IA3"}
