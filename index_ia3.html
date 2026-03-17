@@ -293,6 +293,7 @@ async function loadKPIs(){
     document.getElementById('kpi-margem').textContent = d.margem_pct+'%';
     document.getElementById('kpi-desc').textContent  = fmtM(d.desconto);
     document.getElementById('top-periodo').textContent = d.mes_label || 'último mês';
+    window._mesDashboard = d.mes_label ? d.mes_label.split('/').reverse().join('-') : null;
 
     if(d.top5&&d.top5.length){
       document.getElementById('top-list').innerHTML = d.top5.map((c,i)=>
@@ -328,7 +329,8 @@ async function openClienteIA3(nome){
   document.getElementById('panelTitle').textContent=nome.length>26?nome.substring(0,26)+'…':nome;
   document.getElementById('panelContent').innerHTML='<div class="panel-loading">Carregando...</div>';
   try{
-    const r=await fetch('/cliente-ia3/'+encodeURIComponent(nome));
+    const mes = window._mesDashboard || '';
+    const r=await fetch(`/cliente-ia3/${encodeURIComponent(nome)}${mes?'?mes='+mes:''}`);
     const d=await r.json();
     if(!d||d.erro){
       document.getElementById('panelContent').innerHTML='<p style="color:var(--cyan)">Sem dados para este cliente.</p>';

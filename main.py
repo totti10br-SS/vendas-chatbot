@@ -2179,10 +2179,20 @@ def dashboard_ia3():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/cliente-ia3/{nome}")
-def cliente_ia3(nome: str):
-    """Retorna resumo do cliente para o painel lateral do IA3."""
+def cliente_ia3(nome: str, mes: str = None):
+    """Retorna resumo do cliente para o painel lateral do IA3.
+    mes: formato YYYY-MM (ex: 2026-03). Se não informado, usa o último mês disponível."""
     try:
         df = load_df_ia3()
+
+        # Define período — mesmo mês do dashboard
+        if mes:
+            periodo = pd.Period(mes, freq='M')
+        else:
+            periodo = df['DATASAIDA'].dt.to_period('M').max()
+
+        df = df[df['DATASAIDA'].dt.to_period('M') == periodo]
+
         # Match progressivo
         dfc = pd.DataFrame()
         for tam in [25, 15, 8, 5]:
