@@ -97,6 +97,28 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;ba
 .btn-send svg{width:18px;height:18px;fill:white;}
 .btn-send:hover svg{fill:#000;}
 .input-hint{font-size:10px;color:var(--muted);margin-top:5px;text-align:center;}
+.side-panel{width:0;overflow:hidden;background:var(--surface);border-left:1px solid rgba(0,102,204,.2);transition:width .3s ease;display:flex;flex-direction:column;flex-shrink:0;}
+.side-panel.open{width:360px;}
+.panel-header{padding:13px 15px 10px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}
+.panel-title{font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--cyan);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:250px;}
+.panel-close{background:none;border:none;cursor:pointer;color:var(--muted);font-size:16px;padding:2px 5px;border-radius:4px;transition:color .2s;}
+.panel-close:hover{color:var(--cyan);}
+.panel-content{flex:1;overflow-y:auto;padding:13px 15px;}
+.panel-content::-webkit-scrollbar{width:3px;}
+.panel-content::-webkit-scrollbar-thumb{background:rgba(0,102,204,.25);}
+.panel-cliente-nome{font-family:'Bebas Neue',sans-serif;font-size:18px;color:#fff;letter-spacing:1px;margin-bottom:6px;line-height:1.1;}
+.panel-totais{display:flex;gap:5px;margin-bottom:12px;flex-wrap:wrap;}
+.panel-kpi{flex:1;background:var(--surface2);border:1px solid var(--border);border-top:2px solid var(--cyan);border-radius:6px;padding:6px 7px;min-width:0;}
+.panel-kpi-label{font-size:9px;color:#fff;text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-bottom:2px;}
+.panel-kpi-val{font-family:'Bebas Neue',sans-serif;font-size:13px;color:var(--cyan);line-height:1.2;word-break:break-all;}
+.prod-section-label{font-family:'Barlow Condensed',sans-serif;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin:10px 0 5px;font-weight:700;}
+.prod-row{display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--border);}
+.prod-row:last-child{border-bottom:none;}
+.prod-nome{flex:1;font-size:11px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.prod-vals{display:flex;gap:8px;flex-shrink:0;font-size:11px;}
+.prod-kg{color:var(--cyan);font-family:'Barlow Condensed',sans-serif;font-weight:600;}
+.prod-r{color:#fff;font-weight:600;}
+.panel-loading{text-align:center;padding:20px;color:#fff;font-size:13px;}
 </style>
 </head>
 <body>
@@ -175,6 +197,13 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;ba
       <div class="input-hint">Enter para enviar · Shift+Enter para nova linha</div>
     </div>
   </div>
+</div>
+<div class="side-panel" id="sidePanel">
+  <div class="panel-header">
+    <div class="panel-title" id="panelTitle">Cliente</div>
+    <button class="panel-close" onclick="closePanel()">✕</button>
+  </div>
+  <div class="panel-content" id="panelContent"></div>
 </div>
 
 <script>
@@ -269,7 +298,7 @@ async function loadKPIs(){
       if(kpi.desc) document.getElementById('kpi-desc').textContent=kpi.desc;
       if(kpi.top&&kpi.top.length){
         document.getElementById('top-list').innerHTML=kpi.top.map((c,i)=>
-          `<div class="cliente-row" onclick="document.getElementById('userInput').value='Análise do cliente ${c.n} este mês';sendMessage()">
+          `<div class="cliente-row" onclick="openClienteIA3('${c.n}')">
             <span class="c-rank">${i+1}</span>
             <span class="c-nome">${c.n}</span>
             <span class="c-fat">${c.v}</span>
@@ -292,6 +321,59 @@ async function forceReload(){
     btn.textContent='↺ ATUALIZAR';
     btn.disabled=false;
   }
+}
+
+function fmtBRL(v){return'R$ '+Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
+function fmtKg(v){return Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+' kg';}
+
+async function openClienteIA3(nome){
+  document.getElementById('sidePanel').classList.add('open');
+  document.getElementById('panelTitle').textContent=nome.length>26?nome.substring(0,26)+'…':nome;
+  document.getElementById('panelContent').innerHTML='<div class="panel-loading">Carregando...</div>';
+  try{
+    const r=await fetch('/cliente-ia3/'+encodeURIComponent(nome));
+    const d=await r.json();
+    if(!d||d.erro){
+      document.getElementById('panelContent').innerHTML='<p style="color:var(--cyan)">Sem dados para este cliente.</p>';
+      return;
+    }
+    const prodsHTML=(d.produtos||[]).map(p=>{
+      const pm=p.kg>0?(p.fat/p.kg).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}):'—';
+      return `<div class="prod-row">
+        <div class="prod-nome">${p.nome}</div>
+        <div class="prod-vals">
+          <div class="prod-kg">${fmtKg(p.kg)}</div>
+          <div class="prod-r">${fmtBRL(p.fat)}</div>
+        </div>
+      </div>`;
+    }).join('');
+    const gruposHTML=(d.grupos||[]).map(g=>`
+      <div class="prod-row">
+        <div class="prod-nome">${g.nome}</div>
+        <div class="prod-vals">
+          <div class="prod-kg">${fmtKg(g.kg)}</div>
+          <div class="prod-r">${fmtBRL(g.fat)}</div>
+        </div>
+      </div>`).join('');
+    document.getElementById('panelContent').innerHTML=`
+      <div class="panel-cliente-nome">${d.nome}</div>
+      <div class="panel-totais">
+        <div class="panel-kpi"><div class="panel-kpi-label">Faturamento</div><div class="panel-kpi-val">${fmtBRL(d.fat_total)}</div></div>
+        <div class="panel-kpi"><div class="panel-kpi-label">KG</div><div class="panel-kpi-val">${fmtKg(d.kg_total)}</div></div>
+        <div class="panel-kpi"><div class="panel-kpi-label">Margem</div><div class="panel-kpi-val">${d.margem_pct}%</div></div>
+        <div class="panel-kpi"><div class="panel-kpi-label">R$/kg</div><div class="panel-kpi-val">R$ ${d.pm}</div></div>
+      </div>
+      <div class="prod-section-label">Por Grupo de Produto</div>
+      ${gruposHTML||'<p style="color:var(--muted);font-size:12px">Sem dados</p>'}
+      <div class="prod-section-label" style="margin-top:10px">Top Produtos</div>
+      ${prodsHTML||'<p style="color:var(--muted);font-size:12px">Sem produtos</p>'}`;
+  }catch(e){
+    document.getElementById('panelContent').innerHTML=`<p style="color:var(--cyan)">Erro: ${e.message}</p>`;
+  }
+}
+
+function closePanel(){
+  document.getElementById('sidePanel').classList.remove('open');
 }
 
 setTimeout(loadKPIs,1500);

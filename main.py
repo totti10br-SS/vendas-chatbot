@@ -2065,73 +2065,6 @@ def _finalize_ia3(dff, pl, df_orig):
     if len(dff) > 1200: dff = dff.sample(n=1200, random_state=42)
     return dff
 
-
-def aggregate_ia3(dff: pd.DataFrame) -> str:
-    lines = []
-    total_fat   = dff['TOTVEND'].sum()
-    total_kg    = dff['QTDEKG'].sum()    if 'QTDEKG'       in dff.columns else 0
-    total_qtde  = dff['QTDE'].sum()      if 'QTDE'         in dff.columns else 0
-    total_custo = dff['TOTCUSTO'].sum()  if 'TOTCUSTO'     in dff.columns else 0
-    total_desc  = dff['VALORDESCONTO'].sum() if 'VALORDESCONTO' in dff.columns else 0
-    margem_pct  = (total_fat - total_custo) / total_fat * 100 if total_fat > 0 else 0
-
-    lines.append("## RESUMO GERAL")
-    lines.append(f"Faturamento: R$ {total_fat:,.2f} | KG: {total_kg:,.2f} | Qtde: {total_qtde:,.0f} | Margem: {margem_pct:.1f}% | Desconto: R$ {total_desc:,.2f}")
-    lines.append("")
-
-    if 'NOMEFILIAL' in dff.columns:
-        lines.append("## POR FILIAL")
-        por = dff.groupby('NOMEFILIAL').agg(fat=('TOTVEND','sum'),kg=('QTDEKG','sum'),custo=('TOTCUSTO','sum')).sort_values('fat',ascending=False)
-        for idx, r in por.iterrows():
-            m = (r.fat-r.custo)/r.fat*100 if r.fat>0 else 0
-            lines.append(f"{idx}: R$ {r.fat:,.2f} | {r.kg:,.2f} kg | Margem {m:.1f}%")
-        lines.append("")
-
-    if 'DATASAIDA' in dff.columns:
-        lines.append("## POR DIA")
-        por = dff.groupby(dff['DATASAIDA'].astype(str)).agg(fat=('TOTVEND','sum'),kg=('QTDEKG','sum')).sort_index()
-        for idx, r in por.iterrows():
-            lines.append(f"{idx}: R$ {r.fat:,.2f} | {r.kg:,.2f} kg")
-        lines.append("")
-
-    if 'NOMECLIENTE' in dff.columns:
-        lines.append("## TOP 10 CLIENTES")
-        por = dff.groupby('NOMECLIENTE').agg(fat=('TOTVEND','sum'),kg=('QTDEKG','sum')).sort_values('fat',ascending=False).head(10)
-        for idx, r in por.iterrows():
-            pm = r.fat/r.kg if r.kg>0 else 0
-            lines.append(f"{idx}: R$ {r.fat:,.2f} | {r.kg:,.2f} kg | R$ {pm:.2f}/kg")
-        lines.append("")
-
-    if 'NOMEVENDEDOR' in dff.columns:
-        lines.append("## VENDEDORES")
-        por = dff.groupby('NOMEVENDEDOR').agg(fat=('TOTVEND','sum'),kg=('QTDEKG','sum')).sort_values('fat',ascending=False)
-        for idx, r in por.iterrows():
-            lines.append(f"{idx}: R$ {r.fat:,.2f} | {r.kg:,.2f} kg")
-        lines.append("")
-
-    if 'DESCRICAOPRODUTO' in dff.columns:
-        lines.append("## TOP 10 PRODUTOS")
-        por = dff.groupby('DESCRICAOPRODUTO').agg(fat=('TOTVEND','sum'),kg=('QTDEKG','sum')).sort_values('fat',ascending=False).head(10)
-        for idx, r in por.iterrows():
-            pm = r.fat/r.kg if r.kg>0 else 0
-            lines.append(f"{idx}: R$ {r.fat:,.2f} | {r.kg:,.2f} kg | R$ {pm:.2f}/kg")
-        lines.append("")
-
-    if 'NOMEGRUPO' in dff.columns:
-        lines.append("## POR GRUPO DE PRODUTO")
-        por = dff.groupby('NOMEGRUPO').agg(fat=('TOTVEND','sum'),kg=('QTDEKG','sum')).sort_values('fat',ascending=False)
-        for idx, r in por.iterrows():
-            lines.append(f"{idx}: R$ {r.fat:,.2f} | {r.kg:,.2f} kg")
-        lines.append("")
-
-    if 'UF' in dff.columns:
-        lines.append("## POR ESTADO (UF)")
-        por = dff.groupby('UF').agg(fat=('TOTVEND','sum'),kg=('QTDEKG','sum')).sort_values('fat',ascending=False)
-        for idx, r in por.iterrows():
-            lines.append(f"{idx}: R$ {r.fat:,.2f} | {r.kg:,.2f} kg")
-
-    return "\n".join(lines)
-
 @app.get("/menu", response_class=HTMLResponse)
 def menu():
     try:
@@ -2166,52 +2099,32 @@ async def chat_ia3(req: ChatRequest):
         'DESCRICAOCONDPGVENDA'
     ] if c in dff.columns]
 
-    # Agrega quando volume for grande
-    usar_agregado = len(dff) > 800
-
-    if usar_agregado and len(dff) > 0:
-        sales_data = aggregate_ia3(dff)
-    elif len(dff) > 0:
-        sales_data = dff[cols_display].to_string(index=False, max_rows=400)
-    else:
-        sales_data = "Nenhum dado encontrado para o período/filtro solicitado."
+    sales_data = dff[cols_display].to_string(index=False, max_rows=400) if len(dff) > 0 else "Nenhum dado encontrado para o período/filtro solicitado."
 
     system = f"""Você é o IA3 — Analista Comercial da empresa 3F.
 Analisa dados de vendas extraídos do Power BI da 3F.
 
 ## COLUNAS DISPONÍVEIS
-- DATASAIDA: data da venda | Ano, Mês, Trimestre, Dia da Semana: contexto temporal
-- NOMEFILIAL / NOME_FILIAL: filial de venda
-- NOMEVENDEDOR: vendedor | NOMEROTA: rota de entrega
+- DATASAIDA: data da venda | Ano, Mês, Trimestre, Dia da Semana: calendário
+- NOMEFILIAL / NOME_FILIAL: filial | NOMEVENDEDOR: vendedor | NOMEROTA: rota
 - NOMECLIENTE: cliente | CIDADE, UF: localização
 - DESCRICAOPRODUTO / NOMECURTO: produto
 - NOMEGRUPO, NOMESUBGRUPO, NOMEDEPARTAMENTO: hierarquia de produto
-- QTDE: quantidade de itens | QTDEKG: peso em kg
-- TOTVEND: faturamento bruto | TOTCUSTO: custo | VALORDESCONTO: desconto concedido
+- QTDE: quantidade | QTDEKG: peso em kg
+- TOTVEND: faturamento | TOTCUSTO: custo | VALORDESCONTO: desconto
 - DESCRICAOCONDPGVENDA: condição de pagamento
 
-## REGRAS DE RESPOSTA
-- Responda SEMPRE em português brasileiro
-- Vá direto ao dado — NUNCA comece com "Olá", "Claro!", "Com prazer"
+## COMPORTAMENTO
+- Responda sempre em português brasileiro
+- Vá direto ao dado — sem "Olá", "Claro!", "Com prazer"
 - Use Markdown: ## títulos, **negrito**, tabelas com | Col |
-- Valores monetários: R$ X.XXX,XX | Quantidades: X.XXX kg ou X.XXX un | Datas: DD/MM/AA
-- NUNCA invente dados, valores, nomes, totais ou estruturas
-- Se os dados estiverem vazios ou insuficientes: responda EXATAMENTE "⚠️ Sem dados disponíveis para este período/filtro." e pare
-- NUNCA complete com suposições, exemplos fictícios ou estruturas vazias
-- NUNCA crie seções (##) sem dados reais para preencher
-- Responda APENAS com o que os dados mostram — sem exceções
-
-## MÉTRICAS
-- MARGEM BRUTA (R$) = TOTVEND - TOTCUSTO
-- MARGEM % = (TOTVEND - TOTCUSTO) / TOTVEND × 100
+- Valores: R$ X.XXX,XX | Quantidades: X.XXX | Datas: DD/MM/AA
+- MARGEM BRUTA = TOTVEND - TOTCUSTO | MARGEM % = (TOTVEND-TOTCUSTO)/TOTVEND*100
 - PREÇO MÉDIO R$/kg = TOTVEND / QTDEKG
-- DESCONTO % = VALORDESCONTO / TOTVEND × 100
-
-## FORMATO PADRÃO
-- Perguntas simples → resposta curta, máximo 4 linhas
-- Rankings/análises → tabela Markdown + insight
-- Finalize SEMPRE com 💡 Insight: [ação ou oportunidade concreta]
-- Anomalias > 20%: ⚠️ Atenção: [descrição]
+- Sempre calcule variação vs período anterior quando possível
+- Finalize com 💡 Insight: [ação ou oportunidade]
+- Anomalias > 20%: ⚠️ Atenção:
+- Nunca invente dados
 
 DADOS ({data_label}):
 {sales_data}"""
@@ -2225,6 +2138,63 @@ DADOS ({data_label}):
     if r.status_code != 200:
         raise HTTPException(status_code=r.status_code, detail=r.text)
     return r.json()
+
+@app.get("/cliente-ia3/{nome}")
+def cliente_ia3(nome: str):
+    """Retorna resumo do cliente para o painel lateral do IA3."""
+    try:
+        df = load_df_ia3()
+        nome_dec = nome
+        mask = df['NOMECLIENTE'].str.lower().str.contains(nome_dec.lower()[:20], na=False)
+        dfc = df[mask]
+        if len(dfc) == 0:
+            return JSONResponse({"erro": "Cliente não encontrado"})
+
+        fat_total  = float(dfc['TOTVEND'].sum())
+        kg_total   = float(dfc['QTDEKG'].sum())  if 'QTDEKG'  in dfc.columns else 0
+        custo_total= float(dfc['TOTCUSTO'].sum()) if 'TOTCUSTO' in dfc.columns else 0
+        desc_total = float(dfc['VALORDESCONTO'].sum()) if 'VALORDESCONTO' in dfc.columns else 0
+        margem_pct = (fat_total - custo_total) / fat_total * 100 if fat_total > 0 else 0
+        pm         = fat_total / kg_total if kg_total > 0 else 0
+
+        # Top produtos
+        if 'DESCRICAOPRODUTO' in dfc.columns:
+            por_prod = dfc.groupby('DESCRICAOPRODUTO').agg(
+                fat=('TOTVEND','sum'),
+                kg=('QTDEKG','sum'),
+                grupo=('NOMEGRUPO','first') if 'NOMEGRUPO' in dfc.columns else ('TOTVEND','count')
+            ).sort_values('fat', ascending=False).head(15)
+            produtos = [{"nome": idx, "fat": float(r.fat), "kg": float(r.kg),
+                         "grupo": str(r.grupo) if 'grupo' in por_prod.columns else ''} 
+                        for idx, r in por_prod.iterrows()]
+        else:
+            produtos = []
+
+        # Por grupo
+        grupos = []
+        if 'NOMEGRUPO' in dfc.columns:
+            por_grupo = dfc.groupby('NOMEGRUPO').agg(fat=('TOTVEND','sum'), kg=('QTDEKG','sum')).sort_values('fat', ascending=False)
+            grupos = [{"nome": idx, "fat": float(r.fat), "kg": float(r.kg)} for idx, r in por_grupo.iterrows()]
+
+        # Últimas compras por data
+        datas = []
+        if 'DATASAIDA' in dfc.columns:
+            por_data = dfc.groupby(dfc['DATASAIDA'].astype(str)).agg(fat=('TOTVEND','sum'), kg=('QTDEKG','sum')).sort_index(ascending=False).head(10)
+            datas = [{"data": idx, "fat": float(r.fat), "kg": float(r.kg)} for idx, r in por_data.iterrows()]
+
+        return JSONResponse({
+            "nome":       dfc['NOMECLIENTE'].iloc[0],
+            "fat_total":  fat_total,
+            "kg_total":   kg_total,
+            "margem_pct": round(margem_pct, 1),
+            "pm":         round(pm, 2),
+            "desc_total": desc_total,
+            "produtos":   produtos,
+            "grupos":     grupos,
+            "datas":      datas
+        })
+    except Exception as e:
+        return JSONResponse({"erro": str(e)})
 
 @app.get("/health-ia3")
 def health_ia3():
