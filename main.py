@@ -635,11 +635,19 @@ def is_summary_query(pergunta: str) -> bool:
 
 @app.get("/", response_class=HTMLResponse)
 def root():
-    p = os.path.join(os.path.dirname(__file__), "index.html")
-    if os.path.exists(p):
-        with open(p, "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
-    return HTMLResponse("<h1>Jhon</h1>")
+    for p in ["menu.html", os.path.join(os.path.dirname(__file__), "menu.html"), "/app/menu.html"]:
+        if os.path.exists(p):
+            with open(p, "r", encoding="utf-8") as f:
+                return HTMLResponse(content=f.read())
+    return HTMLResponse("<h1>Menu</h1><a href='/iaf'>IAF</a> | <a href='/ia3'>IA3</a>")
+
+@app.get("/iaf", response_class=HTMLResponse)
+def iaf():
+    for p in ["index.html", os.path.join(os.path.dirname(__file__), "index.html"), "/app/index.html"]:
+        if os.path.exists(p):
+            with open(p, "r", encoding="utf-8") as f:
+                return HTMLResponse(content=f.read())
+    return HTMLResponse("<h1>IAF</h1>")
 
 @app.get("/dashboard")
 def dashboard():
