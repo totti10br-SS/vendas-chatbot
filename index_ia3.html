@@ -18,38 +18,35 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);heig
 
 header{background:var(--blue);padding:0 14px;height:42px;display:flex;align-items:center;gap:10px;box-shadow:0 2px 10px rgba(0,0,0,.5);flex-shrink:0;position:relative;}
 header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;background:var(--cyan);}
-.logo-box{width:28px;height:28px;border-radius:8px;background:var(--cyan);display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 0 0 1.5px rgba(255,255,255,.3);}
+.logo-box{width:28px;height:28px;border-radius:8px;background:var(--cyan);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
 .logo-box span{font-family:'Bebas Neue',sans-serif;font-size:14px;color:#000;letter-spacing:1px;}
 .header-info h1{font-family:'Barlow Condensed',sans-serif;font-size:15px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#fff;}
 .header-info p{font-size:10px;color:rgba(255,255,255,.7);}
 .header-right{margin-left:auto;display:flex;align-items:center;gap:10px;}
-.stat-pill{display:flex;align-items:center;gap:5px;font-family:'Barlow Condensed',sans-serif;font-size:12px;color:var(--cyan);font-weight:700;letter-spacing:.5px;}
+.stat-pill{display:flex;align-items:center;gap:5px;font-family:'Barlow Condensed',sans-serif;font-size:12px;color:var(--cyan);font-weight:700;}
 .stat-dot{width:6px;height:6px;border-radius:50%;background:var(--cyan);animation:pulse 2s infinite;}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 .btn-menu{background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);color:#fff;padding:4px 12px;border-radius:6px;font-family:'Barlow Condensed',sans-serif;font-size:12px;font-weight:700;cursor:pointer;letter-spacing:.5px;text-decoration:none;display:flex;align-items:center;gap:4px;}
 .btn-menu:hover{background:rgba(255,255,255,.25);}
 
-.dashboard{background:var(--surface);border-bottom:1px solid rgba(0,102,204,.25);padding:6px 14px;display:flex;gap:10px;align-items:center;flex-shrink:0;}
+.dashboard{background:var(--surface);border-bottom:1px solid rgba(0,102,204,.25);padding:6px 14px;display:flex;gap:10px;align-items:center;flex-shrink:0;overflow-x:auto;}
 .kpi-group{display:flex;gap:6px;flex-shrink:0;}
 .kpi-mini{background:var(--surface2);border:1px solid var(--border);border-left:2px solid var(--cyan);border-radius:6px;padding:4px 10px;min-width:0;}
 .kpi-mini-label{font-family:'Barlow Condensed',sans-serif;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;}
-.kpi-mini-value{font-family:'Bebas Neue',sans-serif;font-size:18px;color:var(--cyan);line-height:1.1;letter-spacing:.5px;}
+.kpi-mini-value{font-family:'Bebas Neue',sans-serif;font-size:18px;color:var(--cyan);line-height:1.1;}
 .kpi-mini-sub{font-size:10px;color:#fff;}
 .dash-divider{width:1px;background:rgba(255,255,255,.07);align-self:stretch;flex-shrink:0;}
 
-.top-clientes{flex:0 0 auto;width:520px;}
-.top-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;}
-.top-title{font-family:'Barlow Condensed',sans-serif;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;font-weight:700;}
+.top-clientes{flex:0 0 auto;width:480px;}
+.top-title{font-family:'Barlow Condensed',sans-serif;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:4px;}
 .top-title span{color:var(--cyan);}
 .clientes-list{display:flex;flex-direction:column;gap:3px;}
 .cliente-row{display:flex;align-items:center;gap:6px;background:var(--surface2);border:1px solid var(--border);border-left:2px solid var(--blue);border-radius:4px;padding:4px 8px;cursor:pointer;transition:all .15s;}
 .cliente-row:hover{border-left-color:var(--cyan);background:var(--surface3);}
-.c-rank{font-family:'Bebas Neue',sans-serif;font-size:13px;color:rgba(0,200,224,.4);width:14px;flex-shrink:0;text-align:center;}
-.c-nome{font-size:11px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:160px;flex-shrink:0;}
-.c-vals{display:flex;align-items:center;gap:8px;flex-shrink:0;}
-.c-kg{font-family:'Barlow Condensed',sans-serif;font-size:12px;color:var(--cyan);font-weight:600;white-space:nowrap;width:80px;}
-.c-fat{font-size:12px;color:#fff;font-weight:600;}
-.c-arrow{font-size:11px;color:rgba(255,255,255,.3);margin-left:4px;}
+.c-rank{font-family:'Bebas Neue',sans-serif;font-size:13px;color:rgba(0,200,224,.4);width:14px;flex-shrink:0;}
+.c-nome{font-size:11px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:200px;flex-shrink:0;}
+.c-fat{font-size:12px;color:var(--cyan);font-weight:600;font-family:'Barlow Condensed',sans-serif;}
+.c-arrow{font-size:11px;color:rgba(255,255,255,.3);margin-left:auto;}
 
 .main-wrap{flex:1;display:flex;overflow:hidden;}
 .left-col{flex:1;display:flex;flex-direction:column;overflow:hidden;}
@@ -69,17 +66,17 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;ba
 
 .message{display:flex;gap:10px;animation:fadeUp .25s ease;max-width:98%;width:98%;}
 .message.user{align-self:flex-end;flex-direction:row-reverse;}
-.msg-avatar{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0;margin-top:2px;font-family:'Bebas Neue',sans-serif;letter-spacing:.3px;}
+.msg-avatar{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0;margin-top:2px;font-family:'Bebas Neue',sans-serif;}
 .message.assistant .msg-avatar{background:var(--blue);color:var(--cyan);border:1.5px solid var(--cyan);}
 .message.user .msg-avatar{background:var(--surface2);border:1px solid var(--border);color:var(--muted);font-size:13px;}
 .bubble{padding:11px 15px;border-radius:10px;font-size:14px;line-height:1.7;flex:1;min-width:0;word-break:break-word;overflow-wrap:anywhere;}
-.message.assistant .bubble{background:var(--surface);border:1px solid var(--border);border-radius:3px 10px 10px 10px;color:var(--text);}
+.message.assistant .bubble{background:var(--surface);border:1px solid var(--border);border-radius:3px 10px 10px 10px;}
 .message.user .bubble{background:var(--blue-dark);border-radius:10px 3px 10px 10px;color:#fff;}
 .bubble h2,.bubble h3{font-family:'Barlow Condensed',sans-serif;font-weight:700;color:var(--cyan);margin:12px 0 6px;text-transform:uppercase;font-size:14px;border-bottom:1px solid var(--border-c);padding-bottom:3px;}
 .bubble h2:first-child,.bubble h3:first-child{margin-top:0;}
 .bubble strong{color:var(--cyan);font-weight:700;}
 .bubble p{margin-bottom:8px;}.bubble p:last-child{margin-bottom:0;}
-.bubble ul{margin:6px 0 6px 17px;}.bubble li{margin-bottom:4px;color:#fff;}
+.bubble ul{margin:6px 0 6px 17px;}.bubble li{margin-bottom:4px;}
 .bubble table{width:100%;border-collapse:collapse;margin:10px 0;font-size:13px;display:block;overflow-x:auto;}
 .bubble th{background:rgba(0,102,204,.2);padding:7px 11px;text-align:left;font-family:'Barlow Condensed',sans-serif;font-weight:700;color:var(--cyan);font-size:12px;text-transform:uppercase;border-bottom:1px solid rgba(0,102,204,.3);}
 .bubble td{padding:7px 11px;border-bottom:1px solid rgba(255,255,255,.05);color:#fff;}
@@ -100,8 +97,6 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;ba
 .btn-send svg{width:18px;height:18px;fill:white;}
 .btn-send:hover svg{fill:#000;}
 .input-hint{font-size:10px;color:var(--muted);margin-top:5px;text-align:center;}
-
-.badge-ia3{background:rgba(0,200,224,.1);border:1px solid rgba(0,200,224,.3);color:var(--cyan);padding:2px 8px;border-radius:4px;font-size:10px;font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:1px;}
 </style>
 </head>
 <body>
@@ -122,25 +117,28 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;ba
   <div class="kpi-group">
     <div class="kpi-mini">
       <div class="kpi-mini-label">Faturamento Mês</div>
-      <div class="kpi-mini-value" id="kpi-fat">R$ --</div>
+      <div class="kpi-mini-value" id="kpi-fat">SEM DADOS</div>
       <div class="kpi-mini-sub" id="kpi-fat-sub">--</div>
     </div>
     <div class="kpi-mini">
-      <div class="kpi-mini-label">Qtde Mês</div>
-      <div class="kpi-mini-value" id="kpi-qtde">--</div>
-      <div class="kpi-mini-sub">unidades</div>
+      <div class="kpi-mini-label">Qtde KG Mês</div>
+      <div class="kpi-mini-value" id="kpi-qtde">SEM DADOS</div>
+      <div class="kpi-mini-sub">kg vendidos</div>
     </div>
     <div class="kpi-mini">
       <div class="kpi-mini-label">Margem Bruta</div>
-      <div class="kpi-mini-value" id="kpi-margem">--%</div>
+      <div class="kpi-mini-value" id="kpi-margem">SEM DADOS</div>
       <div class="kpi-mini-sub">TOTVEND - TOTCUSTO</div>
+    </div>
+    <div class="kpi-mini">
+      <div class="kpi-mini-label">Desconto Mês</div>
+      <div class="kpi-mini-value" id="kpi-desc">SEM DADOS</div>
+      <div class="kpi-mini-sub">total descontado</div>
     </div>
   </div>
   <div class="dash-divider"></div>
   <div class="top-clientes">
-    <div class="top-header">
-      <div class="top-title">Top Clientes <span id="top-periodo">este mês</span></div>
-    </div>
+    <div class="top-title">Top Clientes <span id="top-periodo">este mês</span></div>
     <div class="clientes-list" id="top-list">
       <div style="font-size:11px;color:var(--muted);padding:4px 0">Carregando...</div>
     </div>
@@ -152,7 +150,7 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;ba
     <div id="messages">
       <div class="welcome">
         <h2>Olá! Sou o <span>IA3</span></h2>
-        <p>Seu analista de vendas da <strong>3F</strong>.<br>Faça perguntas sobre faturamento, produtos, clientes, vendedores e rotas.</p>
+        <p>Seu analista de vendas da <strong>3F</strong>.<br>Dados extraídos diretamente do Power BI.</p>
         <div class="suggestions">
           <div class="suggestion" onclick="sendSuggestion(this)">Vendas de hoje</div>
           <div class="suggestion" onclick="sendSuggestion(this)">Top 10 clientes este mês</div>
@@ -178,47 +176,16 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;ba
 <script>
 const API = '';
 let history = [];
-let kpiLoaded = false;
 
-// Data no header
-const now = new Date();
-document.getElementById('hdr-data').textContent = now.toLocaleDateString('pt-BR');
+document.getElementById('hdr-data').textContent = new Date().toLocaleDateString('pt-BR');
 
-function autoResize(el) {
-  el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
-}
+function autoResize(el){el.style.height='auto';el.style.height=Math.min(el.scrollHeight,120)+'px';}
+function handleKey(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();}}
+function sendSuggestion(el){document.getElementById('userInput').value=el.textContent;sendMessage();}
 
-function handleKey(e) {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-}
+function escHtml(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
-function sendSuggestion(el) {
-  document.getElementById('userInput').value = el.textContent;
-  sendMessage();
-}
-
-function addMessage(role, content) {
-  const wrap = document.getElementById('messages');
-  const welcome = wrap.querySelector('.welcome');
-  if (welcome) welcome.remove();
-
-  const div = document.createElement('div');
-  div.className = `message ${role}`;
-  const avatar = role === 'assistant' ? 'IA3' : '👤';
-  div.innerHTML = `
-    <div class="msg-avatar">${avatar}</div>
-    <div class="bubble">${role === 'assistant' ? renderMarkdown(content) : escHtml(content)}</div>`;
-  wrap.appendChild(div);
-  wrap.scrollTop = wrap.scrollHeight;
-  return div;
-}
-
-function escHtml(t) {
-  return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-
-function renderMarkdown(text) {
+function renderMarkdown(text){
   return text
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/^### (.+)$/gm,'<h3>$1</h3>')
@@ -226,84 +193,91 @@ function renderMarkdown(text) {
     .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
     .replace(/\*(.+?)\*/g,'<em>$1</em>')
     .replace(/`(.+?)`/g,'<code style="background:rgba(0,200,224,.1);padding:1px 5px;border-radius:3px;font-size:12px">$1</code>')
-    .replace(/^\| (.+) \|$/gm, (_, row) => {
-      const cells = row.split(' | ');
-      return '<tr>' + cells.map(c => `<td>${c.trim()}</td>`).join('') + '</tr>';
-    })
-    .replace(/(<tr>.*<\/tr>\n?)+/gs, m => `<table><tbody>${m}</tbody></table>`)
+    .replace(/^\|(.+)\|$/gm,(_,row)=>'<tr>'+row.split('|').map(c=>`<td>${c.trim()}</td>`).join('')+'</tr>')
+    .replace(/(<tr>.*<\/tr>\n?)+/gs,m=>`<table><tbody>${m}</tbody></table>`)
     .replace(/^- (.+)$/gm,'<li>$1</li>')
-    .replace(/(<li>.*<\/li>\n?)+/gs, m => `<ul>${m}</ul>`)
-    .replace(/\n\n/g,'</p><p>')
-    .replace(/\n/g,'<br>')
-    .replace(/^(.+)$/s, '<p>$1</p>');
+    .replace(/(<li>.*<\/li>\n?)+/gs,m=>`<ul>${m}</ul>`)
+    .replace(/\n\n/g,'</p><p>').replace(/\n/g,'<br>')
+    .replace(/^(.+)$/s,'<p>$1</p>');
 }
 
-async function sendMessage() {
-  const input = document.getElementById('userInput');
-  const text = input.value.trim();
-  if (!text) return;
-  input.value = '';
-  input.style.height = 'auto';
+function addMessage(role,content){
+  const wrap=document.getElementById('messages');
+  const welcome=wrap.querySelector('.welcome');
+  if(welcome)welcome.remove();
+  const div=document.createElement('div');
+  div.className=`message ${role}`;
+  div.innerHTML=`<div class="msg-avatar">${role==='assistant'?'IA3':'👤'}</div><div class="bubble">${role==='assistant'?renderMarkdown(content):escHtml(content)}</div>`;
+  wrap.appendChild(div);
+  wrap.scrollTop=wrap.scrollHeight;
+  return div;
+}
 
-  addMessage('user', text);
-  history.push({ role: 'user', content: text });
+async function sendMessage(){
+  const input=document.getElementById('userInput');
+  const text=input.value.trim();
+  if(!text)return;
+  input.value='';input.style.height='auto';
+  addMessage('user',text);
+  history.push({role:'user',content:text});
 
-  const typing = document.createElement('div');
-  typing.className = 'message assistant typing';
-  typing.innerHTML = '<div class="msg-avatar">IA3</div><div class="bubble"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
+  const typing=document.createElement('div');
+  typing.className='message assistant typing';
+  typing.innerHTML='<div class="msg-avatar">IA3</div><div class="bubble"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
   document.getElementById('messages').appendChild(typing);
-  document.getElementById('messages').scrollTop = 999999;
+  document.getElementById('messages').scrollTop=999999;
 
-  try {
-    const res = await fetch(`${API}/chat-ia3`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: history })
+  try{
+    const res=await fetch(`${API}/chat-ia3`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({messages:history})
     });
-    const data = await res.json();
-    const reply = data.content?.[0]?.text || 'Erro ao processar resposta.';
+    const data=await res.json();
+    const reply=data.content?.[0]?.text||'Erro ao processar resposta.';
     typing.remove();
-    addMessage('assistant', reply);
-    history.push({ role: 'assistant', content: reply });
-    if (history.length > 20) history = history.slice(-20);
-  } catch(e) {
+    addMessage('assistant',reply);
+    history.push({role:'assistant',content:reply});
+    if(history.length>20)history=history.slice(-20);
+  }catch(e){
     typing.remove();
-    addMessage('assistant', '❌ Erro de conexão com o servidor.');
+    addMessage('assistant','❌ Erro de conexão com o servidor.');
   }
 }
 
-// KPIs automáticos
-async function loadKPIs() {
-  if (kpiLoaded) return;
-  try {
-    const res = await fetch(`${API}/chat-ia3`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: [{ role: 'user', content: 'Responda APENAS com JSON no formato {"fat":"R$ X,X M","qtde":"X.XXX","margem":"XX%","top":[{"n":"NOME","v":"R$ X,X M"},{"n":"NOME","v":"R$ X,X M"},{"n":"NOME","v":"R$ X,X M"}]} com os dados de faturamento, quantidade, margem bruta e top 3 clientes do mês atual. Sem texto, apenas o JSON.' }] })
+// KPIs automáticos — usa colunas do IA3
+async function loadKPIs(){
+  try{
+    const res=await fetch(`${API}/chat-ia3`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({messages:[{role:'user',content:'Responda APENAS com JSON puro sem markdown, sem backticks, sem explicação. Formato exato: {"fat":"R$ X,X M","qtde":"X.XXX kg","margem":"XX%","desc":"R$ X.XXX","top":[{"n":"NOME","v":"R$ X,X M"},{"n":"NOME","v":"R$ X,X M"},{"n":"NOME","v":"R$ X,X M"}]} com faturamento total (TOTVEND), quantidade em kg (QTDEKG), margem bruta percentual ((TOTVEND-TOTCUSTO)/TOTVEND*100), total de desconto (VALORDESCONTO) e top 3 clientes por TOTVEND do mês atual.'}]})
     });
-    const data = await res.json();
-    const text = data.content?.[0]?.text || '';
-    const match = text.match(/\{[\s\S]*\}/);
-    if (match) {
-      const kpi = JSON.parse(match[0]);
-      document.getElementById('kpi-fat').textContent = kpi.fat || 'R$ --';
-      document.getElementById('kpi-qtde').textContent = kpi.qtde || '--';
-      document.getElementById('kpi-margem').textContent = kpi.margem || '--%';
-      if (kpi.top && kpi.top.length) {
-        document.getElementById('top-list').innerHTML = kpi.top.map((c,i) =>
+    const data=await res.json();
+    const text=data.content?.[0]?.text||'';
+    const clean=text.replace(/```json|```/g,'').trim();
+    const match=clean.match(/\{[\s\S]*\}/);
+    if(match){
+      const kpi=JSON.parse(match[0]);
+      if(kpi.fat) document.getElementById('kpi-fat').textContent=kpi.fat;
+      if(kpi.qtde) document.getElementById('kpi-qtde').textContent=kpi.qtde;
+      if(kpi.margem) document.getElementById('kpi-margem').textContent=kpi.margem;
+      if(kpi.desc) document.getElementById('kpi-desc').textContent=kpi.desc;
+      if(kpi.top&&kpi.top.length){
+        document.getElementById('top-list').innerHTML=kpi.top.map((c,i)=>
           `<div class="cliente-row" onclick="document.getElementById('userInput').value='Análise do cliente ${c.n} este mês';sendMessage()">
             <span class="c-rank">${i+1}</span>
             <span class="c-nome">${c.n}</span>
-            <span class="c-vals"><span class="c-fat">${c.v}</span><span class="c-arrow">›</span></span>
+            <span class="c-fat">${c.v}</span>
+            <span class="c-arrow">›</span>
           </div>`
         ).join('');
       }
-      kpiLoaded = true;
     }
-  } catch(e) { console.log('KPI load error', e); }
+  }catch(e){console.log('KPI error',e);}
 }
 
-setTimeout(loadKPIs, 1500);
+setTimeout(loadKPIs,1500);
 </script>
 </body>
 </html>
