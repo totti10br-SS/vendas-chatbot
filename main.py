@@ -2145,8 +2145,12 @@ def cliente_ia3(nome: str):
     try:
         df = load_df_ia3()
         nome_dec = nome
-        mask = df['NOMECLIENTE'].str.lower().str.contains(nome_dec.lower()[:20], na=False)
-        dfc = df[mask]
+        # Tenta match progressivo: primeiros 20 chars, depois 10, depois 5
+        for tam in [20, 10, 5]:
+            mask = df['NOMECLIENTE'].str.lower().str.contains(nome_dec.lower()[:tam], na=False)
+            dfc = df[mask]
+            if len(dfc) > 0:
+                break
         if len(dfc) == 0:
             return JSONResponse({"erro": "Cliente não encontrado"})
 

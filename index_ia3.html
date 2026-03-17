@@ -164,7 +164,7 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;ba
   </div>
   <div class="dash-divider"></div>
   <div class="top-clientes">
-    <div class="top-title">Top Clientes <span id="top-periodo">este mês</span></div>
+    <div class="top-title">Top 5 Clientes <span id="top-periodo">último mês</span></div>
     <div class="clientes-list" id="top-list">
       <div style="font-size:11px;color:var(--muted);padding:4px 0">Carregando...</div>
     </div>
@@ -284,7 +284,7 @@ async function loadKPIs(){
     const res=await fetch(`${API}/chat-ia3`,{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({messages:[{role:'user',content:'Responda APENAS com JSON puro sem markdown, sem backticks, sem explicação. Formato exato: {"fat":"R$ X,X M","qtde":"X.XXX kg","margem":"XX%","desc":"R$ X.XXX","top":[{"n":"NOME","v":"R$ X,X M"},{"n":"NOME","v":"R$ X,X M"},{"n":"NOME","v":"R$ X,X M"}]} com faturamento total (TOTVEND), quantidade em kg (QTDEKG), margem bruta percentual ((TOTVEND-TOTCUSTO)/TOTVEND*100), total de desconto (VALORDESCONTO) e top 3 clientes por TOTVEND do mês atual.'}]})
+      body:JSON.stringify({messages:[{role:'user',content:'Responda APENAS com JSON puro sem markdown, sem backticks, sem explicação. Formato exato: {"fat":"R$ X,X M","qtde":"X.XXX kg","margem":"XX%","desc":"R$ X.XXX","top":[{"n":"NOME_CLIENTE","v":"R$ X,X M"},{"n":"NOME_CLIENTE","v":"R$ X,X M"},{"n":"NOME_CLIENTE","v":"R$ X,X M"},{"n":"NOME_CLIENTE","v":"R$ X,X M"},{"n":"NOME_CLIENTE","v":"R$ X,X M"}]} onde: fat=soma de TOTVEND, qtde=soma de QTDEKG, margem=(TOTVEND-TOTCUSTO)/TOTVEND*100, desc=soma de VALORDESCONTO, top=os 5 clientes com maior soma de TOTVEND pela coluna NOMECLIENTE do ultimo mes disponivel. IMPORTANTE: top deve conter NOMES DE CLIENTES da coluna NOMECLIENTE, nunca produtos.'}]})
     });
     const data=await res.json();
     const text=data.content?.[0]?.text||'';
