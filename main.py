@@ -2139,66 +2139,44 @@ DADOS ({data_label}):
         raise HTTPException(status_code=r.status_code, detail=r.text)
     return r.json()
 
-@app.get("/cliente-ia3/{nome}")
-def cliente_ia3(nome: str):
-    """Retorna resumo do cliente para o painel lateral do IA3."""
+@app.get("/dashboard-ia3")
+def dashboard_ia3():
+    """Retorna KPIs + top5 clientes do IA3 — JSON direto, sem Claude."""
     try:
         df = load_df_ia3()
-        nome_dec = nome
-        # Tenta match progressivo: primeiros 20 chars, depois 10, depois 5
-        for tam in [20, 10, 5]:
-            mask = df['NOMECLIENTE'].str.lower().str.contains(nome_dec.lower()[:tam], na=False)
-            dfc = df[mask]
-            if len(dfc) > 0:
-                break
-        if len(dfc) == 0:
-            return JSONResponse({"erro": "Cliente não encontrado"})
 
-        fat_total  = float(dfc['TOTVEND'].sum())
-        kg_total   = float(dfc['QTDEKG'].sum())  if 'QTDEKG'  in dfc.columns else 0
-        custo_total= float(dfc['TOTCUSTO'].sum()) if 'TOTCUSTO' in dfc.columns else 0
-        desc_total = float(dfc['VALORDESCONTO'].sum()) if 'VALORDESCONTO' in dfc.columns else 0
-        margem_pct = (fat_total - custo_total) / fat_total * 100 if fat_total > 0 else 0
-        pm         = fat_total / kg_total if kg_total > 0 else 0
+        # Último mês disponível
+        ultimo_mes = df['DATASAIDA'].dt.to_period('M').max()
+        df_mes = df[df['DATASAIDA'].dt.to_period('M') == ultimo_mes]
 
-        # Top produtos
-        if 'DESCRICAOPRODUTO' in dfc.columns:
-            por_prod = dfc.groupby('DESCRICAOPRODUTO').agg(
-                fat=('TOTVEND','sum'),
-                kg=('QTDEKG','sum'),
-                grupo=('NOMEGRUPO','first') if 'NOMEGRUPO' in dfc.columns else ('TOTVEND','count')
-            ).sort_values('fat', ascending=False).head(15)
-            produtos = [{"nome": idx, "fat": float(r.fat), "kg": float(r.kg),
-                         "grupo": str(r.grupo) if 'grupo' in por_prod.columns else ''} 
-                        for idx, r in por_prod.iterrows()]
-        else:
-            produtos = []
+        fat        = float(df_mes['TOTVEND'].sum())
+        kg         = float(df_mes['QTDEKG'].sum())   if 'QTDEKG'       in df_mes.columns else 0
+        custo      = float(df_mes['TOTCUSTO'].sum())  if 'TOTCUSTO'     in df_mes.columns else 0
+        desconto   = float(df_mes['VALORDESCONTO'].sum()) if 'VALORDESCONTO' in df_mes.columns else 0
+        margem_pct = round((fat - custo) / fat * 100, 1) if fat > 0 else 0
+        total      = int(df.shape[0])
+        mes_label  = df_mes['DATASAIDA'].dt.strftime('%m/%Y').iloc[0] if len(df_mes) > 0 else '—'
 
-        # Por grupo
-        grupos = []
-        if 'NOMEGRUPO' in dfc.columns:
-            por_grupo = dfc.groupby('NOMEGRUPO').agg(fat=('TOTVEND','sum'), kg=('QTDEKG','sum')).sort_values('fat', ascending=False)
-            grupos = [{"nome": idx, "fat": float(r.fat), "kg": float(r.kg)} for idx, r in por_grupo.iterrows()]
-
-        # Últimas compras por data
-        datas = []
-        if 'DATASAIDA' in dfc.columns:
-            por_data = dfc.groupby(dfc['DATASAIDA'].astype(str)).agg(fat=('TOTVEND','sum'), kg=('QTDEKG','sum')).sort_index(ascending=False).head(10)
-            datas = [{"data": idx, "fat": float(r.fat), "kg": float(r.kg)} for idx, r in por_data.iterrows()]
+        # Top 5 clientes por faturamento
+        top = (df_mes.groupby('NOMECLIENTE')
+               .agg(fat=('TOTVEND','sum'), kg=('QTDEKG','sum'))
+               .sort_values('fat', ascending=False)
+               .head(5)
+               .reset_index())
+        top5 = [{"nome": r.NOMECLIENTE, "fat": round(r.fat, 2), "kg": round(r.kg, 2)}
+                for r in top.itertuples()]
 
         return JSONResponse({
-            "nome":       dfc['NOMECLIENTE'].iloc[0],
-            "fat_total":  fat_total,
-            "kg_total":   kg_total,
-            "margem_pct": round(margem_pct, 1),
-            "pm":         round(pm, 2),
-            "desc_total": desc_total,
-            "produtos":   produtos,
-            "grupos":     grupos,
-            "datas":      datas
+            "total_registros": total,
+            "mes_label":  mes_label,
+            "fat":        round(fat, 2),
+            "kg":         round(kg, 2),
+            "margem_pct": margem_pct,
+            "desconto":   round(desconto, 2),
+            "top5":       top5
         })
     except Exception as e:
-        return JSONResponse({"erro": str(e)})
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/health-ia3")
 def health_ia3():

@@ -278,36 +278,33 @@ async function sendMessage(){
   }
 }
 
-// KPIs automáticos — usa colunas do IA3
+// KPIs direto da rota /dashboard-ia3 — sem Claude
 async function loadKPIs(){
   try{
-    const res=await fetch(`${API}/chat-ia3`,{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({messages:[{role:'user',content:'Responda APENAS com JSON puro sem markdown, sem backticks, sem explicação. Formato exato: {"fat":"R$ X,X M","qtde":"X.XXX kg","margem":"XX%","desc":"R$ X.XXX","top":[{"n":"NOME_CLIENTE","v":"R$ X,X M"},{"n":"NOME_CLIENTE","v":"R$ X,X M"},{"n":"NOME_CLIENTE","v":"R$ X,X M"},{"n":"NOME_CLIENTE","v":"R$ X,X M"},{"n":"NOME_CLIENTE","v":"R$ X,X M"}]} onde: fat=soma de TOTVEND, qtde=soma de QTDEKG, margem=(TOTVEND-TOTCUSTO)/TOTVEND*100, desc=soma de VALORDESCONTO, top=os 5 clientes com maior soma de TOTVEND pela coluna NOMECLIENTE do ultimo mes disponivel. IMPORTANTE: top deve conter NOMES DE CLIENTES da coluna NOMECLIENTE, nunca produtos.'}]})
-    });
-    const data=await res.json();
-    const text=data.content?.[0]?.text||'';
-    const clean=text.replace(/```json|```/g,'').trim();
-    const match=clean.match(/\{[\s\S]*\}/);
-    if(match){
-      const kpi=JSON.parse(match[0]);
-      if(kpi.fat) document.getElementById('kpi-fat').textContent=kpi.fat;
-      if(kpi.qtde) document.getElementById('kpi-qtde').textContent=kpi.qtde;
-      if(kpi.margem) document.getElementById('kpi-margem').textContent=kpi.margem;
-      if(kpi.desc) document.getElementById('kpi-desc').textContent=kpi.desc;
-      if(kpi.top&&kpi.top.length){
-        document.getElementById('top-list').innerHTML=kpi.top.map((c,i)=>
-          `<div class="cliente-row" onclick="openClienteIA3('${c.n}')">
-            <span class="c-rank">${i+1}</span>
-            <span class="c-nome">${c.n}</span>
-            <span class="c-fat">${c.v}</span>
-            <span class="c-arrow">›</span>
-          </div>`
-        ).join('');
-      }
+    const res = await fetch(`${API}/dashboard-ia3`);
+    const d   = await res.json();
+
+    function fmtM(v){ return v>=1000000?'R$ '+(v/1000000).toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:1})+' M':'R$ '+v.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+    function fmtKG(v){ return v.toLocaleString('pt-BR',{minimumFractionDigits:0,maximumFractionDigits:0})+' KG'; }
+
+    document.getElementById('kpi-fat').textContent   = fmtM(d.fat);
+    document.getElementById('kpi-fat-sub').textContent = d.mes_label || '—';
+    document.getElementById('kpi-qtde').textContent  = fmtKG(d.kg);
+    document.getElementById('kpi-margem').textContent = d.margem_pct+'%';
+    document.getElementById('kpi-desc').textContent  = fmtM(d.desconto);
+    document.getElementById('top-periodo').textContent = d.mes_label || 'último mês';
+
+    if(d.top5&&d.top5.length){
+      document.getElementById('top-list').innerHTML = d.top5.map((c,i)=>
+        `<div class="cliente-row" onclick="openClienteIA3('${c.nome.replace(/'/g,"\'")}')">
+          <span class="c-rank">${i+1}</span>
+          <span class="c-nome">${c.nome}</span>
+          <span class="c-fat">${fmtM(c.fat)}</span>
+          <span class="c-arrow">›</span>
+        </div>`
+      ).join('');
     }
-  }catch(e){console.log('KPI error',e);}
+  }catch(e){ console.log('KPI error',e); }
 }
 
 async function forceReload(){
