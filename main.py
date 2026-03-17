@@ -2178,6 +2178,60 @@ def dashboard_ia3():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/cliente-ia3/{nome}")
+def cliente_ia3(nome: str):
+    """Retorna resumo do cliente para o painel lateral do IA3."""
+    try:
+        df = load_df_ia3()
+        # Match progressivo
+        dfc = pd.DataFrame()
+        for tam in [25, 15, 8, 5]:
+            mask = df['NOMECLIENTE'].str.lower().str.contains(nome.lower()[:tam], na=False)
+            dfc = df[mask]
+            if len(dfc) > 0:
+                break
+        if len(dfc) == 0:
+            return JSONResponse({"erro": "Cliente não encontrado"})
+
+        fat_total   = float(dfc['TOTVEND'].sum())
+        kg_total    = float(dfc['QTDEKG'].sum())    if 'QTDEKG'       in dfc.columns else 0
+        custo_total = float(dfc['TOTCUSTO'].sum())  if 'TOTCUSTO'     in dfc.columns else 0
+        desc_total  = float(dfc['VALORDESCONTO'].sum()) if 'VALORDESCONTO' in dfc.columns else 0
+        margem_pct  = round((fat_total - custo_total) / fat_total * 100, 1) if fat_total > 0 else 0
+        pm          = round(fat_total / kg_total, 2) if kg_total > 0 else 0
+
+        # Agrupamento por NOMEDEPARTAMENTO
+        deptos = []
+        if 'NOMEDEPARTAMENTO' in dfc.columns:
+            por_depto = (dfc.groupby('NOMEDEPARTAMENTO')
+                         .agg(fat=('TOTVEND','sum'), kg=('QTDEKG','sum'))
+                         .sort_values('fat', ascending=False))
+            deptos = [{"nome": idx, "fat": round(float(r.fat),2), "kg": round(float(r.kg),2)}
+                      for idx, r in por_depto.iterrows()]
+
+        # Top 15 produtos
+        produtos = []
+        if 'DESCRICAOPRODUTO' in dfc.columns:
+            por_prod = (dfc.groupby('DESCRICAOPRODUTO')
+                        .agg(fat=('TOTVEND','sum'), kg=('QTDEKG','sum'))
+                        .sort_values('fat', ascending=False)
+                        .head(15))
+            produtos = [{"nome": idx, "fat": round(float(r.fat),2), "kg": round(float(r.kg),2)}
+                        for idx, r in por_prod.iterrows()]
+
+        return JSONResponse({
+            "nome":       dfc['NOMECLIENTE'].iloc[0],
+            "fat_total":  round(fat_total, 2),
+            "kg_total":   round(kg_total, 2),
+            "margem_pct": margem_pct,
+            "pm":         pm,
+            "desc_total": round(desc_total, 2),
+            "deptos":     deptos,
+            "produtos":   produtos
+        })
+    except Exception as e:
+        return JSONResponse({"erro": str(e)})
+
 @app.get("/health-ia3")
 def health_ia3():
     return {"status":"ok","sistema":"IA3"}

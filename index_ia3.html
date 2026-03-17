@@ -344,7 +344,7 @@ async function openClienteIA3(nome){
         </div>
       </div>`;
     }).join('');
-    const gruposHTML=(d.grupos||[]).map(g=>`
+    const deptosHTML=(d.deptos||[]).map(g=>`
       <div class="prod-row">
         <div class="prod-nome">${g.nome}</div>
         <div class="prod-vals">
@@ -360,8 +360,8 @@ async function openClienteIA3(nome){
         <div class="panel-kpi"><div class="panel-kpi-label">Margem</div><div class="panel-kpi-val">${d.margem_pct}%</div></div>
         <div class="panel-kpi"><div class="panel-kpi-label">R$/kg</div><div class="panel-kpi-val">R$ ${d.pm}</div></div>
       </div>
-      <div class="prod-section-label">Por Grupo de Produto</div>
-      ${gruposHTML||'<p style="color:var(--muted);font-size:12px">Sem dados</p>'}
+      <div class="prod-section-label">Por Departamento</div>
+      ${deptosHTML||'<p style="color:var(--muted);font-size:12px">Sem dados</p>'}
       <div class="prod-section-label" style="margin-top:10px">Top Produtos</div>
       ${prodsHTML||'<p style="color:var(--muted);font-size:12px">Sem produtos</p>'}`;
   }catch(e){
