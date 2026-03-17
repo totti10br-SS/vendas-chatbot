@@ -107,8 +107,12 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;ba
     <h1>IA3 · Analista Comercial 3F</h1>
     <p>Powered by Claude · Dados Power BI</p>
   </div>
+  <div style="position:absolute;left:50%;transform:translateX(-50%);">
+    <a href="/menu" style="background:none;border:1px solid rgba(0,200,224,.3);border-radius:5px;padding:4px 16px;cursor:pointer;color:var(--cyan);font-size:11px;font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:1px;text-decoration:none;transition:all .2s;" onmouseover="this.style.background='rgba(0,200,224,.1)'" onmouseout="this.style.background='none'">☰ MENU</a>
+  </div>
   <div class="header-right">
     <div class="stat-pill"><div class="stat-dot"></div><span id="hdr-data">--/--/----</span></div>
+    <button id="btn-reload" onclick="forceReload()" style="background:none;border:1px solid rgba(0,200,224,.3);border-radius:5px;padding:3px 8px;cursor:pointer;color:var(--cyan);font-size:10px;font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.5px;" onmouseover="this.style.background='rgba(0,200,224,.1)'" onmouseout="this.style.background='none'">↺ ATUALIZAR</button>
     <a href="/menu" class="btn-menu">⬅ Menu</a>
   </div>
 </header>
@@ -275,6 +279,19 @@ async function loadKPIs(){
       }
     }
   }catch(e){console.log('KPI error',e);}
+}
+
+async function forceReload(){
+  const btn=document.getElementById('btn-reload');
+  btn.textContent='↺ CARREGANDO...';
+  btn.disabled=true;
+  try{
+    await fetch('/health-ia3');
+    location.reload();
+  }catch(e){
+    btn.textContent='↺ ATUALIZAR';
+    btn.disabled=false;
+  }
 }
 
 setTimeout(loadKPIs,1500);
