@@ -255,7 +255,7 @@ async function sendMessage() {
   document.getElementById('messages').scrollTop = 999999;
 
   try {
-    const res = await fetch(`${API}/chat`, {
+    const res = await fetch(`${API}/chat-ia3`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages: history })
@@ -276,7 +276,7 @@ async function sendMessage() {
 async function loadKPIs() {
   if (kpiLoaded) return;
   try {
-    const res = await fetch(`${API}/chat`, {
+    const res = await fetch(`${API}/chat-ia3`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages: [{ role: 'user', content: 'Responda APENAS com JSON no formato {"fat":"R$ X,X M","qtde":"X.XXX","margem":"XX%","top":[{"n":"NOME","v":"R$ X,X M"},{"n":"NOME","v":"R$ X,X M"},{"n":"NOME","v":"R$ X,X M"}]} com os dados de faturamento, quantidade, margem bruta e top 3 clientes do mês atual. Sem texto, apenas o JSON.' }] })
