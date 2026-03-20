@@ -444,14 +444,16 @@ def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None, df_orig: pd.D
                                'últimos preços','ultimos precos','último preço','ultimo preco',
                                'preço atual','preco atual','últimas compras','ultimas compras',
                                'última compra','ultima compra']):
-        dff = dff.sort_values('DATA_MOVTO', ascending=False)
-        if 'NUM_DOCTO' in dff.columns:
-            # Pega as últimas 5 notas distintas e traz TODOS os itens de cada uma
-            ultimas_notas = dff['NUM_DOCTO'].unique()[:5]
-            dff = dff[dff['NUM_DOCTO'].isin(ultimas_notas)]
-        else:
-            dff = dff.head(30)
-        return dff[[c for c in cols if c in dff.columns]]
+        # Só aplica recência se já tem cliente filtrado (1 único cliente no dff)
+        clientes_no_dff = dff['NOME_CLIENTE'].nunique() if 'NOME_CLIENTE' in dff.columns else 999
+        if clientes_no_dff == 1:
+            dff = dff.sort_values('DATA_MOVTO', ascending=False)
+            if 'NUM_DOCTO' in dff.columns:
+                ultimas_notas = dff['NUM_DOCTO'].unique()[:5]
+                dff = dff[dff['NUM_DOCTO'].isin(ultimas_notas)]
+            else:
+                dff = dff.head(30)
+            return dff[[c for c in cols if c in dff.columns]]
 
     # Filtro de vendedor — busca por palavras separadas (mais tolerante)
     m = re.search(r'vendedor[:\s]+([a-záéíóúâêîôûãõç\s]+)', pl)
@@ -1986,13 +1988,18 @@ def filter_ia3(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
     dff = df.copy()
     hoje = datetime.now()
 
-    # ── Recência: "últimas vendas/compras/preços" → 15 registros mais recentes sem filtro de ano ──
+    # ── Recência: "últimas vendas/compras/preços" → só ativa se cliente já identificado ──
     tem_recencia = bool(re.search(
         r'\b(último[s]?|ultima[s]?|mais\s+recente[s]?|recente[s]?|preço[s]?\s+atual|preco[s]?\s+atual|ultimo\s+pre[cç]o|última\s+compra|ultima\s+compra|últimas\s+compras|ultimas\s+compras|ultimas\s+vendas|últimas\s+vendas|ultima\s+venda|última\s+venda)\b',
         pl
     ))
     if tem_recencia:
-        return _finalize_ia3(dff, pl, df, recencia=True)
+        # Aplica filtro de cliente primeiro
+        dff_cli = _finalize_ia3(dff, pl, df, recencia=False)
+        clientes = dff_cli['NOMECLIENTE'].nunique() if 'NOMECLIENTE' in dff_cli.columns else 999
+        if clientes == 1:
+            return _finalize_ia3(dff_cli, pl, df, recencia=True)
+        # Sem cliente identificado — processa normalmente sem recência
 
     m_range = re.search(r'(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})\s+a[té]?\s+(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})', pl)
     if m_range:
