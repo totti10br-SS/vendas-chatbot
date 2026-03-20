@@ -91,11 +91,13 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;ba
 .bubble strong{color:var(--yellow);font-weight:700;}
 .bubble p{margin-bottom:8px;color:var(--text);}.bubble p:last-child{margin-bottom:0;}
 .bubble ul{margin:6px 0 6px 17px;}.bubble li{margin-bottom:4px;color:#fff;}
-.bubble table{width:100%;border-collapse:collapse;margin:10px 0;font-size:13px;display:block;overflow-x:auto;}
-.bubble th{background:rgba(204,0,0,.2);padding:7px 11px;text-align:left;font-family:'Barlow Condensed',sans-serif;font-weight:700;color:var(--yellow);font-size:12px;text-transform:uppercase;border-bottom:1px solid rgba(204,0,0,.3);}
-.bubble td{padding:7px 11px;border-bottom:1px solid rgba(255,255,255,.05);color:#fff;}
+.bubble table{width:100%;border-collapse:collapse;margin:0;font-size:12px;}
+.bubble th{background:rgba(204,0,0,.25);padding:4px 10px;text-align:left;font-family:'Barlow Condensed',sans-serif;font-weight:700;color:var(--yellow);font-size:11px;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid rgba(204,0,0,.4);white-space:nowrap;}
+.bubble td{padding:3px 10px;border-bottom:1px solid rgba(255,255,255,.04);color:#e8e8e8;font-size:12px;white-space:nowrap;}
+.bubble tr:nth-child(even) td{background:rgba(255,255,255,.03);}
 .bubble tr:last-child td{border-bottom:none;}
-.bubble tr:hover td{background:rgba(204,0,0,.05);color:var(--text);}
+.bubble tr:hover td{background:rgba(204,0,0,.08);color:#fff;}
+.tbl-wrap{overflow-x:auto;margin:8px 0;border-radius:6px;border:1px solid rgba(255,255,255,.07);}
 
 .typing .bubble{display:flex;gap:5px;align-items:center;padding:12px 15px;}
 .dot{width:6px;height:6px;border-radius:50%;background:var(--yellow);opacity:.8;animation:blink 1.2s infinite;}
@@ -196,6 +198,7 @@ body.modo-mengo .bubble strong{color:#FF6666;}
 body.modo-mengo .bubble h2,body.modo-mengo .bubble h3{color:#FF6666;border-bottom-color:rgba(204,0,0,.3);}
 body.modo-mengo .bubble td{color:#e0e0e0;}
 body.modo-mengo .bubble th{background:rgba(204,0,0,.25);color:#FF6666;}
+body.modo-mengo .tbl-wrap{border-color:rgba(204,0,0,.2);}
 body.modo-mengo .c-nome{color:#f0f0f0;}
 body.modo-mengo .kpi-mini-value{color:#FF6666;}
 body.modo-mengo .kpi-mini{border-top-color:#CC0000;background:#1e0e0e;}
@@ -251,6 +254,7 @@ body.modo-vasco .bubble strong{color:#fff;}
 body.modo-vasco .bubble h2,body.modo-vasco .bubble h3{color:#fff;border-bottom-color:rgba(255,255,255,.15);}
 body.modo-vasco .bubble td{color:#e0e0e0;}
 body.modo-vasco .bubble th{background:rgba(255,255,255,.08);color:#fff;}
+body.modo-vasco .tbl-wrap{border-color:rgba(255,255,255,.1);}
 body.modo-vasco .c-nome{color:#f0f0f0;}
 body.modo-vasco .kpi-mini-value{color:#fff;}
 body.modo-vasco .kpi-mini{border-top-color:#fff;background:#1a1a1a;}
@@ -385,15 +389,26 @@ function fmtBRL(v){return 'R$ '+parseFloat(v||0).toLocaleString('pt-BR',{minimum
 function fmtKg(v){return parseFloat(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+' kg';}
 
 function renderMarkdown(text){
-  // Tabelas markdown
-  text=text.replace(/\|(.+)\|\n\|[-| :]+\|\n((?:\|.+\|\n?)+)/gm,function(m,header,rows){
-    var ths=header.split('|').filter(function(c){return c.trim();}).map(function(c){return '<th>'+c.trim()+'</th>';}).join('');
-    var trs=rows.trim().split('\n').map(function(row){
-      var tds=row.split('|').filter(function(c){return c.trim();}).map(function(c){return '<td>'+c.trim()+'</td>';}).join('');
-      return '<tr>'+tds+'</tr>';
-    }).join('');
-    return '<table><thead><tr>'+ths+'</tr></thead><tbody>'+trs+'</tbody></table>';
+  // Normaliza quebras de linha
+  text = text.replace(/\r\n/g,'\n').replace(/\r/g,'\n');
+
+  // Tabelas markdown — regex robusto que captura header + separador + linhas
+  text = text.replace(/((?:\|[^\n]+\|\n?)+)/gm, function(block){
+    const lines = block.trim().split('\n').map(l=>l.trim()).filter(l=>l.startsWith('|'));
+    if(lines.length < 2) return block;
+    // Detecta linha separadora (ex: |---|---|)
+    const sepIdx = lines.findIndex(l=>/^\|[-:| ]+\|$/.test(l));
+    if(sepIdx < 1) return block;
+    const headerLine = lines[sepIdx - 1];
+    const dataLines  = lines.slice(sepIdx + 1);
+    if(dataLines.length === 0) return block;
+    const parseCells = l => l.split('|').slice(1,-1).map(c=>`<td>${c.trim()}</td>`).join('');
+    const parseHeads = l => l.split('|').slice(1,-1).map(c=>`<th>${c.trim()}</th>`).join('');
+    const thead = `<thead><tr>${parseHeads(headerLine)}</tr></thead>`;
+    const tbody = `<tbody>${dataLines.map(l=>`<tr>${parseCells(l)}</tr>`).join('')}</tbody>`;
+    return `<div class="tbl-wrap"><table>${thead}${tbody}</table></div>`;
   });
+
   text=text.replace(/^### (.+)$/gm,'<h3>$1</h3>');
   text=text.replace(/^## (.+)$/gm,'<h2>$1</h2>');
   text=text.replace(/^# (.+)$/gm,'<h1>$1</h1>');

@@ -1980,6 +1980,14 @@ def filter_ia3(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
     dff = df.copy()
     hoje = datetime.now()
 
+    # ── Recência: "últimas vendas/compras/preços" → 15 registros mais recentes sem filtro de ano ──
+    tem_recencia = bool(re.search(
+        r'\b(último[s]?|ultima[s]?|mais\s+recente[s]?|recente[s]?|preço[s]?\s+atual|preco[s]?\s+atual|ultimo\s+pre[cç]o|última\s+compra|ultima\s+compra|últimas\s+compras|ultimas\s+compras|ultimas\s+vendas|últimas\s+vendas|ultima\s+venda|última\s+venda)\b',
+        pl
+    ))
+    if tem_recencia:
+        return _finalize_ia3(dff, pl, df, recencia=True)
+
     m_range = re.search(r'(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})\s+a[té]?\s+(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})', pl)
     if m_range:
         try:
@@ -2048,7 +2056,21 @@ def filter_ia3(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
 
     return _finalize_ia3(dff, pl, df)
 
-def _finalize_ia3(dff, pl, df_orig):
+def _finalize_ia3(dff, pl, df_orig, recencia=False):
+    # Filtro de cliente
+    m_c = re.search(r'(?:cliente[:\s]+|para\s+(?:o|a)\s+|do\s+cliente\s+)([a-záéíóúâêîôûãõç0-9\s]+)', pl)
+    if m_c and 'NOMECLIENTE' in dff.columns:
+        nc = re.split(r'\s+(?:em|de|no|na|\d{4})\b', m_c.group(1))[0].strip()
+        if len(nc) > 2:
+            mk = dff['NOMECLIENTE'].str.lower().str.contains(nc[:15], na=False)
+            if mk.sum() > 0: dff = dff[mk]
+    else:
+        # Busca livre por nome de cliente na pergunta (sem prefixo explícito)
+        if 'NOMECLIENTE' in dff.columns:
+            for nome in dff['NOMECLIENTE'].dropna().unique():
+                if len(nome) > 4 and nome.lower()[:8] in pl:
+                    dff = dff[dff['NOMECLIENTE'] == nome]; break
+
     if 'NOMEFILIAL' in dff.columns:
         for f in dff['NOMEFILIAL'].dropna().unique():
             if str(f).lower() in pl:
@@ -2057,12 +2079,6 @@ def _finalize_ia3(dff, pl, df_orig):
     if 'UF' in dff.columns:
         for p, uf in estados.items():
             if re.search(p, pl): dff = dff[dff['UF'].str.upper() == uf]; break
-    m_c = re.search(r'(?:cliente[:\s]+|para\s+(?:o|a)\s+|do\s+cliente\s+)([a-záéíóúâêîôûãõç0-9\s]+)', pl)
-    if m_c and 'NOMECLIENTE' in dff.columns:
-        nc = re.split(r'\s+(?:em|de|no|na|\d{4})\b', m_c.group(1))[0].strip()
-        if len(nc) > 2:
-            mk = dff['NOMECLIENTE'].str.lower().str.contains(nc[:15], na=False)
-            if mk.sum() > 0: dff = dff[mk]
     m_v = re.search(r'vendedor[:\s]+([a-záéíóúâêîôûãõç\s]+)', pl)
     if m_v and 'NOMEVENDEDOR' in dff.columns:
         nv = m_v.group(1).strip()[:20]
@@ -2073,6 +2089,11 @@ def _finalize_ia3(dff, pl, df_orig):
         np_ = m_p.group(1).strip()[:20]
         mk = dff['DESCRICAOPRODUTO'].str.lower().str.contains(np_, na=False)
         if mk.sum() > 0: dff = dff[mk]
+
+    # Recência: retorna os 15 registros mais recentes
+    if recencia and 'DATASAIDA' in dff.columns:
+        return dff.sort_values('DATASAIDA', ascending=False).head(15)
+
     if len(dff) > 1200: dff = dff.sample(n=1200, random_state=42)
     return dff
 
