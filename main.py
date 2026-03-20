@@ -440,7 +440,10 @@ def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None, df_orig: pd.D
     cols = ['NOME_FILIAL','DATA_MOVTO','NUM_DOCTO','COD_PRODUTO','DESC_PRODUTO','NOME_CLIENTE',
             'NOM_VENDEDOR','COD_VENDEDOR','QTDE_PRI','QTDE_AUX','VALOR_LIQUIDO','DESC_DIVISAO2','DESC_DIVISAO3','UF','CIDADE','CPF_CGC']
 
-    if any(x in pl for x in ['últimas vendas','ultimas vendas','ultima venda','última venda']):
+    if any(x in pl for x in ['últimas vendas','ultimas vendas','ultima venda','última venda',
+                               'últimos preços','ultimos precos','último preço','ultimo preco',
+                               'preço atual','preco atual','últimas compras','ultimas compras',
+                               'última compra','ultima compra']):
         dff = dff.sort_values('DATA_MOVTO', ascending=False).head(15)
         return dff[[c for c in cols if c in dff.columns]]
 
@@ -1573,13 +1576,21 @@ async def chat(req: ChatRequest):
                 or bool(re.search(r'\b202[0-9]\b', pl)))  # ano explícito: 2025, 2026...
 
     pergunta_para_filtro = ultima
-    if not tem_contexto_temporal(ultima):
+
+    # Termos de recência explícita — nunca herdar período do histórico
+    # "últimos preços", "última compra", "mais recente" → trazer dados mais atuais sem filtro de ano
+    tem_recencia = bool(re.search(
+        r'\b(último[s]?|ultima[s]?|mais\s+recente[s]?|recente[s]?|preço[s]?\s+atual|preco[s]?\s+atual|ultimo\s+pre[cç]o|última\s+compra|ultima\s+compra|últimas\s+compras|ultimas\s+compras)\b',
+        ultima.lower()
+    ))
+
+    if not tem_contexto_temporal(ultima) and not tem_recencia:
         # Varre histórico do mais recente para o mais antigo
         msgs_usuario = [m.content for m in reversed(req.messages) if m.role == "user"]
-        for msg_anterior in msgs_usuario[1:4]:  # pula a atual, olha até 3 anteriores
-            if tem_contexto_temporal(msg_anterior):
+        for msg_usuario_ant in msgs_usuario[1:4]:  # pula a atual, olha até 3 anteriores
+            if tem_contexto_temporal(msg_usuario_ant):
                 # Combina: período da mensagem anterior + filtros específicos da atual (CNPJ, cliente, etc.)
-                pergunta_para_filtro = msg_anterior + " " + ultima
+                pergunta_para_filtro = msg_usuario_ant + " " + ultima
                 break
 
     # ── Se a pergunta atual menciona "dessa nota" sem número, tenta extrair NR NOTA do histórico ──
