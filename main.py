@@ -444,7 +444,13 @@ def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None, df_orig: pd.D
                                'últimos preços','ultimos precos','último preço','ultimo preco',
                                'preço atual','preco atual','últimas compras','ultimas compras',
                                'última compra','ultima compra']):
-        dff = dff.sort_values('DATA_MOVTO', ascending=False).head(15)
+        dff = dff.sort_values('DATA_MOVTO', ascending=False)
+        if 'NUM_DOCTO' in dff.columns:
+            # Pega as últimas 5 notas distintas e traz TODOS os itens de cada uma
+            ultimas_notas = dff['NUM_DOCTO'].unique()[:5]
+            dff = dff[dff['NUM_DOCTO'].isin(ultimas_notas)]
+        else:
+            dff = dff.head(30)
         return dff[[c for c in cols if c in dff.columns]]
 
     # Filtro de vendedor — busca por palavras separadas (mais tolerante)
@@ -2090,9 +2096,15 @@ def _finalize_ia3(dff, pl, df_orig, recencia=False):
         mk = dff['DESCRICAOPRODUTO'].str.lower().str.contains(np_, na=False)
         if mk.sum() > 0: dff = dff[mk]
 
-    # Recência: retorna os 15 registros mais recentes
+    # Recência: retorna os itens das últimas 5 notas (todos os produtos de cada nota)
     if recencia and 'DATASAIDA' in dff.columns:
-        return dff.sort_values('DATASAIDA', ascending=False).head(15)
+        dff = dff.sort_values('DATASAIDA', ascending=False)
+        if 'NRNOTAFISCAL' in dff.columns:
+            ultimas_notas = dff['NRNOTAFISCAL'].unique()[:5]
+            dff = dff[dff['NRNOTAFISCAL'].isin(ultimas_notas)]
+        else:
+            dff = dff.head(30)
+        return dff
 
     if len(dff) > 1200: dff = dff.sample(n=1200, random_state=42)
     return dff
