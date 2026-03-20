@@ -1585,12 +1585,18 @@ async def chat(req: ChatRequest):
 
     pergunta_para_filtro = ultima
 
-    # Termos de recência explícita — nunca herdar período do histórico
-    # "últimos preços", "última compra", "mais recente" → trazer dados mais atuais sem filtro de ano
-    tem_recencia = bool(re.search(
-        r'\b(último[s]?|ultima[s]?|mais\s+recente[s]?|recente[s]?|preço[s]?\s+atual|preco[s]?\s+atual|ultimo\s+pre[cç]o|última\s+compra|ultima\s+compra|últimas\s+compras|ultimas\s+compras)\b',
-        ultima.lower()
-    ))
+    # Verifica recência na mensagem atual E no histórico recente de usuário/assistente
+    _RECENCIA_RE = r'\b(último[s]?|ultima[s]?|mais\s+recente[s]?|recente[s]?|preço[s]?\s+atual|preco[s]?\s+atual|ultimo\s+pre[cç]o|última\s+compra|ultima\s+compra|últimas\s+compras|ultimas\s+compras|ultimas\s+vendas|últimas\s+vendas|ultima\s+venda|última\s+venda)\b'
+    tem_recencia = bool(re.search(_RECENCIA_RE, ultima.lower()))
+
+    # Se a mensagem atual não tem recência, verifica se histórico recente tinha
+    # Ex: usuário digitou "últimas vendas de um cliente" → IAF perguntou "qual cliente?" → usuário respondeu "rca"
+    if not tem_recencia:
+        msgs_recentes_todas = [m.content for m in reversed(req.messages[:-1])][:4]
+        if any(re.search(_RECENCIA_RE, m.lower()) for m in msgs_recentes_todas):
+            tem_recencia = True
+            # Monta pergunta_para_filtro com o contexto de recência + nome do cliente atual
+            pergunta_para_filtro = f"últimas vendas {ultima}"
 
     if not tem_contexto_temporal(ultima) and not tem_recencia:
         # Varre histórico do mais recente para o mais antigo
