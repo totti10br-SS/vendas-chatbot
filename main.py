@@ -82,6 +82,23 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str, ctx: dict = None) -> pd.Dat
 
     hoje = datetime.now()
 
+    # ── Helpers de mês ──
+    MESES_MAP = {
+        'janeiro':1,'fevereiro':2,'março':3,'marco':3,'abril':4,'maio':5,
+        'junho':6,'julho':7,'agosto':8,'setembro':9,'outubro':10,'novembro':11,'dezembro':12,
+        'jan':1,'fev':2,'mar':3,'abr':4,'mai':5,'jun':6,
+        'jul':7,'ago':8,'set':9,'out':10,'nov':11,'dez':12
+    }
+    DIAS_SEMANA = {
+        'segunda':0,'segunda-feira':0,'seg':0,
+        'terça':1,'terca':1,'terça-feira':1,'ter':1,
+        'quarta':2,'quarta-feira':2,'qua':2,
+        'quinta':3,'quinta-feira':3,'qui':3,
+        'sexta':4,'sexta-feira':4,'sex':4,
+        'sábado':5,'sabado':5,'sab':5,
+        'domingo':6,'dom':6
+    }
+
     # ── Filtro por CNPJ raiz — roda PRIMEIRO, antes de qualquer filtro temporal ──
     # Detecta: "cnpj 73849952", "cnpj raiz 73849952", "cnpj: 73.849.952/0001-34"
     # Também detecta número isolado de 8+ dígitos quando contexto menciona "cnpj"
@@ -123,43 +140,79 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str, ctx: dict = None) -> pd.Dat
     anos = re.findall(r'\b(202[0-9])\b', pergunta)
     ano_ref = int(anos[0]) if anos else hoje.year
 
-    # ── Meses encontrados na pergunta (suporta intervalo: "novembro de 2025 a fevereiro de 2026") ──
-    meses_map = {'janeiro':1,'fevereiro':2,'março':3,'marco':3,'abril':4,'maio':5,
-                 'junho':6,'julho':7,'agosto':8,'setembro':9,'outubro':10,'novembro':11,'dezembro':12}
+    # ── Datas ISO: "2026-03-15" ou "2026/03/15" ──
+    m_iso = re.search(r'(202[0-9])[\-/](\d{1,2})[\-/](\d{1,2})', pl)
+    if m_iso:
+        try:
+            d_iso = datetime(int(m_iso.group(1)), int(m_iso.group(2)), int(m_iso.group(3)))
+            dff = dff[dff['DATA_MOVTO'].dt.date == d_iso.date()]
+            return _finalize_filter(dff, pl, ctx, df)
+        except: pass
 
+    # ── Intervalo de datas explícito: "de DD/MM/YYYY a DD/MM/YYYY" ──
+    m_range = re.search(r'(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})\s+a[té]?\s+(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})', pl)
+    if m_range:
+        try:
+            d1 = datetime(int(m_range.group(3)) if len(m_range.group(3))==4 else 2000+int(m_range.group(3)),
+                          int(m_range.group(2)), int(m_range.group(1)))
+            d2 = datetime(int(m_range.group(6)) if len(m_range.group(6))==4 else 2000+int(m_range.group(6)),
+                          int(m_range.group(5)), int(m_range.group(4)))
+            dff = dff[(dff['DATA_MOVTO'] >= d1) & (dff['DATA_MOVTO'] <= d2 + timedelta(days=1))]
+        except: pass
+        return _finalize_filter(dff, pl, ctx, df)
+
+    # ── Abreviações: "jan/26", "fev 2026", "mar/26" ──
+    m_abrev = re.search(r'\b(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[/\s]+(20\d{2}|\d{2})\b', pl)
+    if m_abrev:
+        mes_abrev = MESES_MAP.get(m_abrev.group(1), 0)
+        ano_abrev_str = m_abrev.group(2)
+        ano_abrev = int(ano_abrev_str) if len(ano_abrev_str) == 4 else 2000 + int(ano_abrev_str)
+        if mes_abrev:
+            dff = dff[(dff['DATA_MOVTO'].dt.month == mes_abrev) &
+                      (dff['DATA_MOVTO'].dt.year == ano_abrev)]
+            return _finalize_filter(dff, pl, ctx, df)
+
+    # ── Meses por extenso (suporta abreviações também) ──
     meses_encontrados = []
-    for nome, num in meses_map.items():
-        for m in re.finditer(nome, pl):
+    for nome, num in MESES_MAP.items():
+        for m in re.finditer(r'\b' + nome + r'\b', pl):
             trecho = pl[m.start():m.start()+30]
             ano_local = re.search(r'202[0-9]', trecho)
             ano_mes = int(ano_local.group()) if ano_local else None
             meses_encontrados.append((m.start(), num, ano_mes))
-    meses_encontrados.sort(key=lambda x: x[0])
+    # Remove duplicatas mantendo o primeiro de cada posição
+    seen = set()
+    meses_uniq = []
+    for pos, num, ano in sorted(meses_encontrados, key=lambda x: x[0]):
+        if num not in seen:
+            seen.add(num)
+            meses_uniq.append((pos, num, ano))
 
-    if len(meses_encontrados) >= 2:
-        # Intervalo entre dois meses (ex: "novembro/2025 a fevereiro/2026")
-        _, mes_ini, ano_ini = meses_encontrados[0]
-        _, mes_fim, ano_fim = meses_encontrados[-1]
+    if len(meses_uniq) >= 2:
+        _, mes_ini, ano_ini = meses_uniq[0]
+        _, mes_fim, ano_fim = meses_uniq[-1]
         ano_ini = ano_ini or (int(anos[0]) if anos else hoje.year)
         ano_fim = ano_fim or (int(anos[-1]) if len(anos) > 1 else ano_ini)
         d1 = pd.Timestamp(ano_ini, mes_ini, 1)
         d2 = pd.Timestamp(ano_fim, mes_fim + 1, 1) - timedelta(days=1) if mes_fim < 12 else pd.Timestamp(ano_fim + 1, 1, 1) - timedelta(days=1)
         dff = dff[(dff['DATA_MOVTO'] >= d1) & (dff['DATA_MOVTO'] <= d2)]
         return _finalize_filter(dff, pl, ctx, df)
-
-    elif len(meses_encontrados) == 1:
-        _, mes_encontrado, ano_mes = meses_encontrados[0]
+    elif len(meses_uniq) == 1:
+        _, mes_encontrado, ano_mes = meses_uniq[0]
         ano_usar = ano_mes or ano_ref
         dff = dff[(dff['DATA_MOVTO'].dt.month == mes_encontrado) &
                   (dff['DATA_MOVTO'].dt.year == ano_usar)]
         return _finalize_filter(dff, pl, ctx, df)
 
-    # ── Trimestre ──
-    if 'trimestre' in pl or '1º tri' in pl or 'primeiro trimestre' in pl:
-        tri = 1
-        if '2º tri' in pl or 'segundo trimestre' in pl: tri = 2
+    # ── Trimestre (Q1/Q2/Q3/Q4 também) ──
+    m_qtri = re.search(r'\bq([1-4])\b', pl)
+    if m_qtri or 'trimestre' in pl or '1º tri' in pl or 'primeiro trimestre' in pl:
+        if m_qtri:
+            tri = int(m_qtri.group(1))
+        elif '2º tri' in pl or 'segundo trimestre' in pl: tri = 2
         elif '3º tri' in pl or 'terceiro trimestre' in pl: tri = 3
         elif '4º tri' in pl or 'quarto trimestre' in pl: tri = 4
+        else: tri = 1
         mes_ini = (tri - 1) * 3 + 1
         mes_fim = mes_ini + 2
         dff = dff[(dff['DATA_MOVTO'].dt.month >= mes_ini) &
@@ -175,13 +228,123 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str, ctx: dict = None) -> pd.Dat
             dff = dff[(dff['DATA_MOVTO'].dt.month >= 7) & (dff['DATA_MOVTO'].dt.year == ano_ref)]
         return _finalize_filter(dff, pl, ctx, df)
 
+    # ── Quinzena ──
+    if 'quinzena' in pl:
+        mes_q = hoje.month
+        ano_q = hoje.year
+        # Tenta detectar mês/ano junto com quinzena
+        for nome, num in MESES_MAP.items():
+            if nome in pl:
+                mes_q = num
+                break
+        if anos: ano_q = int(anos[0])
+        if 'segunda quinzena' in pl or '2ª quinzena' in pl or '2a quinzena' in pl:
+            d1 = pd.Timestamp(ano_q, mes_q, 16)
+            d2 = pd.Timestamp(ano_q, mes_q + 1, 1) - timedelta(days=1) if mes_q < 12 else pd.Timestamp(ano_q + 1, 1, 1) - timedelta(days=1)
+        else:  # primeira quinzena (default)
+            d1 = pd.Timestamp(ano_q, mes_q, 1)
+            d2 = pd.Timestamp(ano_q, mes_q, 15)
+        dff = dff[(dff['DATA_MOVTO'] >= d1) & (dff['DATA_MOVTO'] <= d2)]
+        return _finalize_filter(dff, pl, ctx, df)
+
     # ── Ano inteiro ──
-    if 'ano' in pl and anos:
+    if re.search(r'\bano\b', pl) and anos:
         dff = dff[dff['DATA_MOVTO'].dt.year == ano_ref]
         return _finalize_filter(dff, pl, ctx, df)
 
+    # ── Ano passado / ano anterior ──
+    if any(x in pl for x in ['ano passado','ano anterior','ano retrasado']):
+        ano_alvo = hoje.year - (2 if 'retrasado' in pl else 1)
+        dff = dff[dff['DATA_MOVTO'].dt.year == ano_alvo]
+        return _finalize_filter(dff, pl, ctx, df)
+
+    # ── Ano atual ──
+    if any(x in pl for x in ['ano atual','este ano','esse ano']):
+        dff = dff[dff['DATA_MOVTO'].dt.year == hoje.year]
+        return _finalize_filter(dff, pl, ctx, df)
+
+    # ── Âncoras abertas: "desde X" / "a partir de X" ──
+    m_desde = re.search(r'(?:desde|a partir d[eo]|apartir d[eo])\s+(?:(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})|(\w+)(?:\s+de\s+(202[0-9]))?)', pl)
+    if m_desde:
+        try:
+            if m_desde.group(1):  # data DD/MM/YYYY
+                d_ini = datetime(int(m_desde.group(3)) if len(m_desde.group(3))==4 else 2000+int(m_desde.group(3)),
+                                 int(m_desde.group(2)), int(m_desde.group(1)))
+            else:  # mês por extenso
+                nome_mes = m_desde.group(4)
+                mes_d = MESES_MAP.get(nome_mes, 0)
+                ano_d = int(m_desde.group(5)) if m_desde.group(5) else ano_ref
+                d_ini = datetime(ano_d, mes_d, 1) if mes_d else datetime(hoje.year, 1, 1)
+            dff = dff[dff['DATA_MOVTO'] >= pd.Timestamp(d_ini)]
+            return _finalize_filter(dff, pl, ctx, df)
+        except: pass
+
+    # ── Âncoras fechadas: "até X" ──
+    m_ate = re.search(r'(?:até|ate)\s+(?:(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})|(\w+)(?:\s+de\s+(202[0-9]))?)', pl)
+    if m_ate and 'até hoje' not in pl and 'ate hoje' not in pl:
+        try:
+            if m_ate.group(1):
+                d_fim = datetime(int(m_ate.group(3)) if len(m_ate.group(3))==4 else 2000+int(m_ate.group(3)),
+                                 int(m_ate.group(2)), int(m_ate.group(1)))
+            else:
+                nome_mes = m_ate.group(4)
+                mes_a = MESES_MAP.get(nome_mes, 0)
+                ano_a = int(m_ate.group(5)) if m_ate.group(5) else ano_ref
+                if mes_a:
+                    d_fim = pd.Timestamp(ano_a, mes_a + 1, 1) - timedelta(days=1) if mes_a < 12 else pd.Timestamp(ano_a + 1, 1, 1) - timedelta(days=1)
+                    d_fim = d_fim.to_pydatetime()
+                else:
+                    d_fim = hoje
+            dff = dff[dff['DATA_MOVTO'] <= pd.Timestamp(d_fim)]
+            return _finalize_filter(dff, pl, ctx, df)
+        except: pass
+
+    # ── Início do ano / fim do ano ──
+    if any(x in pl for x in ['início do ano','inicio do ano','começo do ano']):
+        dff = dff[(dff['DATA_MOVTO'] >= pd.Timestamp(hoje.year, 1, 1)) &
+                  (dff['DATA_MOVTO'] <= pd.Timestamp(hoje.date()))]
+        return _finalize_filter(dff, pl, ctx, df)
+
+    # ── Dia específico: "dia 15", "dia 15 de março" ──
+    m_dia = re.search(r'\bdia\s+(\d{1,2})\b', pl)
+    if m_dia:
+        dia_num = int(m_dia.group(1))
+        if len(meses_uniq) == 1:
+            _, mes_d, ano_d = meses_uniq[0]
+            ano_usar = ano_d or ano_ref
+            try:
+                d_exato = datetime(ano_usar, mes_d, dia_num)
+                dff = dff[dff['DATA_MOVTO'].dt.date == d_exato.date()]
+                return _finalize_filter(dff, pl, ctx, df)
+            except: pass
+        else:
+            # Sem mês explícito — usa mês atual
+            try:
+                d_exato = datetime(hoje.year, hoje.month, dia_num)
+                dff = dff[dff['DATA_MOVTO'].dt.date == d_exato.date()]
+                return _finalize_filter(dff, pl, ctx, df)
+            except: pass
+
+    # ── Dia da semana: "vendas de segunda", "sextas-feiras" ──
+    for dia_nome, dia_num in DIAS_SEMANA.items():
+        if re.search(r'\b' + dia_nome + r'\b', pl):
+            dff = dff[dff['DATA_MOVTO'].dt.dayofweek == dia_num]
+            # Aplica também filtro de período se houver mês/ano
+            if anos:
+                dff = dff[dff['DATA_MOVTO'].dt.year == ano_ref]
+            return _finalize_filter(dff, pl, ctx, df)
+
+    # ── Dias úteis / fim de semana ──
+    if any(x in pl for x in ['dias úteis','dias uteis','dia útil','dia util']):
+        dff = dff[dff['DATA_MOVTO'].dt.dayofweek < 5]
+        if anos: dff = dff[dff['DATA_MOVTO'].dt.year == ano_ref]
+        return _finalize_filter(dff, pl, ctx, df)
+    if any(x in pl for x in ['fim de semana','fins de semana','fds','final de semana']):
+        dff = dff[dff['DATA_MOVTO'].dt.dayofweek >= 5]
+        if anos: dff = dff[dff['DATA_MOVTO'].dt.year == ano_ref]
+        return _finalize_filter(dff, pl, ctx, df)
+
     # ── Relativos ──
-    # "mês passado" / "mes passado" → mês anterior completo
     if any(x in pl for x in ['mês passado','mes passado','mês anterior','mes anterior']):
         primeiro_dia_mes_atual = hoje.replace(day=1)
         ultimo_dia_mes_passado = primeiro_dia_mes_atual - timedelta(days=1)
@@ -215,10 +378,9 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str, ctx: dict = None) -> pd.Dat
         if len(dff_ontem) > 0:
             dff = dff_ontem
         else:
-            # Não há dados de ontem — usa o penúltimo dia com dados disponíveis
             dias_disp = sorted(dff['DATA_MOVTO'].dt.date.unique(), reverse=True)
             if len(dias_disp) >= 2:
-                dia_ant = dias_disp[1]  # penúltimo dia (o último é o dia de referência)
+                dia_ant = dias_disp[1]
             elif len(dias_disp) == 1:
                 dia_ant = dias_disp[0]
             else:
@@ -232,13 +394,14 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str, ctx: dict = None) -> pd.Dat
         dff = dff[dff['DATA_MOVTO'] >= hoje - timedelta(days=30)]
 
     else:
-        # ── "últimos N meses/dias/semanas" com regex ──
-        m_rel = re.search(r'[uú]ltimos?\s+(\d+)\s+(m[eê]s(?:es)?|dia[s]?|semana[s]?)', pl)
+        # ── "últimos N meses/dias/semanas/anos" ──
+        m_rel = re.search(r'[uú]ltimos?\s+(\d+)\s+(m[eê]s(?:es)?|dia[s]?|semana[s]?|ano[s]?)', pl)
         if m_rel:
             n = int(m_rel.group(1))
             unidade = m_rel.group(2)
-            if 'm' in unidade:  # meses
-                # Volta N meses a partir do primeiro dia do mês atual
+            if 'ano' in unidade:
+                dff = dff[dff['DATA_MOVTO'] >= hoje - timedelta(days=365*n)]
+            elif 'm' in unidade:
                 primeiro_mes_atual = hoje.replace(day=1)
                 mes = primeiro_mes_atual.month - n
                 ano = primeiro_mes_atual.year + (mes - 1) // 12
@@ -247,11 +410,9 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str, ctx: dict = None) -> pd.Dat
                 dff = dff[dff['DATA_MOVTO'] >= d_ini]
             elif 'semana' in unidade:
                 dff = dff[dff['DATA_MOVTO'] >= hoje - timedelta(weeks=n)]
-            else:  # dias
+            else:
                 dff = dff[dff['DATA_MOVTO'] >= hoje - timedelta(days=n)]
         elif anos:
-            # Fallback: ano explicito sem outro filtro temporal
-            # Ex: 'vendedor FABIO POLI em 2025', 'clientes de 2025'
             dff = dff[dff['DATA_MOVTO'].dt.year == int(anos[0])]
 
     return _finalize_filter(dff, pl, ctx, df)
@@ -440,20 +601,9 @@ def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None, df_orig: pd.D
     cols = ['NOME_FILIAL','DATA_MOVTO','NUM_DOCTO','COD_PRODUTO','DESC_PRODUTO','NOME_CLIENTE',
             'NOM_VENDEDOR','COD_VENDEDOR','QTDE_PRI','QTDE_AUX','VALOR_LIQUIDO','DESC_DIVISAO2','DESC_DIVISAO3','UF','CIDADE','CPF_CGC']
 
-    if any(x in pl for x in ['últimas vendas','ultimas vendas','ultima venda','última venda',
-                               'últimos preços','ultimos precos','último preço','ultimo preco',
-                               'preço atual','preco atual','últimas compras','ultimas compras',
-                               'última compra','ultima compra']):
-        # Só aplica recência se já tem cliente filtrado (1 único cliente no dff)
-        clientes_no_dff = dff['NOME_CLIENTE'].nunique() if 'NOME_CLIENTE' in dff.columns else 999
-        if clientes_no_dff == 1:
-            dff = dff.sort_values('DATA_MOVTO', ascending=False)
-            if 'NUM_DOCTO' in dff.columns:
-                ultimas_notas = dff['NUM_DOCTO'].unique()[:5]
-                dff = dff[dff['NUM_DOCTO'].isin(ultimas_notas)]
-            else:
-                dff = dff.head(30)
-            return dff[[c for c in cols if c in dff.columns]]
+    if any(x in pl for x in ['últimas vendas','ultimas vendas','ultima venda','última venda']):
+        dff = dff.sort_values('DATA_MOVTO', ascending=False).head(15)
+        return dff[[c for c in cols if c in dff.columns]]
 
     # Filtro de vendedor — busca por palavras separadas (mais tolerante)
     m = re.search(r'vendedor[:\s]+([a-záéíóúâêîôûãõç\s]+)', pl)
@@ -1584,27 +1734,13 @@ async def chat(req: ChatRequest):
                 or bool(re.search(r'\b202[0-9]\b', pl)))  # ano explícito: 2025, 2026...
 
     pergunta_para_filtro = ultima
-
-    # Verifica recência na mensagem atual E no histórico recente de usuário/assistente
-    _RECENCIA_RE = r'\b(último[s]?|ultima[s]?|mais\s+recente[s]?|recente[s]?|preço[s]?\s+atual|preco[s]?\s+atual|ultimo\s+pre[cç]o|última\s+compra|ultima\s+compra|últimas\s+compras|ultimas\s+compras|ultimas\s+vendas|últimas\s+vendas|ultima\s+venda|última\s+venda)\b'
-    tem_recencia = bool(re.search(_RECENCIA_RE, ultima.lower()))
-
-    # Se a mensagem atual não tem recência, verifica se histórico recente tinha
-    # Ex: usuário digitou "últimas vendas de um cliente" → IAF perguntou "qual cliente?" → usuário respondeu "rca"
-    if not tem_recencia:
-        msgs_recentes_todas = [m.content for m in reversed(req.messages[:-1])][:4]
-        if any(re.search(_RECENCIA_RE, m.lower()) for m in msgs_recentes_todas):
-            tem_recencia = True
-            # Monta pergunta_para_filtro com o contexto de recência + nome do cliente atual
-            pergunta_para_filtro = f"últimas vendas {ultima}"
-
-    if not tem_contexto_temporal(ultima) and not tem_recencia:
+    if not tem_contexto_temporal(ultima):
         # Varre histórico do mais recente para o mais antigo
         msgs_usuario = [m.content for m in reversed(req.messages) if m.role == "user"]
-        for msg_usuario_ant in msgs_usuario[1:4]:  # pula a atual, olha até 3 anteriores
-            if tem_contexto_temporal(msg_usuario_ant):
+        for msg_anterior in msgs_usuario[1:4]:  # pula a atual, olha até 3 anteriores
+            if tem_contexto_temporal(msg_anterior):
                 # Combina: período da mensagem anterior + filtros específicos da atual (CNPJ, cliente, etc.)
-                pergunta_para_filtro = msg_usuario_ant + " " + ultima
+                pergunta_para_filtro = msg_anterior + " " + ultima
                 break
 
     # ── Se a pergunta atual menciona "dessa nota" sem número, tenta extrair NR NOTA do histórico ──
@@ -1994,102 +2130,178 @@ def filter_ia3(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
     dff = df.copy()
     hoje = datetime.now()
 
-    # ── Recência: "últimas vendas/compras/preços" → só ativa se cliente já identificado ──
-    tem_recencia = bool(re.search(
-        r'\b(último[s]?|ultima[s]?|mais\s+recente[s]?|recente[s]?|preço[s]?\s+atual|preco[s]?\s+atual|ultimo\s+pre[cç]o|última\s+compra|ultima\s+compra|últimas\s+compras|ultimas\s+compras|ultimas\s+vendas|últimas\s+vendas|ultima\s+venda|última\s+venda)\b',
-        pl
-    ))
-    if tem_recencia:
-        # Aplica filtro de cliente primeiro
-        dff_cli = _finalize_ia3(dff, pl, df, recencia=False)
-        clientes = dff_cli['NOMECLIENTE'].nunique() if 'NOMECLIENTE' in dff_cli.columns else 999
-        if clientes == 1:
-            return _finalize_ia3(dff_cli, pl, df, recencia=True)
-        # Sem cliente identificado — processa normalmente sem recência
+    anos = re.findall(r'\b(202[0-9])\b', pergunta)
+    ano_ref = int(anos[0]) if anos else hoje.year
 
+    MESES_IA3 = {
+        'janeiro':1,'fevereiro':2,'março':3,'marco':3,'abril':4,'maio':5,
+        'junho':6,'julho':7,'agosto':8,'setembro':9,'outubro':10,'novembro':11,'dezembro':12,
+        'jan':1,'fev':2,'mar':3,'abr':4,'mai':5,'jun':6,
+        'jul':7,'ago':8,'set':9,'out':10,'nov':11,'dez':12
+    }
+    DIAS_IA3 = {
+        'segunda':0,'segunda-feira':0,'seg':0,'terça':1,'terca':1,'terça-feira':1,'ter':1,
+        'quarta':2,'quarta-feira':2,'qua':2,'quinta':3,'quinta-feira':3,'qui':3,
+        'sexta':4,'sexta-feira':4,'sex':4,'sábado':5,'sabado':5,'sab':5,'domingo':6,'dom':6
+    }
+
+    # Data ISO
+    m_iso = re.search(r'(202[0-9])[\-/](\d{1,2})[\-/](\d{1,2})', pl)
+    if m_iso:
+        try:
+            d = datetime(int(m_iso.group(1)), int(m_iso.group(2)), int(m_iso.group(3)))
+            return _finalize_ia3(dff[dff['DATASAIDA'].dt.date == d.date()], pl, df)
+        except: pass
+
+    # Intervalo explícito
     m_range = re.search(r'(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})\s+a[té]?\s+(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})', pl)
     if m_range:
         try:
             d1 = datetime(int(m_range.group(3)) if len(m_range.group(3))==4 else 2000+int(m_range.group(3)), int(m_range.group(2)), int(m_range.group(1)))
             d2 = datetime(int(m_range.group(6)) if len(m_range.group(6))==4 else 2000+int(m_range.group(6)), int(m_range.group(5)), int(m_range.group(4)))
-            return dff[(dff['DATASAIDA'] >= d1) & (dff['DATASAIDA'] <= d2 + timedelta(days=1))]
+            return _finalize_ia3(dff[(dff['DATASAIDA'] >= d1) & (dff['DATASAIDA'] <= d2 + timedelta(days=1))], pl, df)
         except: pass
 
-    anos = re.findall(r'\b(202[0-9])\b', pergunta)
-    ano_ref = int(anos[0]) if anos else hoje.year
+    # Abreviações: jan/26
+    m_abrev = re.search(r'\b(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[/\s]+(20\d{2}|\d{2})\b', pl)
+    if m_abrev:
+        ma = MESES_IA3.get(m_abrev.group(1), 0)
+        aa = int(m_abrev.group(2)) if len(m_abrev.group(2))==4 else 2000+int(m_abrev.group(2))
+        if ma:
+            return _finalize_ia3(dff[(dff['DATASAIDA'].dt.month==ma)&(dff['DATASAIDA'].dt.year==aa)], pl, df)
 
-    meses_map = {'janeiro':1,'fevereiro':2,'março':3,'marco':3,'abril':4,'maio':5,'junho':6,
-                 'julho':7,'agosto':8,'setembro':9,'outubro':10,'novembro':11,'dezembro':12}
+    # Meses por extenso
     meses_enc = []
-    for nome, num in meses_map.items():
-        for m in re.finditer(nome, pl):
+    for nome, num in MESES_IA3.items():
+        for m in re.finditer(r'\b'+nome+r'\b', pl):
             trecho = pl[m.start():m.start()+30]
             al = re.search(r'202[0-9]', trecho)
             meses_enc.append((m.start(), num, int(al.group()) if al else None))
-    meses_enc.sort(key=lambda x: x[0])
+    seen = set(); mu = []
+    for pos, num, ano in sorted(meses_enc, key=lambda x: x[0]):
+        if num not in seen: seen.add(num); mu.append((pos, num, ano))
 
-    if len(meses_enc) >= 2:
-        _, mi, ai = meses_enc[0]; _, mf, af = meses_enc[-1]
+    if len(mu) >= 2:
+        _, mi, ai = mu[0]; _, mf, af = mu[-1]
         ai = ai or ano_ref; af = af or ano_ref
         d1 = pd.Timestamp(ai, mi, 1)
-        d2 = pd.Timestamp(af, mf+1, 1) - timedelta(days=1) if mf < 12 else pd.Timestamp(af+1, 1, 1) - timedelta(days=1)
-        return dff[(dff['DATASAIDA'] >= d1) & (dff['DATASAIDA'] <= d2)]
-    elif len(meses_enc) == 1:
-        _, mes, ames = meses_enc[0]
-        dff = dff[(dff['DATASAIDA'].dt.month == mes) & (dff['DATASAIDA'].dt.year == (ames or ano_ref))]
-        return _finalize_ia3(dff, pl, df)
+        d2 = pd.Timestamp(af, mf+1, 1)-timedelta(days=1) if mf<12 else pd.Timestamp(af+1,1,1)-timedelta(days=1)
+        return _finalize_ia3(dff[(dff['DATASAIDA']>=d1)&(dff['DATASAIDA']<=d2)], pl, df)
+    elif len(mu) == 1:
+        _, mes, ames = mu[0]
+        return _finalize_ia3(dff[(dff['DATASAIDA'].dt.month==mes)&(dff['DATASAIDA'].dt.year==(ames or ano_ref))], pl, df)
 
-    if 'trimestre' in pl:
-        tri = 1
-        if '2º tri' in pl or 'segundo trimestre' in pl: tri = 2
-        elif '3º tri' in pl or 'terceiro trimestre' in pl: tri = 3
-        elif '4º tri' in pl or 'quarto trimestre' in pl: tri = 4
+    # Trimestre / Q1-Q4
+    m_qtri = re.search(r'\bq([1-4])\b', pl)
+    if m_qtri or 'trimestre' in pl:
+        tri = int(m_qtri.group(1)) if m_qtri else (2 if '2º tri' in pl or 'segundo' in pl else 3 if '3º tri' in pl or 'terceiro' in pl else 4 if '4º tri' in pl or 'quarto' in pl else 1)
         mi = (tri-1)*3+1
-        dff = dff[(dff['DATASAIDA'].dt.month >= mi) & (dff['DATASAIDA'].dt.month <= mi+2) & (dff['DATASAIDA'].dt.year == ano_ref)]
-    elif any(x in pl for x in ['mês passado','mes passado','mês anterior','mes anterior']):
-        p = hoje.replace(day=1); ump = p - timedelta(days=1); pmp = ump.replace(day=1)
-        dff = dff[(dff['DATASAIDA'] >= pd.Timestamp(pmp)) & (dff['DATASAIDA'] <= pd.Timestamp(ump))]
+        return _finalize_ia3(dff[(dff['DATASAIDA'].dt.month>=mi)&(dff['DATASAIDA'].dt.month<=mi+2)&(dff['DATASAIDA'].dt.year==ano_ref)], pl, df)
+
+    # Semestre
+    if 'semestre' in pl:
+        if '1º sem' in pl or 'primeiro semestre' in pl:
+            return _finalize_ia3(dff[(dff['DATASAIDA'].dt.month<=6)&(dff['DATASAIDA'].dt.year==ano_ref)], pl, df)
+        return _finalize_ia3(dff[(dff['DATASAIDA'].dt.month>=7)&(dff['DATASAIDA'].dt.year==ano_ref)], pl, df)
+
+    # Quinzena
+    if 'quinzena' in pl:
+        mq = hoje.month; aq = int(anos[0]) if anos else hoje.year
+        for nome, num in MESES_IA3.items():
+            if nome in pl: mq = num; break
+        if 'segunda quinzena' in pl or '2ª quinzena' in pl:
+            d1 = pd.Timestamp(aq,mq,16); d2 = pd.Timestamp(aq,mq+1,1)-timedelta(days=1) if mq<12 else pd.Timestamp(aq+1,1,1)-timedelta(days=1)
+        else:
+            d1 = pd.Timestamp(aq,mq,1); d2 = pd.Timestamp(aq,mq,15)
+        return _finalize_ia3(dff[(dff['DATASAIDA']>=d1)&(dff['DATASAIDA']<=d2)], pl, df)
+
+    # Ano passado / atual
+    if any(x in pl for x in ['ano passado','ano anterior']):
+        return _finalize_ia3(dff[dff['DATASAIDA'].dt.year==hoje.year-1], pl, df)
+    if any(x in pl for x in ['ano atual','este ano','esse ano']):
+        return _finalize_ia3(dff[dff['DATASAIDA'].dt.year==hoje.year], pl, df)
+    if re.search(r'\bano\b', pl) and anos:
+        return _finalize_ia3(dff[dff['DATASAIDA'].dt.year==ano_ref], pl, df)
+
+    # Âncora "desde X"
+    m_desde = re.search(r'(?:desde|a partir d[eo])\s+(?:(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})|(\w+)(?:\s+de\s+(202[0-9]))?)', pl)
+    if m_desde:
+        try:
+            if m_desde.group(1):
+                d_ini = datetime(int(m_desde.group(3)) if len(m_desde.group(3))==4 else 2000+int(m_desde.group(3)), int(m_desde.group(2)), int(m_desde.group(1)))
+            else:
+                md = MESES_IA3.get(m_desde.group(4),0); ad = int(m_desde.group(5)) if m_desde.group(5) else ano_ref
+                d_ini = datetime(ad, md, 1) if md else datetime(hoje.year, 1, 1)
+            return _finalize_ia3(dff[dff['DATASAIDA']>=pd.Timestamp(d_ini)], pl, df)
+        except: pass
+
+    # Início do ano
+    if any(x in pl for x in ['início do ano','inicio do ano','começo do ano']):
+        return _finalize_ia3(dff[dff['DATASAIDA']>=pd.Timestamp(hoje.year,1,1)], pl, df)
+
+    # Dia específico
+    m_dia = re.search(r'\bdia\s+(\d{1,2})\b', pl)
+    if m_dia:
+        try:
+            d = datetime(hoje.year, hoje.month, int(m_dia.group(1)))
+            return _finalize_ia3(dff[dff['DATASAIDA'].dt.date==d.date()], pl, df)
+        except: pass
+
+    # Dia da semana
+    for dn, dnum in DIAS_IA3.items():
+        if re.search(r'\b'+dn+r'\b', pl):
+            dff2 = dff[dff['DATASAIDA'].dt.dayofweek==dnum]
+            if anos: dff2 = dff2[dff2['DATASAIDA'].dt.year==ano_ref]
+            return _finalize_ia3(dff2, pl, df)
+
+    # Dias úteis / fim de semana
+    if any(x in pl for x in ['dias úteis','dias uteis']):
+        dff2 = dff[dff['DATASAIDA'].dt.dayofweek<5]
+        if anos: dff2 = dff2[dff2['DATASAIDA'].dt.year==ano_ref]
+        return _finalize_ia3(dff2, pl, df)
+    if any(x in pl for x in ['fim de semana','fds','fins de semana']):
+        dff2 = dff[dff['DATASAIDA'].dt.dayofweek>=5]
+        if anos: dff2 = dff2[dff2['DATASAIDA'].dt.year==ano_ref]
+        return _finalize_ia3(dff2, pl, df)
+
+    # Relativos
+    if any(x in pl for x in ['mês passado','mes passado','mês anterior','mes anterior']):
+        p = hoje.replace(day=1); ump = p-timedelta(days=1); pmp = ump.replace(day=1)
+        dff = dff[(dff['DATASAIDA']>=pd.Timestamp(pmp))&(dff['DATASAIDA']<=pd.Timestamp(ump))]
     elif any(x in pl for x in ['este mês','esse mês','este mes','esse mes','mês atual','mes atual']):
-        dff = dff[dff['DATASAIDA'] >= pd.Timestamp(hoje.replace(day=1))]
-    elif any(x in pl for x in ['esta semana','essa semana']):
-        dff = dff[dff['DATASAIDA'] >= pd.Timestamp(hoje - timedelta(days=hoje.weekday()))]
+        dff = dff[dff['DATASAIDA']>=pd.Timestamp(hoje.replace(day=1))]
+    elif any(x in pl for x in ['semana passada','semana anterior']):
+        ds=hoje.weekday(); ul_seg=hoje-timedelta(days=ds+7); ul_dom=ul_seg+timedelta(days=6)
+        dff = dff[(dff['DATASAIDA']>=pd.Timestamp(ul_seg))&(dff['DATASAIDA']<=pd.Timestamp(ul_dom)+timedelta(days=1))]
+    elif any(x in pl for x in ['esta semana','essa semana','semana atual']):
+        dff = dff[dff['DATASAIDA']>=pd.Timestamp(hoje-timedelta(days=hoje.weekday()))]
+    elif any(x in pl for x in ['última semana','ultima semana','ultimos 7 dias']):
+        dff = dff[dff['DATASAIDA']>=hoje-timedelta(days=7)]
     elif 'ontem' in pl:
-        dia = hoje - timedelta(days=1)
-        d_ontem = dff[(dff['DATASAIDA'] >= pd.Timestamp(dia.date())) & (dff['DATASAIDA'] < pd.Timestamp(hoje.date()))]
-        dff = d_ontem if len(d_ontem) > 0 else dff
+        dia = hoje-timedelta(days=1)
+        d_on = dff[(dff['DATASAIDA']>=pd.Timestamp(dia.date()))&(dff['DATASAIDA']<pd.Timestamp(hoje.date()))]
+        dff = d_on if len(d_on)>0 else dff[dff['DATASAIDA'].dt.date==dff['DATASAIDA'].dropna().dt.date.max()]
     elif 'hoje' in pl:
-        dff = dff[dff['DATASAIDA'] >= pd.Timestamp(hoje.date())]
-    elif any(x in pl for x in ['último mês','ultimo mes','ultimos 30']):
-        dff = dff[dff['DATASAIDA'] >= hoje - timedelta(days=30)]
+        d_hj = dff[dff['DATASAIDA']>=pd.Timestamp(hoje.date())]
+        dff = d_hj if len(d_hj)>0 else dff[dff['DATASAIDA'].dt.date==dff['DATASAIDA'].dropna().dt.date.max()]
+    elif any(x in pl for x in ['último mês','ultimo mes','ultimos 30','últimos 30']):
+        dff = dff[dff['DATASAIDA']>=hoje-timedelta(days=30)]
     else:
-        m_rel = re.search(r'[uú]ltimos?\s+(\d+)\s+(m[eê]s(?:es)?|dia[s]?|semana[s]?)', pl)
+        m_rel = re.search(r'[uú]ltimos?\s+(\d+)\s+(m[eê]s(?:es)?|dia[s]?|semana[s]?|ano[s]?)', pl)
         if m_rel:
-            n = int(m_rel.group(1)); u = m_rel.group(2)
-            if 'm' in u:
-                p = hoje.replace(day=1); mes = p.month - n; ano = p.year + (mes-1)//12; mes = ((mes-1)%12)+1
-                dff = dff[dff['DATASAIDA'] >= pd.Timestamp(ano, mes, 1)]
-            elif 'semana' in u: dff = dff[dff['DATASAIDA'] >= hoje - timedelta(weeks=n)]
-            else: dff = dff[dff['DATASAIDA'] >= hoje - timedelta(days=n)]
+            n=int(m_rel.group(1)); u=m_rel.group(2)
+            if 'ano' in u: dff=dff[dff['DATASAIDA']>=hoje-timedelta(days=365*n)]
+            elif 'm' in u:
+                p=hoje.replace(day=1); mes=p.month-n; ano=p.year+(mes-1)//12; mes=((mes-1)%12)+1
+                dff=dff[dff['DATASAIDA']>=pd.Timestamp(ano,mes,1)]
+            elif 'semana' in u: dff=dff[dff['DATASAIDA']>=hoje-timedelta(weeks=n)]
+            else: dff=dff[dff['DATASAIDA']>=hoje-timedelta(days=n)]
         elif anos:
-            dff = dff[dff['DATASAIDA'].dt.year == int(anos[0])]
+            dff=dff[dff['DATASAIDA'].dt.year==int(anos[0])]
 
     return _finalize_ia3(dff, pl, df)
 
-def _finalize_ia3(dff, pl, df_orig, recencia=False):
-    # Filtro de cliente
-    m_c = re.search(r'(?:cliente[:\s]+|para\s+(?:o|a)\s+|do\s+cliente\s+)([a-záéíóúâêîôûãõç0-9\s]+)', pl)
-    if m_c and 'NOMECLIENTE' in dff.columns:
-        nc = re.split(r'\s+(?:em|de|no|na|\d{4})\b', m_c.group(1))[0].strip()
-        if len(nc) > 2:
-            mk = dff['NOMECLIENTE'].str.lower().str.contains(nc[:15], na=False)
-            if mk.sum() > 0: dff = dff[mk]
-    else:
-        # Busca livre por nome de cliente na pergunta (sem prefixo explícito)
-        if 'NOMECLIENTE' in dff.columns:
-            for nome in dff['NOMECLIENTE'].dropna().unique():
-                if len(nome) > 4 and nome.lower()[:8] in pl:
-                    dff = dff[dff['NOMECLIENTE'] == nome]; break
-
+def _finalize_ia3(dff, pl, df_orig):
     if 'NOMEFILIAL' in dff.columns:
         for f in dff['NOMEFILIAL'].dropna().unique():
             if str(f).lower() in pl:
@@ -2098,6 +2310,12 @@ def _finalize_ia3(dff, pl, df_orig, recencia=False):
     if 'UF' in dff.columns:
         for p, uf in estados.items():
             if re.search(p, pl): dff = dff[dff['UF'].str.upper() == uf]; break
+    m_c = re.search(r'(?:cliente[:\s]+|para\s+(?:o|a)\s+|do\s+cliente\s+)([a-záéíóúâêîôûãõç0-9\s]+)', pl)
+    if m_c and 'NOMECLIENTE' in dff.columns:
+        nc = re.split(r'\s+(?:em|de|no|na|\d{4})\b', m_c.group(1))[0].strip()
+        if len(nc) > 2:
+            mk = dff['NOMECLIENTE'].str.lower().str.contains(nc[:15], na=False)
+            if mk.sum() > 0: dff = dff[mk]
     m_v = re.search(r'vendedor[:\s]+([a-záéíóúâêîôûãõç\s]+)', pl)
     if m_v and 'NOMEVENDEDOR' in dff.columns:
         nv = m_v.group(1).strip()[:20]
@@ -2108,17 +2326,6 @@ def _finalize_ia3(dff, pl, df_orig, recencia=False):
         np_ = m_p.group(1).strip()[:20]
         mk = dff['DESCRICAOPRODUTO'].str.lower().str.contains(np_, na=False)
         if mk.sum() > 0: dff = dff[mk]
-
-    # Recência: retorna os itens das últimas 5 notas (todos os produtos de cada nota)
-    if recencia and 'DATASAIDA' in dff.columns:
-        dff = dff.sort_values('DATASAIDA', ascending=False)
-        if 'NRNOTAFISCAL' in dff.columns:
-            ultimas_notas = dff['NRNOTAFISCAL'].unique()[:5]
-            dff = dff[dff['NRNOTAFISCAL'].isin(ultimas_notas)]
-        else:
-            dff = dff.head(30)
-        return dff
-
     if len(dff) > 1200: dff = dff.sample(n=1200, random_state=42)
     return dff
 
@@ -2161,40 +2368,27 @@ async def chat_ia3(req: ChatRequest):
     system = f"""Você é o IA3 — Analista Comercial da empresa 3F.
 Analisa dados de vendas extraídos do Power BI da 3F.
 
-## COLUNAS DISPONÍVEIS E DEFINIÇÕES EXATAS
-- DATASAIDA: data da venda (YYYY-MM-DD)
-- Ano, Mês, Trimestre, Dia da Semana: campos de calendário auxiliares
-- NOMEFILIAL / NOME_FILIAL: nome da filial de venda
-- NOMEVENDEDOR: nome do vendedor | NOMEROTA: rota de entrega
-- NOMECLIENTE: nome do cliente | CIDADE, UF: localização do cliente
-- DESCRICAOPRODUTO: descrição completa do produto | NOMECURTO: nome curto
-- NOMEGRUPO: grupo do produto | NOMESUBGRUPO: subgrupo | NOMEDEPARTAMENTO: departamento
-- QTDE: quantidade de itens/caixas vendidos (NÃO é kg)
-- QTDEKG: peso em quilogramas (USE ESTA para volume em kg)
-- TOTVEND: valor total de venda em R$ (faturamento bruto)
-- TOTCUSTO: custo total em R$
-- VALORDESCONTO: valor do desconto concedido em R$
+## COLUNAS DISPONÍVEIS
+- DATASAIDA: data da venda | Ano, Mês, Trimestre, Dia da Semana: calendário
+- NOMEFILIAL / NOME_FILIAL: filial | NOMEVENDEDOR: vendedor | NOMEROTA: rota
+- NOMECLIENTE: cliente | CIDADE, UF: localização
+- DESCRICAOPRODUTO / NOMECURTO: produto
+- NOMEGRUPO, NOMESUBGRUPO, NOMEDEPARTAMENTO: hierarquia de produto
+- QTDE: quantidade | QTDEKG: peso em kg
+- TOTVEND: faturamento | TOTCUSTO: custo | VALORDESCONTO: desconto
 - DESCRICAOCONDPGVENDA: condição de pagamento
 
-## REGRAS CRÍTICAS DE COLUNAS
-- NUNCA confunda QTDE com QTDEKG — são colunas diferentes
-- Quando mostrar "volume" ou "kg": use SEMPRE QTDEKG
-- Quando mostrar "itens" ou "caixas": use QTDE
-- Faturamento = TOTVEND (nunca use TOTCUSTO como faturamento)
-
 ## COMPORTAMENTO
-- Responda SEMPRE em português brasileiro
-- Vá direto ao dado — NUNCA comece com "Olá", "Claro!", "Com prazer"
+- Responda sempre em português brasileiro
+- Vá direto ao dado — sem "Olá", "Claro!", "Com prazer"
 - Use Markdown: ## títulos, **negrito**, tabelas com | Col |
-- Valores monetários: R$ X.XXX,XX | KG: X.XXX,XX kg | Itens: X.XXX | Datas: DD/MM/AA
-- MARGEM BRUTA (R$) = TOTVEND - TOTCUSTO
-- MARGEM % = (TOTVEND - TOTCUSTO) / TOTVEND × 100
+- Valores: R$ X.XXX,XX | Quantidades: X.XXX | Datas: DD/MM/AA
+- MARGEM BRUTA = TOTVEND - TOTCUSTO | MARGEM % = (TOTVEND-TOTCUSTO)/TOTVEND*100
 - PREÇO MÉDIO R$/kg = TOTVEND / QTDEKG
-- Sempre calcule variação vs período anterior equivalente quando possível
-- Finalize SEMPRE com 💡 Insight: [ação ou oportunidade concreta]
-- Anomalias > 20%: ⚠️ Atenção: [descrição]
-- NUNCA invente dados — se não houver dados, responda: "⚠️ Sem dados disponíveis para este período/filtro."
-- NUNCA crie seções (##) sem dados reais para preencher
+- Sempre calcule variação vs período anterior quando possível
+- Finalize com 💡 Insight: [ação ou oportunidade]
+- Anomalias > 20%: ⚠️ Atenção:
+- Nunca invente dados
 
 DADOS ({data_label}):
 {sales_data}"""
