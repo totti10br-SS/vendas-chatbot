@@ -584,7 +584,7 @@ def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None, df_orig: pd.D
             nao_tem_filtro_especifico = not any(x in pl for x in [
                 'produto:','vendedor:','filial:','ranking','comparar','top ','total geral'])
             if nao_tem_filtro_especifico:
-                palavras = [p for p in pl.split() if len(p) > 3 and p not in stopwords]
+                palavras = [p for p in pl.split() if len(p) >= 3 and p not in stopwords]
                 if palavras:
                     achou = False
                     for tam in [3, 2, 1]:
@@ -602,8 +602,17 @@ def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None, df_orig: pd.D
             'NOM_VENDEDOR','COD_VENDEDOR','QTDE_PRI','QTDE_AUX','VALOR_LIQUIDO','DESC_DIVISAO2','DESC_DIVISAO3','UF','CIDADE','CPF_CGC']
 
     if any(x in pl for x in ['últimas vendas','ultimas vendas','ultima venda','última venda']):
-        dff = dff.sort_values('DATA_MOVTO', ascending=False).head(15)
-        return dff[[c for c in cols if c in dff.columns]]
+        # Busca no DataFrame COMPLETO (sem filtro de período) para não limitar histórico
+        base = df_orig if df_orig is not None and len(df_orig) > 0 else dff
+        # Aplica filtro de cliente se já foi aplicado no dff
+        if len(dff) < len(base) and len(dff) > 0:
+            # Cliente já foi filtrado — usa dff mas sem limite de período (busca em todo histórico)
+            clientes = dff['NOME_CLIENTE'].unique()
+            base_cli = base[base['NOME_CLIENTE'].isin(clientes)]
+            if len(base_cli) > 0:
+                base = base_cli
+        resultado = base.sort_values('DATA_MOVTO', ascending=False).head(15)
+        return resultado[[c for c in cols if c in resultado.columns]]
 
     # Filtro de vendedor — busca por palavras separadas (mais tolerante)
     m = re.search(r'vendedor[:\s]+([a-záéíóúâêîôûãõç\s]+)', pl)
