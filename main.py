@@ -2068,7 +2068,14 @@ async def chat(req: ChatRequest):
 - "Ontem" / períodos sem movimento: se os dados recebidos forem de uma data diferente do dia literal pedido, processe normalmente e informe apenas UMA linha no início: "_(Dados de DD/MM/AA — dia útil anterior disponível)_". Não peça confirmação, não ofereça opções, vá direto à análise.
 
 ## DETALHE DE NOTA FISCAL
-- Quando o usuário pedir detalhes de uma nota: exiba APENAS os dados exatos que estão nos dados fornecidos. NUNCA adicione, invente ou misture dados de outros clientes ou notas. O CLIENTE correto é o que aparece no campo NOME_CLIENTE dos dados. Formato obrigatório: primeira linha "## NOTA FISCAL [NR] · [DATA] | Filial: [FILIAL] | Cliente: [CLIENTE] | Vendedor: [VENDEDOR]", depois tabela com os itens, a ÚLTIMA LINHA da tabela deve ser uma linha de TOTAIS com células vazias nas colunas de texto e os totais nas colunas numéricas (QTDE KG, CX, VALOR, R$/KG médio). SEM rodapé após a tabela — todas as informações ficam no cabeçalho.
+- Quando o usuário pedir detalhes de uma nota: exiba APENAS os dados exatos que estão nos dados fornecidos. NUNCA adicione, invente ou misture dados de outros clientes ou notas. O CLIENTE correto é o que aparece no campo NOME_CLIENTE dos dados. Formato obrigatório para nota fiscal:
+1ª linha: "## NOTA FISCAL [NR] · [DATA]"
+2ª linha: "**Filial:** [FILIAL] | **Cliente:** [CLIENTE] | **Vendedor:** [VENDEDOR]"
+Linha em branco
+Tabela com colunas: # | PRODUTO | COD | DIVISÃO | QTDE KG | CX | VALOR | R$/KG
+Uma linha por item
+Última linha da tabela: **TOTAIS** | (vazio) | (vazio) | (vazio) | [soma kg] | [soma cx] | [soma valor] | [pm]
+SEM nenhum texto após a tabela.
   | # | PRODUTO | COD | DIVISÃO | QTDE kg | CX | VALOR | R$/kg |
   Depois: totais (kg total, cx total, faturamento total, preço médio), cliente, filial, vendedor, data
 - Quando o usuário pedir "detalhes dessa nota" ou "detalhe da nota X" mas os dados contiverem MÚLTIPLOS NUM_DOCTO: pergunte "Qual o número da nota? (ex: nr 184828)" — NÃO diga que não tem acesso aos dados
@@ -2085,6 +2092,8 @@ DADOS ({data_label}):
     elif gerar_pptx_apos_claude:
         system += "\n\nIMPORTANTE: O usuário quer uma APRESENTAÇÃO POWERPOINT para diretoria. Estruture o conteúdo em slides usando Markdown:\n- Use # para título de cada slide (será 1 slide)\n- Use ## para slides de seção\n- Use **KPI**: Valor para métricas que virão como cards visuais (máx 4 por slide)\n- Use - bullets para listas (máx 6 itens por slide — seja conciso)\n- Use tabelas | Col | para dados tabulares (máx 15 linhas)\n- Estrutura recomendada: 1) Capa (# Título), 2) Resumo Executivo com KPIs, 3) Análise por Filial, 4) Top Clientes, 5) Top Produtos, 6) Análise Temporal, 7) Pontos de Atenção, 8) Conclusão/Recomendações\n- Linguagem executiva, focada em DECISÃO. Cada slide deve ter 1 mensagem clara.\n- Máximo 10-12 slides. Qualidade acima de quantidade."
         max_tok = 4000
+    elif is_nota_query:
+        max_tok = 2500  # notas precisam de mais espaço para formatar tabela
     else:
         max_tok = 1500
 
@@ -2475,7 +2484,13 @@ Analisa dados de vendas extraídos do Power BI da 3F.
 
 ## COMPORTAMENTOS ESPECÍFICOS
 - "Últimas vendas de [cliente]": SEMPRE inicie com "📦 Cliente: **[NOMECLIENTE exato]**" na primeira linha. Se os dados contiverem MÚLTIPLOS clientes distintos, diga apenas "Encontrei X clientes com esse nome. Qual você quer analisar? Informe o nome completo." — SEM listar os nomes. Se for 1 único cliente, mostre tabela compacta DATASAIDA | NR NOTA | COD PRODUTO | DESCRIÇÃO | QTDE kg | R$ TOTAL — últimos 15 registros, data decrescente, SEM totais no final
-- Nota fiscal: exiba APENAS os dados exatos recebidos. Formato: primeira linha "## NOTA FISCAL [NR] · [DATA] | Filial: [FILIAL] | Cliente: [CLIENTE] | Vendedor: [VENDEDOR]", tabela com itens tendo linha final de TOTAIS nas colunas numéricas. SEM rodapé após a tabela — todas as informações ficam no cabeçalho
+- Nota fiscal: exiba APENAS os dados exatos recebidos. Formato obrigatório:
+1ª linha: "## NOTA FISCAL [NR] · [DATA]"
+2ª linha: "**Filial:** [FILIAL] | **Cliente:** [CLIENTE] | **Vendedor:** [VENDEDOR]"
+Linha em branco
+Tabela: # | PRODUTO | COD | QTDE KG | CX | VALOR | R$/KG — uma linha por item
+Última linha da tabela: **TOTAIS** com somas nas colunas numéricas
+SEM nenhum texto após a tabela
 - Cliente não especificado: pergunte "Para qual cliente?" SEM listar nomes
 - Vendedor não encontrado: pergunte o nome completo ou código, SEM listar sugestões
 
