@@ -2642,30 +2642,32 @@ async def get_danfe(chave: str):
         raise HTTPException(status_code=500, detail="Erro ao decodificar certificado.")
 
     c_uf = chave[:2]
-    # RJ (33) usa SVRS — URL correta do NFeConsultaProtocolo4
     ws_url = "https://nfe.svrs.rs.gov.br/ws/NfeConsulta/NfeConsulta4.asmx"
 
-    # Namespace correto para NFeConsultaProtocolo na SVRS
-    soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://www.w3.org/2003/05/soap-envelope"
-                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                  xmlns:xsd="http://www.w3.org/2001/XMLSchema">
-  <soapenv:Header>
-    <nfeCabecMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsulta4">
-      <cUF>{c_uf}</cUF>
-      <versaoDados>4.00</versaoDados>
-    </nfeCabecMsg>
-  </soapenv:Header>
-  <soapenv:Body>
-    <nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsulta4">
-      <consSitNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
-        <tpAmb>1</tpAmb>
-        <xServ>CONSULTAR</xServ>
-        <chNFe>{chave}</chNFe>
-      </consSitNFe>
-    </nfeDadosMsg>
-  </soapenv:Body>
-</soapenv:Envelope>"""
+    # Envelope SOAP 1.2 com namespace exato que a SVRS espera
+    soap_body = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<soap:Envelope'
+        ' xmlns:soap="http://www.w3.org/2003/05/soap-envelope"'
+        ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+        ' xmlns:xsd="http://www.w3.org/2001/XMLSchema">'
+        '<soap:Header>'
+        '<nfeCabecMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsulta4">'
+        f'<cUF>{c_uf}</cUF>'
+        '<versaoDados>4.00</versaoDados>'
+        '</nfeCabecMsg>'
+        '</soap:Header>'
+        '<soap:Body>'
+        '<nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsulta4">'
+        '<consSitNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">'
+        '<tpAmb>1</tpAmb>'
+        '<xServ>CONSULTAR</xServ>'
+        f'<chNFe>{chave}</chNFe>'
+        '</consSitNFe>'
+        '</nfeDadosMsg>'
+        '</soap:Body>'
+        '</soap:Envelope>'
+    )
 
     key_path = cert_path = None
     try:
@@ -2689,12 +2691,11 @@ async def get_danfe(chave: str):
                 content=soap_body.encode("utf-8"),
                 headers={
                     "Content-Type": "application/soap+xml; charset=utf-8",
-                    "SOAPAction": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsulta4/nfeConsultaNF"
+                    "SOAPAction": ""
                 }
             )
         if resp.status_code != 200:
-            # Retornar o body do erro para diagnóstico
-            raise HTTPException(status_code=502, detail=f"SEFAZ status {resp.status_code}: {resp.text[:300]}")
+            raise HTTPException(status_code=502, detail=f"SEFAZ status {resp.status_code}: {resp.text[:500]}")
         xml_resp = resp.text
     finally:
         if key_path:
@@ -2711,10 +2712,9 @@ async def get_danfe(chave: str):
             root.find(".//{http://www.portalfiscal.inf.br/nfe}nfeProc")
         )
         if nfe_proc is None:
-            # Pegar mensagem de retorno da SEFAZ para diagnóstico
             xmotivo = root.find(".//{http://www.portalfiscal.inf.br/nfe}xMotivo")
-            msg = xmotivo.text if xmotivo is not None else xml_resp[:300]
-            raise HTTPException(status_code=404, detail=f"NF-e não encontrada: {msg}")
+            msg = xmotivo.text if xmotivo is not None else xml_resp[:500]
+            raise HTTPException(status_code=404, detail=f"NF-e: {msg}")
         xml_nfe = ET.tostring(nfe_proc, encoding="unicode")
     except HTTPException:
         raise
