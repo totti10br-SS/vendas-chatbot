@@ -1975,9 +1975,8 @@ async def chat(req: ChatRequest):
         # Verifica se cliente não foi encontrado (flag escrita no ctx pelo filter_for_chat)
         cli_nao_encontrado = ctx_filtro.get('cliente_nao_encontrado')
         if cli_nao_encontrado:
-            nome_cli_buscado, sugestoes_cli = cli_nao_encontrado
-            sug_str = " | ".join(sugestoes_cli) if sugestoes_cli else "nenhum encontrado no período"
-            aviso_extra += f" | ⚠️ CLIENTE '{nome_cli_buscado.upper()}' NÃO ENCONTRADO NO PERÍODO — informe ao usuário e sugira: {sug_str}"
+            nome_cli_buscado = cli_nao_encontrado[0] if isinstance(cli_nao_encontrado, (list, tuple)) else cli_nao_encontrado
+            aviso_extra += f" | ⚠️ CLIENTE '{str(nome_cli_buscado).upper()}' NÃO ENCONTRADO — pergunte o nome completo ou CNPJ"
 
         # Aviso genérico do ctx (ex: CNPJ sem coluna)
         if ctx_filtro.get('aviso'):
