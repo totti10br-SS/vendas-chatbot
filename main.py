@@ -63,6 +63,9 @@ def load_df() -> pd.DataFrame:
     df['DATA_MOVTO'] = pd.to_datetime(df['DATA_MOVTO'], errors='coerce', dayfirst=use_dayfirst)
     df['VALOR_LIQUIDO'] = pd.to_numeric(df['VALOR_LIQUIDO'], errors='coerce').fillna(0)
     df['QTDE_PRI']      = pd.to_numeric(df['QTDE_PRI'],      errors='coerce').fillna(0)
+    # COD_VENDEDOR: remove decimal (4063.0 → 4063)
+    if 'COD_VENDEDOR' in df.columns:
+        df['COD_VENDEDOR'] = pd.to_numeric(df['COD_VENDEDOR'], errors='coerce').fillna(0).astype(int).astype(str).str.zfill(4)
     return df
 
 def get_dia_referencia(df: pd.DataFrame):

@@ -315,11 +315,9 @@ body.modo-vasco .welcome p strong{color:#fff;}
 
 /* ═══════════════════════════════════════════════════════
    MOBILE RESPONSIVO — max-width: 768px
-   Nada acima foi alterado. Só adições abaixo.
 ═══════════════════════════════════════════════════════ */
 @media (max-width: 768px) {
 
-  /* BODY */
   body { height:100dvh; overflow:hidden; }
 
   /* HEADER */
@@ -328,12 +326,17 @@ body.modo-vasco .welcome p strong{color:#fff;}
   .header-info p { display:none; }
   .stat-sub { display:none; }
   .stat-pill { font-size:11px; }
-  header > div[style*="left:50%"] { display:none; } /* esconde botão MENU */
+  header > div[style*="left:50%"] { display:none; }
 
   /* BARRA POSIÇÃO */
   #posicaoBar { font-size:10px; padding:2px 10px; }
 
-  /* DASHBOARD — scroll horizontal */
+  /* DASHBOARD TOGGLE BAR */
+  #dashToggleBar { display:flex !important; }
+  .dashboard { transition:max-height .3s ease, padding .3s ease; overflow:hidden; }
+  .dashboard.collapsed { max-height:0 !important; padding:0 !important; border:none !important; }
+
+  /* DASHBOARD scroll horizontal */
   .dashboard {
     padding:6px 10px;
     overflow-x:auto;
@@ -344,21 +347,21 @@ body.modo-vasco .welcome p strong{color:#fff;}
   }
   .dashboard::-webkit-scrollbar { display:none; }
 
-  /* KPIs menores */
+  /* KPIs */
   .kpi-mini { padding:4px 8px; }
   .kpi-mini-value { font-size:15px; }
   .kpi-mini-label { font-size:8px; }
 
-  /* Tipo de Carne compacto */
+  /* Tipo de Carne */
   .tipo-carne-box { padding:4px 8px; }
   .tipo-carne-title { font-size:8px; }
   .tc-fat { font-size:10px; }
   .tc-kg { font-size:9px; }
 
-  /* Divider vertical some */
+  /* Divider some */
   .dash-divider { display:none; }
 
-  /* Top clientes — largura auto */
+  /* Top clientes */
   .top-clientes { width:auto; min-width:260px; flex-shrink:0; }
   .c-nome { width:120px; font-size:10px; }
   .c-kg { font-size:10px; }
@@ -372,31 +375,29 @@ body.modo-vasco .welcome p strong{color:#fff;}
   #messages { padding:10px 8px 6px; gap:10px; }
   .bubble { font-size:13px; padding:9px 12px; }
   .msg-avatar { width:24px; height:24px; font-size:9px; }
-
-  /* Tabelas — scroll horizontal */
   .bubble table { font-size:11px; }
   .bubble th, .bubble td { padding:3px 5px; }
 
-  /* SIDE PANEL — tela cheia em mobile */
-  .side-panel { 
-    position:fixed; 
-    inset:0; 
-    width:100% !important; 
+  /* SIDE PANEL tela cheia */
+  .side-panel {
+    position:fixed;
+    inset:0;
+    width:100% !important;
     z-index:500;
     transform:translateX(100%);
     transition:transform .3s ease;
   }
-  .side-panel.open { 
-    transform:translateX(0); 
+  .side-panel.open {
+    transform:translateX(0);
     width:100% !important;
   }
 
   /* INPUT AREA */
   .input-area { padding:8px 10px; gap:8px; }
-  #userInput { font-size:16px; padding:9px 12px; } /* 16px evita zoom no iOS */
+  #userInput { font-size:16px; padding:9px 12px; }
   #sendBtn { width:40px; height:40px; }
 
-  /* INSIGHT PANEL — esconde em mobile */
+  /* INSIGHT some */
   .insight-panel { display:none; }
 
   /* WELCOME */
@@ -408,12 +409,10 @@ body.modo-vasco .welcome p strong{color:#fff;}
   /* BTN DANFE */
   .btn-danfe { font-size:12px; padding:8px 14px; }
 
-  /* MODAL DANFE — tela cheia em mobile */
+  /* MODAL DANFE tela cheia */
   .danfe-box { width:100vw; height:100vh; border-radius:0; max-width:100%; }
-
 }
 
-/* Telas muito pequenas (< 380px) */
 @media (max-width: 380px) {
   .kpi-mini-value { font-size:13px; }
   .header-info h1 { font-size:11px; }
@@ -449,6 +448,9 @@ body.modo-vasco .welcome p strong{color:#fff;}
 </div>
 
 <!-- DASHBOARD COMPACTO -->
+<div id="dashToggleBar" style="display:none;background:#1a1a1a;border-bottom:1px solid rgba(204,0,0,.3);padding:4px 10px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-size:11px;color:var(--yellow);letter-spacing:.5px;display:none;align-items:center;justify-content:space-between;" onclick="toggleDash()">
+  <span>📊 DASHBOARD</span><span id="dashToggleIcon">▼</span>
+</div>
 <div class="dashboard" id="dashboard" style="display:none">
   <div style="display:flex;flex-direction:column;gap:0;flex-shrink:0;">
     <div class="kpi-group">
@@ -507,6 +509,14 @@ body.modo-vasco .welcome p strong{color:#fff;}
 
 <script>
 let conversationHistory=[];
+let dashCollapsed=false;
+function toggleDash(){
+  dashCollapsed=!dashCollapsed;
+  var dash=document.getElementById('dashboard');
+  var icon=document.getElementById('dashToggleIcon');
+  if(dashCollapsed){dash.classList.add('collapsed');icon.textContent='▲';}
+  else{dash.classList.remove('collapsed');icon.textContent='▼';}
+}
 let modoAtivo='normal';
 function fmtBRL(v){return 'R$ '+parseFloat(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function fmtKg(v){return parseFloat(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+' kg';}
