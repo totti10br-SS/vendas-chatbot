@@ -1800,6 +1800,38 @@ async def chat(req: ChatRequest):
 
     ultima = next((m.content for m in reversed(req.messages) if m.role == "user"), "")
 
+    # ── Handler especial: Quem Sou Eu ──
+    if ultima.startswith('__QUEM_SOU_EU__'):
+        df = get_df()
+        csv_mod = "—"
+        if 'csv_modificado=' in ultima:
+            csv_mod = ultima.split('csv_modificado=')[-1].strip()
+        d_min = df['DATA_MOVTO'].dropna().min()
+        d_max = df['DATA_MOVTO'].dropna().max()
+        d_min_str = d_min.strftime('%d/%m/%Y') if pd.notna(d_min) else "—"
+        d_max_str = d_max.strftime('%d/%m/%Y') if pd.notna(d_max) else "—"
+        total = len(df)
+        resposta = f"""## 🤖 Olá! Sou o IAF — Analista Comercial Frinense
+
+Fui desenvolvido para analisar os dados comerciais da **Frinense Alimentos**, respondendo perguntas sobre vendas, clientes, produtos, filiais e vendedores com inteligência artificial.
+
+**O que posso fazer:**
+- Analisar faturamento e volume por período, filial, vendedor ou cliente
+- Identificar top clientes, produtos e regiões
+- Detalhar notas fiscais e gerar DANFE em PDF
+- Comparar desempenho entre filiais e períodos
+- Criar rankings e relatórios comerciais
+
+---
+
+**📅 Período de dados disponível:**
+- Primeiro registro: **{d_min_str}**
+- Último registro: **{d_max_str}**
+- Total de registros: **{total:,}**
+
+**🔄 Minha última atualização foi:** {csv_mod}"""
+        return JSONResponse(content={{"content":[{{"type":"text","text":resposta}}]}})
+
     # Se a última mensagem não tem contexto temporal (ex: "1", "2", "sim", "ok", "resumo executivo"),
     # busca no histórico recente (últimas 6 mensagens) para encontrar o período da conversa
     def tem_contexto_temporal(texto: str) -> bool:
