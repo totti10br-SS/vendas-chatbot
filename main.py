@@ -584,7 +584,7 @@ def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None, df_orig: pd.D
             nao_tem_filtro_especifico = not any(x in pl for x in [
                 'produto:','vendedor:','filial:','ranking','comparar','top ','total geral'])
             if nao_tem_filtro_especifico:
-                palavras = [p for p in pl.split() if len(p) >= 3 and p not in stopwords]
+                palavras = [p for p in pl.split() if len(p) > 3 and p not in stopwords]
                 if palavras:
                     achou = False
                     for tam in [3, 2, 1]:
@@ -602,17 +602,8 @@ def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None, df_orig: pd.D
             'NOM_VENDEDOR','COD_VENDEDOR','QTDE_PRI','QTDE_AUX','VALOR_LIQUIDO','DESC_DIVISAO2','DESC_DIVISAO3','UF','CIDADE','CPF_CGC']
 
     if any(x in pl for x in ['últimas vendas','ultimas vendas','ultima venda','última venda']):
-        # Busca no DataFrame COMPLETO (sem filtro de período) para não limitar histórico
-        base = df_orig if df_orig is not None and len(df_orig) > 0 else dff
-        # Aplica filtro de cliente se já foi aplicado no dff
-        if len(dff) < len(base) and len(dff) > 0:
-            # Cliente já foi filtrado — usa dff mas sem limite de período (busca em todo histórico)
-            clientes = dff['NOME_CLIENTE'].unique()
-            base_cli = base[base['NOME_CLIENTE'].isin(clientes)]
-            if len(base_cli) > 0:
-                base = base_cli
-        resultado = base.sort_values('DATA_MOVTO', ascending=False).head(15)
-        return resultado[[c for c in cols if c in resultado.columns]]
+        dff = dff.sort_values('DATA_MOVTO', ascending=False).head(15)
+        return dff[[c for c in cols if c in dff.columns]]
 
     # Filtro de vendedor — busca por palavras separadas (mais tolerante)
     m = re.search(r'vendedor[:\s]+([a-záéíóúâêîôûãõç\s]+)', pl)
@@ -1905,8 +1896,9 @@ async def chat(req: ChatRequest):
         # Verifica se cliente não foi encontrado (flag escrita no ctx pelo filter_for_chat)
         cli_nao_encontrado = ctx_filtro.get('cliente_nao_encontrado')
         if cli_nao_encontrado:
-            nome_cli_buscado, _ = cli_nao_encontrado
-            aviso_extra += f" | ⚠️ CLIENTE '{nome_cli_buscado.upper()}' NÃO ENCONTRADO — pergunte ao usuário o nome completo ou CNPJ, sem listar sugestões"
+            nome_cli_buscado, sugestoes_cli = cli_nao_encontrado
+            sug_str = " | ".join(sugestoes_cli) if sugestoes_cli else "nenhum encontrado no período"
+            aviso_extra += f" | ⚠️ CLIENTE '{nome_cli_buscado.upper()}' NÃO ENCONTRADO NO PERÍODO — informe ao usuário e sugira: {sug_str}"
 
         # Aviso genérico do ctx (ex: CNPJ sem coluna)
         if ctx_filtro.get('aviso'):
@@ -1988,13 +1980,12 @@ async def chat(req: ChatRequest):
 - O insight deve sugerir uma AÇÃO ou destacar uma OPORTUNIDADE, não apenas repetir dados
 
 ## COMPORTAMENTOS ESPECÍFICOS
-- "Últimas vendas de [cliente]": SEMPRE inicie com "📦 Cliente: **[NOME_CLIENTE exato]**" na primeira linha. Se os dados contiverem MÚLTIPLOS clientes distintos (mais de 1 NOME_CLIENTE único), diga apenas "Encontrei X clientes com esse nome. Qual você quer analisar? Informe o nome completo ou CNPJ." — SEM listar os nomes. Se for 1 único cliente, mostre tabela compacta DATA | NR NOTA | COD PRODUTO | DESCRIÇÃO | QTDE kg | CX | R$/kg | R$ TOTAL — últimos 15 registros, data decrescente, SEM totais no final (são apenas os últimos 15 registros, não representam o total do cliente). Use colunas curtas e sem espaçamento excessivo entre elas
+- "Últimas vendas de [cliente]": tabela DATA | NR NOTA | COD PRODUTO | DESCRIÇÃO | QTDE kg | CX | R$/kg — últimos 15 registros, data decrescente
 - Período sem detalhe especificado (mensal/trimestral/anual): ofereça 4 opções antes de processar: "1) Resumo executivo 2) Análise por dia 3) Ranking produtos/vendedores 4) Comparativo filiais"
 - EXCEÇÃO: se o usuário já especificou o que quer ("resumo", "ranking", "análise detalhada"), processe direto
 - Filtro UF: reconhece siglas (ES, RJ...) e nomes por extenso. Destaque: volume, faturamento, clientes, produtos, cidades
 - Busca por CNPJ: o CSV TEM coluna CNPJ (campo CPF_CGC). Aceita "cnpj 73849952" (raiz 8 dígitos) ou completo. NUNCA diga que o CSV não tem CNPJ. Se os dados retornados já estiverem filtrados por CNPJ, analise normalmente sem comentar sobre a coluna.
-- Vendedor não encontrado: pergunte o nome completo ou código do vendedor, SEM listar sugestões
-- Cliente não especificado: pergunte "Para qual cliente?" SEM listar nomes de clientes disponíveis
+- Vendedor não encontrado: sugira busca por código e liste até 5 disponíveis no período
 - Apresente dados disponíveis SEM mencionar o que não existe. Nunca diga "não tenho dados de X"
 - "Análise de [cliente] em [período]": se os dados já vierem filtrados por cliente (1 único NOME_CLIENTE), exiba tabela completa de todas as compras (DATA | NR NOTA | PRODUTO | KG | CX | R$ | R$/kg), depois totais e comparativo. Não resuma — mostre tudo.
 - "Ontem" / períodos sem movimento: se os dados recebidos forem de uma data diferente do dia literal pedido, processe normalmente e informe apenas UMA linha no início: "_(Dados de DD/MM/AA — dia útil anterior disponível)_". Não peça confirmação, não ofereça opções, vá direto à análise.
@@ -2439,6 +2430,10 @@ def dashboard_ia3():
         top5 = [{"nome": r.NOMECLIENTE, "fat": round(r.fat, 2), "kg": round(r.kg, 2)}
                 for r in top.itertuples()]
 
+        # Último registro disponível no CSV
+        ultima_data = df['DATASAIDA'].dropna().max()
+        ultima_str = ultima_data.strftime('%d/%m/%Y %H:%M') if pd.notna(ultima_data) else '—'
+
         return JSONResponse({
             "total_registros": total,
             "mes_label":  mes_label,
@@ -2446,7 +2441,8 @@ def dashboard_ia3():
             "kg":         round(kg, 2),
             "margem_pct": margem_pct,
             "desconto":   round(desconto, 2),
-            "top5":       top5
+            "top5":       top5,
+            "ultima_atualizacao": ultima_str
         })
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

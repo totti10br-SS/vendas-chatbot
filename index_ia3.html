@@ -136,6 +136,7 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;ba
   </div>
   <div class="header-right">
     <div class="stat-pill"><div class="stat-dot"></div><span id="hdr-data">--/--/----</span></div>
+    <span id="hdr-ultima" style="font-family:'Barlow Condensed',sans-serif;font-size:11px;color:rgba(255,255,255,.6);letter-spacing:.3px;">Atualizado em: —</span>
     <button id="btn-reload" onclick="forceReload()" style="background:none;border:1px solid rgba(0,200,224,.3);border-radius:5px;padding:3px 8px;cursor:pointer;color:var(--cyan);font-size:10px;font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.5px;" onmouseover="this.style.background='rgba(0,200,224,.1)'" onmouseout="this.style.background='none'">↺ ATUALIZAR</button>
     <a href="/menu" class="btn-menu">⬅ Menu</a>
   </div>
@@ -295,6 +296,7 @@ async function loadKPIs(){
     document.getElementById('kpi-margem').textContent = d.margem_pct+'%';
     document.getElementById('kpi-desc').textContent  = fmtM(d.desconto);
     document.getElementById('top-periodo').textContent = d.mes_label || 'último mês';
+    if(d.ultima_atualizacao) document.getElementById('hdr-ultima').textContent = 'Atualizado em: ' + d.ultima_atualizacao;
     window._mesDashboard = d.mes_label ? d.mes_label.split('/').reverse().join('-') : null;
 
     if(d.top5&&d.top5.length){
