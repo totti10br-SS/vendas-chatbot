@@ -1990,6 +1990,18 @@ async def chat(req: ChatRequest):
         ]) or bool(re.search(r'\bnr?\s*(?:nota|docto|doc)?\s*[:\s#]?\s*\d{3,8}\b', pergunta_para_filtro.lower()))
 
         if is_nota_query:
+            # Verifica se a nota foi encontrada no CSV ANTES de chamar o Claude
+            m_nr = re.search(r'\b(\d{4,8})\b', pergunta_para_filtro)
+            if m_nr and 'NUM_DOCTO' in dff.columns:
+                nr_buscado = m_nr.group(1)
+                encontrou = (dff['NUM_DOCTO'].astype(str).str.strip() == nr_buscado).sum()
+                if encontrou == 0:
+                    # Nota não existe no CSV — retorna mensagem direta sem gastar tokens
+                    from fastapi.responses import JSONResponse as _JR
+                    return _JR(content={"content": [{"type": "text", "text":
+                        f"❌ Nota **{nr_buscado}** não encontrada nos dados disponíveis.\n\n"
+                        f"Verifique o número e tente novamente, ou informe um período diferente."
+                    }]})
             # Agrega itens da nota — evita estouro de tokens
             sales_data = aggregate_nota(dff)
             data_label = f"NOTA FISCAL{' | ' + periodo_label if periodo_label else ''}{aviso_extra}"
@@ -2707,39 +2719,15 @@ async def get_danfe(chave: str):
 
     try:
         root = ET.fromstring(xml_resp)
-
-        # Verifica status da resposta
-        xmotivo = root.find(".//{http://www.portalfiscal.inf.br/nfe}xMotivo")
-        cstat = root.find(".//{http://www.portalfiscal.inf.br/nfe}cStat")
-        status_msg = xmotivo.text if xmotivo is not None else "?"
-        status_cod = cstat.text if cstat is not None else "?"
-
-        # Tenta extrair procNFe ou nfeProc (XML completo)
         nfe_proc = (
             root.find(".//{http://www.portalfiscal.inf.br/nfe}procNFe") or
             root.find(".//{http://www.portalfiscal.inf.br/nfe}nfeProc")
         )
-
-        if nfe_proc is not None:
-            xml_nfe = ET.tostring(nfe_proc, encoding="unicode")
-        else:
-            # retConsSitNFe não traz o XML completo — monta procNFe a partir dos elementos retornados
-            nfe_el = root.find(".//{http://www.portalfiscal.inf.br/nfe}NFe")
-            prot_el = root.find(".//{http://www.portalfiscal.inf.br/nfe}protNFe")
-            if nfe_el is not None and prot_el is not None:
-                # Monta procNFe manualmente
-                ns = "http://www.portalfiscal.inf.br/nfe"
-                proc = ET.Element(f"{{{ns}}}procNFe", attrib={"versao": "4.00", "xmlns": ns})
-                proc.append(nfe_el)
-                proc.append(prot_el)
-                xml_nfe = ET.tostring(proc, encoding="unicode")
-            else:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"XML da NF-e não disponível na consulta (cStat={status_cod}: {status_msg}). "
-                           f"Isso ocorre quando a NF-e foi emitida por terceiros. "
-                           f"Use o download via Meu DANFE ou portal SEFAZ."
-                )
+        if nfe_proc is None:
+            xmotivo = root.find(".//{http://www.portalfiscal.inf.br/nfe}xMotivo")
+            msg = xmotivo.text if xmotivo is not None else xml_resp[:500]
+            raise HTTPException(status_code=404, detail=f"NF-e: {msg}")
+        xml_nfe = ET.tostring(nfe_proc, encoding="unicode")
     except HTTPException:
         raise
     except Exception as e:
