@@ -392,8 +392,12 @@ function renderMarkdown(text){
   // Tabelas markdown
   text=text.replace(/\|(.+)\|\n\|[-| :]+\|\n((?:\|.+\|\n?)+)/gm,function(m,header,rows){
     var ths=header.split('|').filter(function(c){return c.trim();}).map(function(c){return '<th>'+c.trim()+'</th>';}).join('');
+    var headerCount=ths.split('<th>').length-1;
     var trs=rows.trim().split('\n').map(function(row){
-      var tds=row.split('|').filter(function(c){return c.trim();}).map(function(c){return '<td>'+c.trim()+'</td>';}).join('');
+      // Preserva células vazias (ex: linha TOTAIS com | | | |)
+      var parts=row.split('|');
+      parts=parts.slice(1,parts.length-1); // remove apenas os pipes externos
+      var tds=parts.map(function(c){return '<td>'+c.trim()+'</td>';}).join('');
       return '<tr>'+tds+'</tr>';
     }).join('');
     return '<table><thead><tr>'+ths+'</tr></thead><tbody>'+trs+'</tbody></table>';
