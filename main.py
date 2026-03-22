@@ -2691,7 +2691,7 @@ async def get_danfe(chave: str):
                 content=soap_body.encode("utf-8"),
                 headers={
                     "Content-Type": "application/soap+xml; charset=utf-8",
-                    "SOAPAction": ""
+                    "SOAPAction": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsulta4/nfeConsultaNF"
                 }
             )
         if resp.status_code != 200:
