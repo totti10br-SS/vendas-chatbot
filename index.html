@@ -334,7 +334,7 @@ body.modo-vasco .welcome p strong{color:#fff;}
   /* DASHBOARD TOGGLE BAR */
   #dashToggleBar { display:flex !important; }
   .dashboard { transition:max-height .3s ease, padding .3s ease; overflow:hidden; }
-  .dashboard.collapsed { max-height:0 !important; padding:0 !important; border:none !important; }
+  .dashboard.collapsed { max-height:0 !important; padding:0 !important; border:none !important; display:none !important; }
 
   /* DASHBOARD scroll horizontal */
   .dashboard {
@@ -514,8 +514,8 @@ function toggleDash(){
   dashCollapsed=!dashCollapsed;
   var dash=document.getElementById('dashboard');
   var icon=document.getElementById('dashToggleIcon');
-  if(dashCollapsed){dash.classList.add('collapsed');icon.textContent='▼';}
-  else{dash.classList.remove('collapsed');icon.textContent='▲';}
+  if(dashCollapsed){dash.style.display='none';icon.textContent='▼';}
+  else{dash.style.display='flex';icon.textContent='▲';}
 }
 let modoAtivo='normal';
 function fmtBRL(v){return 'R$ '+parseFloat(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
@@ -607,7 +607,7 @@ async function init(){
       window._tiposDiaLabel = dataLabel;
       document.querySelector('.tipo-carne-title').textContent = `📦 Tipo de Carne`;
     }
-    var _d=document.getElementById('dashboard');_d.style.display='flex';_d.classList.add('collapsed');document.getElementById('dashToggleBar').style.display='flex';
+    document.getElementById('dashToggleBar').style.display='flex';
     document.getElementById('initLoader').remove();
     showWelcome(d.total_registros);
     document.getElementById('userInput').disabled=false;
