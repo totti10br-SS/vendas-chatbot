@@ -811,7 +811,7 @@ def aggregate_for_summary(dff: pd.DataFrame) -> str:
         for idx, r in por_vend.iterrows():
             pm = r.fat/r.kg if r.kg > 0 else 0
             cx_str = f" | {r.cx:,.0f} cx" if 'cx' in por_vend.columns else ""
-            lines.append(f"COD {idx[0]} | {idx[1]}: {r.kg:,.2f} kg{cx_str} | R$ {r.fat:,.2f} | R$ {pm:.2f}/kg")
+            lines.append(f"{idx[0]} | {idx[1]}: {r.kg:,.2f} kg{cx_str} | R$ {r.fat:,.2f} | R$ {pm:.2f}/kg")
     else:
         agg_v = {'kg':('QTDE_PRI','sum'), 'fat':('VALOR_LIQUIDO','sum')}
         if 'QTDE_AUX' in dff.columns: agg_v['cx'] = ('QTDE_AUX','sum')

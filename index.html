@@ -448,7 +448,7 @@ body.modo-vasco .welcome p strong{color:#fff;}
 </div>
 
 <!-- DASHBOARD COMPACTO -->
-<div id="dashToggleBar" style="display:none;background:#1a1a1a;border-bottom:1px solid rgba(204,0,0,.3);padding:4px 10px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-size:11px;color:var(--yellow);letter-spacing:.5px;display:none;align-items:center;justify-content:space-between;" onclick="toggleDash()">
+<div id="dashToggleBar" onclick="toggleDash()">
   <span>📊 DASHBOARD</span><span id="dashToggleIcon">▼</span>
 </div>
 <div class="dashboard" id="dashboard" style="display:none">
@@ -509,13 +509,13 @@ body.modo-vasco .welcome p strong{color:#fff;}
 
 <script>
 let conversationHistory=[];
-let dashCollapsed=false;
+let dashCollapsed=true;
 function toggleDash(){
   dashCollapsed=!dashCollapsed;
   var dash=document.getElementById('dashboard');
   var icon=document.getElementById('dashToggleIcon');
-  if(dashCollapsed){dash.classList.add('collapsed');icon.textContent='▲';}
-  else{dash.classList.remove('collapsed');icon.textContent='▼';}
+  if(dashCollapsed){dash.classList.add('collapsed');icon.textContent='▼';}
+  else{dash.classList.remove('collapsed');icon.textContent='▲';}
 }
 let modoAtivo='normal';
 function fmtBRL(v){return 'R$ '+parseFloat(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
@@ -607,7 +607,7 @@ async function init(){
       window._tiposDiaLabel = dataLabel;
       document.querySelector('.tipo-carne-title').textContent = `📦 Tipo de Carne`;
     }
-    document.getElementById('dashboard').style.display='flex';
+    var _d=document.getElementById('dashboard');_d.style.display='flex';_d.classList.add('collapsed');document.getElementById('dashToggleBar').style.display='flex';
     document.getElementById('initLoader').remove();
     showWelcome(d.total_registros);
     document.getElementById('userInput').disabled=false;

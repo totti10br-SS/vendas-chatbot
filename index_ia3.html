@@ -121,6 +121,13 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;ba
 .prod-kg{color:var(--cyan);font-family:'Barlow Condensed',sans-serif;font-weight:600;}
 .prod-r{color:#fff;font-weight:600;}
 .panel-loading{text-align:center;padding:20px;color:#fff;font-size:13px;}
+
+/* DASHBOARD TOGGLE — global desktop + mobile */
+#dashToggleBar{background:#0d1f33;border-bottom:1px solid rgba(0,102,204,.3);padding:5px 14px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-size:11px;color:var(--cyan);letter-spacing:.5px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}
+#dashToggleBar:hover{background:#0a1a2e;}
+#dashToggleBar span:last-child{font-size:10px;}
+.dashboard{transition:max-height .35s ease,padding .35s ease,border .35s ease;overflow:hidden;}
+.dashboard.collapsed{max-height:0!important;padding-top:0!important;padding-bottom:0!important;border:none!important;}
 </style>
 </head>
 <body>
@@ -142,7 +149,10 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;ba
   </div>
 </header>
 
-<div class="dashboard">
+<div id="dashToggleBar" onclick="toggleDash()">
+  <span>📊 DASHBOARD IA3</span><span id="dashToggleIcon">▼</span>
+</div>
+<div class="dashboard" id="ia3dashboard">
   <div class="kpi-group">
     <div class="kpi-mini">
       <div class="kpi-mini-label">Faturamento Mês</div>
@@ -210,6 +220,14 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;ba
 </div>
 
 <script>
+let dashCollapsed=true;
+function toggleDash(){
+  dashCollapsed=!dashCollapsed;
+  var dash=document.getElementById('ia3dashboard');
+  var icon=document.getElementById('dashToggleIcon');
+  if(dashCollapsed){dash.classList.add('collapsed');icon.textContent='▼';}
+  else{dash.classList.remove('collapsed');icon.textContent='▲';}
+}
 const API = '';
 let history = [];
 
@@ -380,6 +398,12 @@ function closePanel(){
 }
 
 setTimeout(loadKPIs,1500);
+
+// Dashboard começa recolhido
+document.addEventListener('DOMContentLoaded',function(){
+  var d=document.getElementById('ia3dashboard');
+  if(d) d.classList.add('collapsed');
+});
 </script>
 </body>
 </html>
