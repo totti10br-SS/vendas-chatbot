@@ -1988,7 +1988,7 @@ async def chat(req: ChatRequest):
 - O insight deve sugerir uma AÇÃO ou destacar uma OPORTUNIDADE, não apenas repetir dados
 
 ## COMPORTAMENTOS ESPECÍFICOS
-- "Últimas vendas de [cliente]": SEMPRE inicie com "📦 Cliente: **[NOME_CLIENTE exato]**" na primeira linha. Se os dados contiverem MÚLTIPLOS clientes distintos (mais de 1 NOME_CLIENTE único), diga apenas "Encontrei X clientes com esse nome. Qual você quer analisar? Informe o nome completo ou CNPJ." — SEM listar os nomes. Se for 1 único cliente, mostre tabela DATA | NR NOTA | COD PRODUTO | DESCRIÇÃO | QTDE kg | CX | R$/kg | R$ TOTAL — últimos 15 registros, data decrescente. A coluna COD PRODUTO deve aparecer ANTES da DESCRIÇÃO
+- "Últimas vendas de [cliente]": SEMPRE inicie com "📦 Cliente: **[NOME_CLIENTE exato]**" na primeira linha. Se os dados contiverem MÚLTIPLOS clientes distintos (mais de 1 NOME_CLIENTE único), diga apenas "Encontrei X clientes com esse nome. Qual você quer analisar? Informe o nome completo ou CNPJ." — SEM listar os nomes. Se for 1 único cliente, mostre tabela compacta DATA | NR NOTA | COD PRODUTO | DESCRIÇÃO | QTDE kg | CX | R$/kg | R$ TOTAL — últimos 15 registros, data decrescente, SEM totais no final (são apenas os últimos 15 registros, não representam o total do cliente). Use colunas curtas e sem espaçamento excessivo entre elas
 - Período sem detalhe especificado (mensal/trimestral/anual): ofereça 4 opções antes de processar: "1) Resumo executivo 2) Análise por dia 3) Ranking produtos/vendedores 4) Comparativo filiais"
 - EXCEÇÃO: se o usuário já especificou o que quer ("resumo", "ranking", "análise detalhada"), processe direto
 - Filtro UF: reconhece siglas (ES, RJ...) e nomes por extenso. Destaque: volume, faturamento, clientes, produtos, cidades
