@@ -640,19 +640,12 @@ def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None, df_orig: pd.D
             dff = dff[dff['DESC_PRODUTO'].str.lower().str.contains(nome_prod, na=False)]
 
     # ── Filtro por NR NOTA / NUM_DOCTO específico ──
-    # Busca no df_orig (histórico completo) para não depender de filtro de período
     m_nota = re.search(r'\bnr?\s*(?:nota|docto|doc)?\s*[:\s#]?\s*(\d{3,8})\b', pl)
     if m_nota and 'NUM_DOCTO' in dff.columns:
         nr = m_nota.group(1)
-        # Tenta no df completo primeiro
-        base_nota = df_orig if df_orig is not None and len(df_orig) > 0 else dff
-        mask_nota = base_nota['NUM_DOCTO'].astype(str).str.strip() == nr
+        mask_nota = dff['NUM_DOCTO'].astype(str).str.strip() == nr
         if mask_nota.sum() > 0:
-            dff = base_nota[mask_nota]  # retorna só os itens dessa nota
-        else:
-            mask_nota2 = dff['NUM_DOCTO'].astype(str).str.strip() == nr
-            if mask_nota2.sum() > 0:
-                dff = dff[mask_nota2]
+            dff = dff[mask_nota]
 
     # ── "última nota" / "ultimo pedido" — retorna os itens da nota mais recente ──
     if any(x in pl for x in ['última nota','ultima nota','último pedido','ultimo pedido','last nota']) and 'NUM_DOCTO' in dff.columns:
@@ -671,6 +664,42 @@ def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None, df_orig: pd.D
         dff = dff.tail(2000)
 
     return dff[[c for c in cols if c in dff.columns]]
+
+def aggregate_nota(dff: pd.DataFrame) -> str:
+    """Agrega dados de uma nota fiscal específica — evita estouro de tokens."""
+    lines = []
+
+    # Cabeçalho
+    if 'NUM_DOCTO' in dff.columns:
+        notas = dff['NUM_DOCTO'].unique()
+        lines.append(f"NOTA(S): {', '.join(str(n) for n in notas)}")
+    if 'DATA_MOVTO' in dff.columns:
+        data = dff['DATA_MOVTO'].max()
+        lines.append(f"DATA: {data.strftime('%d/%m/%Y') if hasattr(data, 'strftime') else data}")
+    if 'NOME_CLIENTE' in dff.columns:
+        lines.append(f"CLIENTE: {dff['NOME_CLIENTE'].iloc[0]}")
+    if 'NOME_FILIAL' in dff.columns:
+        lines.append(f"FILIAL: {dff['NOME_FILIAL'].iloc[0]}")
+    if 'NOM_VENDEDOR' in dff.columns:
+        lines.append(f"VENDEDOR: {dff['NOM_VENDEDOR'].iloc[0]}")
+    lines.append("")
+
+    # Totais gerais
+    fat   = dff['VALOR_LIQUIDO'].sum() if 'VALOR_LIQUIDO' in dff.columns else 0
+    kg    = dff['QTDE_PRI'].sum()      if 'QTDE_PRI'      in dff.columns else 0
+    cx    = dff['QTDE_AUX'].sum()      if 'QTDE_AUX'      in dff.columns else 0
+    pm    = fat / kg if kg > 0 else 0
+    lines.append(f"TOTAIS: R$ {fat:,.2f} | {kg:,.2f} kg | {cx:,.0f} cx | R$ {pm:.2f}/kg")
+    lines.append("")
+
+    # Itens da nota
+    lines.append("ITENS:")
+    cols_prod = [c for c in ['COD_PRODUTO','DESC_PRODUTO','QTDE_PRI','QTDE_AUX','VALOR_UNITARIO','VALOR_LIQUIDO','DESC_DIVISAO2'] if c in dff.columns]
+    for _, row in dff[cols_prod].iterrows():
+        linha = " | ".join(f"{c}: {row[c]}" for c in cols_prod)
+        lines.append(linha)
+
+    return "\n".join(lines)
 
 def aggregate_for_summary(dff: pd.DataFrame) -> str:
     """Agrega dados para resumos mensais — evita estouro de tokens."""
@@ -1918,7 +1947,11 @@ async def chat(req: ChatRequest):
             'detalhes dessa','detalhe dessa','itens da nota','itens dessa nota'
         ]) or bool(re.search(r'\bnr?\s*(?:nota|docto|doc)?\s*[:\s#]?\s*\d{3,8}\b', pergunta_para_filtro.lower()))
 
-        if (n > 1500 or is_summary_query(pergunta_para_filtro) or is_summary_query(ultima)) and not is_nota_query:
+        if is_nota_query:
+            # Agrega itens da nota — evita estouro de tokens
+            sales_data = aggregate_nota(dff)
+            data_label = f"NOTA FISCAL{' | ' + periodo_label if periodo_label else ''}{aviso_extra}"
+        elif (n > 1500 or is_summary_query(pergunta_para_filtro) or is_summary_query(ultima)):
             sales_data = aggregate_for_summary(dff)
             data_label = f"DADOS AGREGADOS ({n} registros originais){' | ' + periodo_label if periodo_label else ''}{aviso_extra}"
         else:
