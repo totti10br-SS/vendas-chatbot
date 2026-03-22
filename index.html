@@ -646,7 +646,7 @@ async function sendMessage(){
 function processDanfe(html) {
   if(!html) return html;
   try {
-    return html.replace(/DANFE:([0-9]{44})/g, function(match, chave) {
+    return html.replace(/DANFE:\s*([0-9]{44})/g, function(match, chave) {
       var url = 'https://www.nfe.fazenda.gov.br/portal/consultaRecaptcha.aspx?tipoConsulta=resumo&chave=' + chave;
       return '<a class="btn-danfe" href="' + url + '" target="_blank">📄 Ver DANFE</a>';
     });
