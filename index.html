@@ -296,8 +296,23 @@ body.modo-vasco .input-area{background:#0d0d0d;border-top-color:#fff;}
 body.modo-vasco .easter-btn{border-color:#fff;color:#fff;background:rgba(255,255,255,.08);}
 body.modo-vasco .dash-divider{background:rgba(255,255,255,.08);}
 body.modo-vasco .welcome h2 span{color:#ddd;}
-body.modo-vasco .welcome p strong{color:#fff;}
-</style>
+/* Modal DANFE */
+.danfe-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:9999;align-items:center;justify-content:center;}
+.danfe-overlay.active{display:flex;}
+.danfe-box{background:#1a1a1a;border:1px solid #333;border-radius:8px;width:90vw;max-width:960px;height:90vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 40px rgba(0,0,0,.7);}
+.danfe-header{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:#111;border-bottom:1px solid #333;flex-shrink:0;}
+.danfe-header span{color:#f0f0f0;font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:700;letter-spacing:1px;text-transform:uppercase;}
+.danfe-header-btns{display:flex;gap:8px;}
+.danfe-btn-dl{display:inline-flex;align-items:center;gap:5px;background:#b22222;border:none;color:#fff;font-family:'Barlow Condensed',sans-serif;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;padding:5px 12px;border-radius:4px;cursor:pointer;text-decoration:none;}
+.danfe-btn-dl:hover{background:#cc0000;}
+.danfe-close{background:none;border:none;color:#888;font-size:20px;cursor:pointer;line-height:1;padding:2px 6px;}
+.danfe-close:hover{color:#fff;}
+.danfe-body{flex:1;overflow:hidden;position:relative;}
+.danfe-body iframe{width:100%;height:100%;border:none;}
+.danfe-loading{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#888;font-family:'Barlow Condensed',sans-serif;font-size:15px;gap:12px;}
+.danfe-spinner{width:36px;height:36px;border:3px solid #333;border-top-color:#b22222;border-radius:50%;animation:spin .8s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
 </head>
 <body>
 
@@ -659,11 +674,49 @@ function processDanfe(html) {
   if(!html) return html;
   try {
     return html.replace(/DANFE:\s*([0-9]{44})/g, function(match, chave) {
-      var url = 'https://www.nfe.fazenda.gov.br/portal/consultaRecaptcha.aspx?tipoConsulta=resumo&chave=' + chave;
-      return '<a class="btn-danfe" href="' + url + '" target="_blank">📄 Ver DANFE</a>';
+      return '<button class="btn-danfe" onclick="abrirDanfe(\'' + chave + '\')">📄 Ver DANFE</button>';
     });
   } catch(e) { return html; }
 }
+
+function abrirDanfe(chave) {
+  var overlay  = document.getElementById('danfeOverlay');
+  var iframe   = document.getElementById('danfeIframe');
+  var loading  = document.getElementById('danfeLoading');
+  var dlBtn    = document.getElementById('danfeDlBtn');
+  var url      = '/danfe/' + chave;
+
+  // Resetar estado
+  iframe.style.display = 'none';
+  iframe.src = '';
+  loading.style.display = 'flex';
+  dlBtn.href = url;
+  dlBtn.download = 'DANFE_' + chave + '.pdf';
+
+  overlay.classList.add('active');
+
+  // Carregar PDF no iframe
+  iframe.onload = function() {
+    loading.style.display = 'none';
+    iframe.style.display = 'block';
+  };
+  iframe.onerror = function() {
+    loading.innerHTML = '<span style="color:#e55">❌ Erro ao carregar DANFE.<br>Verifique se a nota está autorizada na SEFAZ.</span>';
+  };
+  iframe.src = url;
+}
+
+function fecharDanfe() {
+  var overlay = document.getElementById('danfeOverlay');
+  var iframe  = document.getElementById('danfeIframe');
+  overlay.classList.remove('active');
+  iframe.src = '';
+}
+
+function closeDanfe(e) {
+  if(e.target === document.getElementById('danfeOverlay')) fecharDanfe();
+}
+
 
 function addMessage(role,content){
   const el=document.getElementById('messages');
@@ -861,5 +914,25 @@ sendMessage = async function(){
     </div>
   </div>
 </div>
+<!-- Modal DANFE -->
+<div class="danfe-overlay" id="danfeOverlay" onclick="closeDanfe(event)">
+  <div class="danfe-box">
+    <div class="danfe-header">
+      <span>📄 DANFE</span>
+      <div class="danfe-header-btns">
+        <a id="danfeDlBtn" href="#" download class="danfe-btn-dl">⬇ Baixar PDF</a>
+        <button class="danfe-close" onclick="fecharDanfe()">✕</button>
+      </div>
+    </div>
+    <div class="danfe-body">
+      <div class="danfe-loading" id="danfeLoading">
+        <div class="danfe-spinner"></div>
+        <span>Consultando SEFAZ...</span>
+      </div>
+      <iframe id="danfeIframe" src="" style="display:none"></iframe>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
