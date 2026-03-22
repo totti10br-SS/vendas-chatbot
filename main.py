@@ -99,6 +99,14 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str, ctx: dict = None) -> pd.Dat
         'domingo':6,'dom':6
     }
 
+    # ── Filtro por NR NOTA — roda ANTES de tudo, busca direto no NUM_DOCTO ──
+    m_nota_pre = re.search(r'\bnr?\s*(?:nota|fiscal|docto|doc)?\s*[:\s#]?\s*(\d{4,8})\b', pl)
+    if m_nota_pre and 'NUM_DOCTO' in dff.columns:
+        nr = m_nota_pre.group(1)
+        mask_nr = dff['NUM_DOCTO'].astype(str).str.strip() == nr
+        if mask_nr.sum() > 0:
+            return dff[mask_nr]  # retorna imediatamente — sem nenhum filtro de período
+
     # ── Filtro por CNPJ raiz — roda PRIMEIRO, antes de qualquer filtro temporal ──
     # Detecta: "cnpj 73849952", "cnpj raiz 73849952", "cnpj: 73.849.952/0001-34"
     # Também detecta número isolado de 8+ dígitos quando contexto menciona "cnpj"
@@ -643,9 +651,29 @@ def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None, df_orig: pd.D
     m_nota = re.search(r'\bnr?\s*(?:nota|docto|doc)?\s*[:\s#]?\s*(\d{3,8})\b', pl)
     if m_nota and 'NUM_DOCTO' in dff.columns:
         nr = m_nota.group(1)
-        mask_nota = dff['NUM_DOCTO'].astype(str).str.strip() == nr
+        # Busca no df completo para não depender de filtro de período
+        base_nota = df_orig if df_orig is not None and len(df_orig) > 0 else dff
+        mask_nota = base_nota['NUM_DOCTO'].astype(str).str.strip() == nr
         if mask_nota.sum() > 0:
-            dff = dff[mask_nota]
+            dff_nota = base_nota[mask_nota]
+            # Múltiplas filiais com mesmo número de nota — filtra pela filial mais recente/frequente
+            if 'NOME_FILIAL' in dff_nota.columns and dff_nota['NOME_FILIAL'].nunique() > 1:
+                # Prefere filial que já estava no contexto (filtro de período)
+                if 'NOME_FILIAL' in dff.columns and len(dff) > 0:
+                    filiais_ctx = dff['NOME_FILIAL'].unique()
+                    mask_fil = dff_nota['NOME_FILIAL'].isin(filiais_ctx)
+                    if mask_fil.sum() > 0:
+                        dff_nota = dff_nota[mask_fil]
+                # Se ainda múltiplas, pega a mais frequente
+                if dff_nota['NOME_FILIAL'].nunique() > 1:
+                    filial_principal = dff_nota['NOME_FILIAL'].value_counts().index[0]
+                    dff_nota = dff_nota[dff_nota['NOME_FILIAL'] == filial_principal]
+            dff = dff_nota
+        else:
+            # Fallback: busca no dff filtrado por período
+            mask_nota2 = dff['NUM_DOCTO'].astype(str).str.strip() == nr
+            if mask_nota2.sum() > 0:
+                dff = dff[mask_nota2]
 
     # ── "última nota" / "ultimo pedido" — retorna os itens da nota mais recente ──
     if any(x in pl for x in ['última nota','ultima nota','último pedido','ultimo pedido','last nota']) and 'NUM_DOCTO' in dff.columns:
