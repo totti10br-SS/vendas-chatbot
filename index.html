@@ -674,7 +674,7 @@ function processDanfe(html) {
   if(!html) return html;
   try {
     return html.replace(/DANFE:\s*([0-9]{44})/g, function(match, chave) {
-      return '<button class="btn-danfe" onclick="abrirDanfe(\'' + chave + '\')">📄 Ver DANFE</button>';
+      return '<button class="btn-danfe" data-chave="' + chave + '" onclick="abrirDanfe(this.dataset.chave)">📄 Ver DANFE</button>';
     });
   } catch(e) { return html; }
 }
