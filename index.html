@@ -296,6 +296,7 @@ body.modo-vasco .input-area{background:#0d0d0d;border-top-color:#fff;}
 body.modo-vasco .easter-btn{border-color:#fff;color:#fff;background:rgba(255,255,255,.08);}
 body.modo-vasco .dash-divider{background:rgba(255,255,255,.08);}
 body.modo-vasco .welcome h2 span{color:#ddd;}
+body.modo-vasco .welcome p strong{color:#fff;}
 /* Modal DANFE */
 .danfe-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:9999;align-items:center;justify-content:center;}
 .danfe-overlay.active{display:flex;}
@@ -311,8 +312,7 @@ body.modo-vasco .welcome h2 span{color:#ddd;}
 .danfe-body iframe{width:100%;height:100%;border:none;}
 .danfe-loading{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#888;font-family:'Barlow Condensed',sans-serif;font-size:15px;gap:12px;}
 .danfe-spinner{width:36px;height:36px;border:3px solid #333;border-top-color:#b22222;border-radius:50%;animation:spin .8s linear infinite;}
-@keyframes spin{to{transform:rotate(360deg);}}
-
+</style>
 </head>
 <body>
 
@@ -680,43 +680,30 @@ function processDanfe(html) {
 }
 
 function abrirDanfe(chave) {
-  var overlay  = document.getElementById('danfeOverlay');
-  var iframe   = document.getElementById('danfeIframe');
-  var loading  = document.getElementById('danfeLoading');
-  var dlBtn    = document.getElementById('danfeDlBtn');
-  var url      = '/danfe/' + chave;
-
-  // Resetar estado
+  var overlay = document.getElementById('danfeOverlay');
+  var iframe  = document.getElementById('danfeIframe');
+  var loading = document.getElementById('danfeLoading');
+  var dlBtn   = document.getElementById('danfeDlBtn');
+  var url     = '/danfe/' + chave;
   iframe.style.display = 'none';
   iframe.src = '';
   loading.style.display = 'flex';
   dlBtn.href = url;
   dlBtn.download = 'DANFE_' + chave + '.pdf';
-
   overlay.classList.add('active');
-
-  // Carregar PDF no iframe
-  iframe.onload = function() {
-    loading.style.display = 'none';
-    iframe.style.display = 'block';
-  };
-  iframe.onerror = function() {
-    loading.innerHTML = '<span style="color:#e55">❌ Erro ao carregar DANFE.<br>Verifique se a nota está autorizada na SEFAZ.</span>';
-  };
+  iframe.onload = function() { loading.style.display='none'; iframe.style.display='block'; };
+  iframe.onerror = function() { loading.innerHTML='<span style="color:#e55">❌ Erro ao carregar DANFE.</span>'; };
   iframe.src = url;
 }
 
 function fecharDanfe() {
-  var overlay = document.getElementById('danfeOverlay');
-  var iframe  = document.getElementById('danfeIframe');
-  overlay.classList.remove('active');
-  iframe.src = '';
+  document.getElementById('danfeOverlay').classList.remove('active');
+  document.getElementById('danfeIframe').src = '';
 }
 
 function closeDanfe(e) {
   if(e.target === document.getElementById('danfeOverlay')) fecharDanfe();
 }
-
 
 function addMessage(role,content){
   const el=document.getElementById('messages');
@@ -933,6 +920,5 @@ sendMessage = async function(){
     </div>
   </div>
 </div>
-
 </body>
 </html>
