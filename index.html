@@ -643,6 +643,16 @@ async function sendMessage(){
   scrollToBottom();
 }
 
+function processDanfe(html) {
+  if(!html) return html;
+  try {
+    return html.replace(/DANFE:([0-9]{44})/g, function(match, chave) {
+      var url = 'https://www.nfe.fazenda.gov.br/portal/consultaRecaptcha.aspx?tipoConsulta=resumo&chave=' + chave;
+      return '<a class="btn-danfe" href="' + url + '" target="_blank">📄 Ver DANFE</a>';
+    });
+  } catch(e) { return html; }
+}
+
 function addMessage(role,content){
   const el=document.getElementById('messages');
   const div=document.createElement('div');
