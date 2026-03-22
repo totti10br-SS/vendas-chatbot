@@ -389,18 +389,24 @@ function fmtBRL(v){return 'R$ '+parseFloat(v||0).toLocaleString('pt-BR',{minimum
 function fmtKg(v){return parseFloat(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+' kg';}
 
 function renderMarkdown(text){
+  // Normaliza line endings (evita falha da regex com \r\n)
+  text=text.replace(/\r\n/g,'\n').replace(/\r/g,'\n');
+  // Helper: processa bold dentro de células
+  function boldInCell(c){return c.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');}
+  // Helper: extrai células preservando as vazias (só remove pipes externos)
+  function parseCells(row){var p=row.split('|');p=p.slice(1,p.length-1);return p.map(function(c){return boldInCell(c.trim());});}
   // Tabelas markdown
   text=text.replace(/\|(.+)\|\n\|[-| :]+\|\n((?:\|.+\|\n?)+)/gm,function(m,header,rows){
-    var ths=header.split('|').filter(function(c){return c.trim();}).map(function(c){return '<th>'+c.trim()+'</th>';}).join('');
-    var headerCount=ths.split('<th>').length-1;
+    var ths=parseCells('|'+header+'|');
+    var hCount=ths.length;
+    var thsHtml=ths.map(function(c){return '<th>'+c+'</th>';}).join('');
     var trs=rows.trim().split('\n').map(function(row){
-      // Preserva células vazias (ex: linha TOTAIS com | | | |)
-      var parts=row.split('|');
-      parts=parts.slice(1,parts.length-1); // remove apenas os pipes externos
-      var tds=parts.map(function(c){return '<td>'+c.trim()+'</td>';}).join('');
-      return '<tr>'+tds+'</tr>';
+      var cells=parseCells(row);
+      // Preenche células faltantes (ex: linha TOTAIS com | | | |)
+      while(cells.length<hCount)cells.push('');
+      return '<tr>'+cells.map(function(c){return '<td>'+c+'</td>';}).join('')+'</tr>';
     }).join('');
-    return '<table><thead><tr>'+ths+'</tr></thead><tbody>'+trs+'</tbody></table>';
+    return '<table><thead><tr>'+thsHtml+'</tr></thead><tbody>'+trs+'</tbody></table>';
   });
   text=text.replace(/^### (.+)$/gm,'<h3>$1</h3>');
   text=text.replace(/^## (.+)$/gm,'<h2>$1</h2>');
