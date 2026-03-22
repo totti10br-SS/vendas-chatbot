@@ -312,6 +312,114 @@ body.modo-vasco .welcome p strong{color:#fff;}
 .danfe-body iframe{width:100%;height:100%;border:none;}
 .danfe-loading{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#888;font-family:'Barlow Condensed',sans-serif;font-size:15px;gap:12px;}
 .danfe-spinner{width:36px;height:36px;border:3px solid #333;border-top-color:#b22222;border-radius:50%;animation:spin .8s linear infinite;}
+
+/* ═══════════════════════════════════════════════════════
+   MOBILE RESPONSIVO — max-width: 768px
+   Nada acima foi alterado. Só adições abaixo.
+═══════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+
+  /* BODY */
+  body { height:100dvh; overflow:hidden; }
+
+  /* HEADER */
+  header { height:48px; padding:0 10px; gap:8px; }
+  .header-info h1 { font-size:13px; }
+  .header-info p { display:none; }
+  .stat-sub { display:none; }
+  .stat-pill { font-size:11px; }
+  header > div[style*="left:50%"] { display:none; } /* esconde botão MENU */
+
+  /* BARRA POSIÇÃO */
+  #posicaoBar { font-size:10px; padding:2px 10px; }
+
+  /* DASHBOARD — scroll horizontal */
+  .dashboard {
+    padding:6px 10px;
+    overflow-x:auto;
+    overflow-y:hidden;
+    flex-wrap:nowrap;
+    -webkit-overflow-scrolling:touch;
+    gap:8px;
+  }
+  .dashboard::-webkit-scrollbar { display:none; }
+
+  /* KPIs menores */
+  .kpi-mini { padding:4px 8px; }
+  .kpi-mini-value { font-size:15px; }
+  .kpi-mini-label { font-size:8px; }
+
+  /* Tipo de Carne compacto */
+  .tipo-carne-box { padding:4px 8px; }
+  .tipo-carne-title { font-size:8px; }
+  .tc-fat { font-size:10px; }
+  .tc-kg { font-size:9px; }
+
+  /* Divider vertical some */
+  .dash-divider { display:none; }
+
+  /* Top clientes — largura auto */
+  .top-clientes { width:auto; min-width:260px; flex-shrink:0; }
+  .c-nome { width:120px; font-size:10px; }
+  .c-kg { font-size:10px; }
+  .c-fat { font-size:10px; }
+  .cliente-row { padding:3px 6px; }
+
+  /* MAIN WRAP */
+  .main-wrap { flex-direction:column; }
+
+  /* MESSAGES */
+  #messages { padding:10px 8px 6px; gap:10px; }
+  .bubble { font-size:13px; padding:9px 12px; }
+  .msg-avatar { width:24px; height:24px; font-size:9px; }
+
+  /* Tabelas — scroll horizontal */
+  .bubble table { font-size:11px; }
+  .bubble th, .bubble td { padding:3px 5px; }
+
+  /* SIDE PANEL — tela cheia em mobile */
+  .side-panel { 
+    position:fixed; 
+    inset:0; 
+    width:100% !important; 
+    z-index:500;
+    transform:translateX(100%);
+    transition:transform .3s ease;
+  }
+  .side-panel.open { 
+    transform:translateX(0); 
+    width:100% !important;
+  }
+
+  /* INPUT AREA */
+  .input-area { padding:8px 10px; gap:8px; }
+  #userInput { font-size:16px; padding:9px 12px; } /* 16px evita zoom no iOS */
+  #sendBtn { width:40px; height:40px; }
+
+  /* INSIGHT PANEL — esconde em mobile */
+  .insight-panel { display:none; }
+
+  /* WELCOME */
+  .welcome h2 { font-size:26px; }
+  .welcome p { font-size:13px; }
+  .suggestions { gap:6px; }
+  .suggestion { font-size:12px; padding:6px 12px; }
+
+  /* BTN DANFE */
+  .btn-danfe { font-size:12px; padding:8px 14px; }
+
+  /* MODAL DANFE — tela cheia em mobile */
+  .danfe-box { width:100vw; height:100vh; border-radius:0; max-width:100%; }
+
+}
+
+/* Telas muito pequenas (< 380px) */
+@media (max-width: 380px) {
+  .kpi-mini-value { font-size:13px; }
+  .header-info h1 { font-size:11px; }
+  .bubble { font-size:12px; }
+}
+
 </style>
 </head>
 <body>
