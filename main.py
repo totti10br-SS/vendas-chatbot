@@ -2080,8 +2080,7 @@ Linha em branco
 Tabela com colunas: # | PRODUTO | COD | DIVISÃO | QTDE KG | CX | VALOR | R$/KG
 Uma linha por item
 Última linha da tabela: **TOTAIS** | (vazio) | (vazio) | (vazio) | [soma kg] | [soma cx] | [soma valor] | [pm]
-Se houver CHAVE_ACESSO_NFE nos dados, adicione exatamente esta linha após a tabela: "DANFE:[chave de 44 dígitos]"
-SEM nenhum outro texto após a tabela.
+Se houver CHAVE_ACESSO_NFE nos dados, adicione esta linha FORA e APÓS a tabela Markdown, em linha separada, sem nenhum caractere extra: "DANFE:[chave de 44 dígitos sem espaços]". Exemplo: DANFE:35260321074800000241550010001850531234567890
   | # | PRODUTO | COD | DIVISÃO | QTDE kg | CX | VALOR | R$/kg |
   Depois: totais (kg total, cx total, faturamento total, preço médio), cliente, filial, vendedor, data
 - Quando o usuário pedir "detalhes dessa nota" ou "detalhe da nota X" mas os dados contiverem MÚLTIPLOS NUM_DOCTO: pergunte "Qual o número da nota? (ex: nr 184828)" — NÃO diga que não tem acesso aos dados
