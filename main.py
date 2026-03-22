@@ -2073,17 +2073,16 @@ async def chat(req: ChatRequest):
 - "Ontem" / períodos sem movimento: se os dados recebidos forem de uma data diferente do dia literal pedido, processe normalmente e informe apenas UMA linha no início: "_(Dados de DD/MM/AA — dia útil anterior disponível)_". Não peça confirmação, não ofereça opções, vá direto à análise.
 
 ## DETALHE DE NOTA FISCAL
-- Quando o usuário pedir detalhes de uma nota: exiba APENAS os dados exatos que estão nos dados fornecidos. NUNCA adicione, invente ou misture dados de outros clientes ou notas. O CLIENTE correto é o que aparece no campo NOME_CLIENTE dos dados. Formato OBRIGATÓRIO — use exatamente esta estrutura com cada linha separada:
-## NOTA FISCAL [NR] · [DATA]
-**Filial:** [FILIAL] | **Cliente:** [CLIENTE] | **Vendedor:** [VENDEDOR]
-
-| # | PRODUTO | COD | DIVISÃO | QTDE kg | CX | VALOR | R$/kg |
-|---|---------|-----|---------|---------|----|----|-------|
-| 1 | [produto] | [cod] | [div] | [kg] | [cx] | [valor] | [pm] |
-| **TOTAIS** | | | | [soma kg] | [soma cx] | [soma valor] | [pm] |
-
-ATENÇÃO: A linha |---|---| é OBRIGATÓRIA. Cada linha da tabela deve ter sua própria quebra de linha. NUNCA junte múltiplas linhas em uma só.
-Se houver CHAVE_ACESSO_NFE nos dados, adicione após a tabela com linha em branco antes: "DANFE:[chave 44 dígitos sem espaços]"
+- Quando o usuário pedir detalhes de uma nota: exiba APENAS os dados exatos que estão nos dados fornecidos. NUNCA adicione, invente ou misture dados de outros clientes ou notas. O CLIENTE correto é o que aparece no campo NOME_CLIENTE dos dados. Formato obrigatório para nota fiscal:
+1ª linha: "## NOTA FISCAL [NR] · [DATA]"
+2ª linha: "**Filial:** [FILIAL] | **Cliente:** [CLIENTE] | **Vendedor:** [VENDEDOR]"
+Linha em branco
+Tabela com colunas: # | PRODUTO | COD | DIVISÃO | QTDE KG | CX | VALOR | R$/KG
+Uma linha por item
+Última linha da tabela: **TOTAIS** | (vazio) | (vazio) | (vazio) | [soma kg] | [soma cx] | [soma valor] | [pm]
+Se houver CHAVE_ACESSO_NFE nos dados, adicione FORA e APÓS a tabela Markdown, com uma linha em branco antes, sem nenhum caractere extra: "DANFE:[chave de 44 dígitos sem espaços]". Exemplo: DANFE:35260321074800000241550010001850531234567890
+  | # | PRODUTO | COD | DIVISÃO | QTDE kg | CX | VALOR | R$/kg |
+  Depois: totais (kg total, cx total, faturamento total, preço médio), cliente, filial, vendedor, data
 - Quando o usuário pedir "detalhes dessa nota" ou "detalhe da nota X" mas os dados contiverem MÚLTIPLOS NUM_DOCTO: pergunte "Qual o número da nota? (ex: nr 184828)" — NÃO diga que não tem acesso aos dados
 - NUNCA diga que não tem acesso a detalhes transacionais — você tem acesso completo ao CSV com todos os itens
 
@@ -2653,13 +2652,13 @@ async def get_danfe(chave: str):
         ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
         ' xmlns:xsd="http://www.w3.org/2001/XMLSchema">'
         '<soap:Header>'
-        '<nfeCabecMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsulta4">'
+        '<nfeCabecMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsultaProtocolo4">'
         f'<cUF>{c_uf}</cUF>'
         '<versaoDados>4.00</versaoDados>'
         '</nfeCabecMsg>'
         '</soap:Header>'
         '<soap:Body>'
-        '<nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsulta4">'
+        '<nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsultaProtocolo4">'
         '<consSitNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">'
         '<tpAmb>1</tpAmb>'
         '<xServ>CONSULTAR</xServ>'
@@ -2692,7 +2691,7 @@ async def get_danfe(chave: str):
                 content=soap_body.encode("utf-8"),
                 headers={
                     "Content-Type": "application/soap+xml; charset=utf-8",
-                    "SOAPAction": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsulta4/nfeConsultaNF"
+                    "SOAPAction": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsultaProtocolo4/nfeConsultaNF"
                 }
             )
         if resp.status_code != 200:
