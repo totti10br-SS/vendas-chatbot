@@ -2672,8 +2672,19 @@ async def get_danfe(chave: str):
                 raise HTTPException(status_code=502,
                     detail=f"PDF não disponível ({r.status_code}, {len(r.content)} bytes)")
 
+            # MeuDanfe retorna JSON com PDF em BASE64
+            import base64 as _b64
+            try:
+                data = r.json()
+                if isinstance(data, dict) and data.get("format") == "BASE64":
+                    pdf_bytes = _b64.b64decode(data["data"])
+                else:
+                    pdf_bytes = r.content
+            except Exception:
+                pdf_bytes = r.content
+
             return Response(
-                content=r.content,
+                content=pdf_bytes,
                 media_type="application/pdf",
                 headers={"Content-Disposition": f"inline; filename=DANFE_{chave}.pdf"}
             )
