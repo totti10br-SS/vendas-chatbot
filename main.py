@@ -732,6 +732,12 @@ def aggregate_nota(dff: pd.DataFrame) -> str:
     # Itens da nota
     lines.append("ITENS:")
     cols_prod = [c for c in ['COD_PRODUTO','DESC_PRODUTO','QTDE_PRI','QTDE_AUX','VALOR_UNITARIO','VALOR_LIQUIDO','DESC_DIVISAO2'] if c in dff.columns]
+
+    # Inclui chave de acesso NF-e se disponível
+    if 'CHAVE_ACESSO' in dff.columns:
+        chave = dff['CHAVE_ACESSO'].dropna().iloc[0] if len(dff) > 0 else ''
+        if chave and len(str(chave).strip()) == 44:
+            lines.append(f"CHAVE_ACESSO_NFE: {str(chave).strip()}")
     for _, row in dff[cols_prod].iterrows():
         linha = " | ".join(f"{c}: {row[c]}" for c in cols_prod)
         lines.append(linha)
@@ -2075,7 +2081,8 @@ Linha em branco
 Tabela com colunas: # | PRODUTO | COD | DIVISÃO | QTDE KG | CX | VALOR | R$/KG
 Uma linha por item
 Última linha da tabela: **TOTAIS** | (vazio) | (vazio) | (vazio) | [soma kg] | [soma cx] | [soma valor] | [pm]
-SEM nenhum texto após a tabela.
+Se houver CHAVE_ACESSO_NFE nos dados, adicione exatamente esta linha após a tabela: "DANFE:[chave de 44 dígitos]"
+SEM nenhum outro texto após a tabela.
   | # | PRODUTO | COD | DIVISÃO | QTDE kg | CX | VALOR | R$/kg |
   Depois: totais (kg total, cx total, faturamento total, preço médio), cliente, filial, vendedor, data
 - Quando o usuário pedir "detalhes dessa nota" ou "detalhe da nota X" mas os dados contiverem MÚLTIPLOS NUM_DOCTO: pergunte "Qual o número da nota? (ex: nr 184828)" — NÃO diga que não tem acesso aos dados

@@ -648,7 +648,7 @@ function addMessage(role,content){
   const div=document.createElement('div');
   div.className=`message ${role}`;
   const av=role==='assistant'?'IAF':'👤';
-  const rendered=role==='assistant'?renderMarkdown(content):content;
+  const rendered=role==='assistant'?processDanfe(renderMarkdown(content)):content;
   div.innerHTML=`<div class="msg-avatar">${av}</div><div class="bubble">${rendered}</div>`;
   el.appendChild(div); scrollToBottom(); return div;
 }
