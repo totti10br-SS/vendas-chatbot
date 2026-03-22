@@ -2633,58 +2633,59 @@ def health_ia3():
     return {"status":"ok","sistema":"IA3"}
 
 
-# ── DANFE via MeuDanfe API ──────────────────────────────────────────────────
+# ── DANFE via MeuDanfe API v2 ───────────────────────────────────────────────
 @app.get("/danfe/{chave}")
 async def get_danfe(chave: str):
     from fastapi.responses import Response
+    import base64 as _b64
 
     if not re.match(r'^\d{44}$', chave):
         raise HTTPException(status_code=400, detail="Chave de acesso inválida.")
 
     MEUDANFE_KEY = "0c1588f4-f90e-4711-8b39-87be9a1581da"
+    BASE = "https://api.meudanfe.com.br/v2"
+    headers = {"Api-Key": MEUDANFE_KEY}
 
     try:
-        # 1ª tentativa: buscar PDF direto pela chave
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(
-                f"https://api.meudanfe.com.br/api/v1/nfe/{chave}/danfe/pdf",
-                headers={"Api-Key": MEUDANFE_KEY}
-            )
 
-        if resp.status_code == 200 and resp.headers.get("content-type","").startswith("application/pdf"):
-            return Response(
-                content=resp.content,
-                media_type="application/pdf",
-                headers={"Content-Disposition": f"inline; filename=DANFE_{chave}.pdf"}
-            )
+            # Tenta baixar DANFE direto (se já estiver na base)
+            r = await client.get(f"{BASE}/fd/get/da/{chave}", headers=headers)
 
-        # 2ª tentativa: buscar NF-e primeiro (adiciona à base), depois PDF
-        async with httpx.AsyncClient(timeout=30) as client:
-            r2 = await client.get(
-                f"https://api.meudanfe.com.br/api/v1/nfe/{chave}",
-                headers={"Api-Key": MEUDANFE_KEY}
-            )
+            if r.status_code == 404:
+                # Não está na base — busca na Receita (R$ 0,03)
+                r2 = await client.put(f"{BASE}/fd/add/{chave}", headers=headers)
+                if r2.status_code not in (200, 201):
+                    raise HTTPException(status_code=502,
+                        detail=f"MeuDanfe: erro ao buscar NF-e (status {r2.status_code}: {r2.text[:200]})")
 
-        if r2.status_code not in (200, 201):
-            raise HTTPException(status_code=502, detail=f"MeuDanfe: erro ao buscar NF-e (status {r2.status_code})")
+                # Agora baixa o DANFE
+                r = await client.get(f"{BASE}/fd/get/da/{chave}", headers=headers)
 
-        # Agora busca o PDF
-        async with httpx.AsyncClient(timeout=30) as client:
-            r3 = await client.get(
-                f"https://api.meudanfe.com.br/api/v1/nfe/{chave}/danfe/pdf",
-                headers={"Api-Key": MEUDANFE_KEY}
-            )
+            if r.status_code != 200:
+                raise HTTPException(status_code=502,
+                    detail=f"MeuDanfe: erro ao gerar DANFE (status {r.status_code}: {r.text[:200]})")
 
-        if r3.status_code == 200:
-            return Response(
-                content=r3.content,
-                media_type="application/pdf",
-                headers={"Content-Disposition": f"inline; filename=DANFE_{chave}.pdf"}
-            )
+            # Resposta pode ser PDF direto ou base64
+            ct = r.headers.get("content-type", "")
+            if "application/pdf" in ct:
+                pdf_bytes = r.content
+            else:
+                # Tenta decodificar base64
+                try:
+                    data = r.json()
+                    pdf_b64 = data.get("pdf") or data.get("danfe") or data.get("base64") or ""
+                    pdf_bytes = _b64.b64decode(pdf_b64)
+                except Exception:
+                    pdf_bytes = r.content
 
-        raise HTTPException(status_code=502, detail=f"MeuDanfe: não foi possível gerar o PDF (status {r3.status_code})")
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"inline; filename=DANFE_{chave}.pdf"}
+        )
 
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao consultar MeuDanfe: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erro MeuDanfe: {str(e)}")
