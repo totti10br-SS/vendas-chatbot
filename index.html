@@ -680,48 +680,27 @@ function processDanfe(html) {
 }
 
 function abrirDanfe(chave) {
-  var overlay = document.getElementById('danfeOverlay');
-  var iframe  = document.getElementById('danfeIframe');
-  var loading = document.getElementById('danfeLoading');
-  var dlBtn   = document.getElementById('danfeDlBtn');
-  var url     = '/danfe/' + chave;
-
-  iframe.style.display = 'none';
-  iframe.src = '';
-  loading.style.display = 'flex';
-  loading.innerHTML = '<div class="danfe-spinner"></div><span>Consultando SEFAZ...</span>';
-  dlBtn.href = url;
-  dlBtn.download = 'DANFE_' + chave + '.pdf';
-  overlay.classList.add('active');
-
-  // Busca o PDF via fetch e cria blob URL para o iframe
+  var url = '/danfe/' + chave;
+  // Abre o PDF diretamente em nova aba
+  var win = window.open('', '_blank');
+  win.document.write('<html><body style="margin:0;background:#222"><p style="color:#fff;font-family:sans-serif;padding:20px">⏳ Carregando DANFE...</p></body></html>');
   fetch(url)
     .then(function(r) {
       if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
       return r.blob();
     })
     .then(function(blob) {
-      var blobUrl = URL.createObjectURL(blob);
-      iframe.src = blobUrl;
-      iframe.style.display = 'block';
-      loading.style.display = 'none';
-      // Libera memória quando fechar
-      iframe.dataset.blobUrl = blobUrl;
+      var blobUrl = URL.createObjectURL(new Blob([blob], {type:'application/pdf'}));
+      win.location.href = blobUrl;
     })
     .catch(function(err) {
-      loading.innerHTML = '<span style="color:#e55">❌ Erro ao carregar DANFE.<br><small>' + err.message.substring(0,100) + '</small></span>';
+      win.document.body.innerHTML = '<p style="color:#f55;font-family:sans-serif;padding:20px">❌ Erro: ' + err.message + '</p>';
     });
 }
 
 function fecharDanfe() {
-  var overlay = document.getElementById('danfeOverlay');
-  var iframe  = document.getElementById('danfeIframe');
-  overlay.classList.remove('active');
-  if (iframe.dataset.blobUrl) {
-    URL.revokeObjectURL(iframe.dataset.blobUrl);
-    iframe.dataset.blobUrl = '';
-  }
-  iframe.src = '';
+  document.getElementById('danfeOverlay').classList.remove('active');
+  document.getElementById('danfeIframe').src = '';
 }
 
 function closeDanfe(e) {
