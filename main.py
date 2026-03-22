@@ -1803,7 +1803,7 @@ async def chat(req: ChatRequest):
     # ── Handler especial: Quem Sou Eu ──
     if ultima.startswith('__QUEM_SOU_EU__'):
         try:
-            df = get_df()
+            df = load_df()
             csv_mod = ultima.split('csv_modificado=')[-1].strip() if 'csv_modificado=' in ultima else '-'
             d_min = df['DATA_MOVTO'].dropna().min()
             d_max = df['DATA_MOVTO'].dropna().max()
