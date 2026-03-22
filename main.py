@@ -1802,35 +1802,40 @@ async def chat(req: ChatRequest):
 
     # ── Handler especial: Quem Sou Eu ──
     if ultima.startswith('__QUEM_SOU_EU__'):
-        df = get_df()
-        csv_mod = "—"
-        if 'csv_modificado=' in ultima:
-            csv_mod = ultima.split('csv_modificado=')[-1].strip()
-        d_min = df['DATA_MOVTO'].dropna().min()
-        d_max = df['DATA_MOVTO'].dropna().max()
-        d_min_str = d_min.strftime('%d/%m/%Y') if pd.notna(d_min) else "—"
-        d_max_str = d_max.strftime('%d/%m/%Y') if pd.notna(d_max) else "—"
-        total = len(df)
-        resposta = f"""## 🤖 Olá! Sou o IAF — Analista Comercial Frinense
+        try:
+            df = get_df()
+            csv_mod = ultima.split('csv_modificado=')[-1].strip() if 'csv_modificado=' in ultima else '-'
+            d_min = df['DATA_MOVTO'].dropna().min()
+            d_max = df['DATA_MOVTO'].dropna().max()
+            d_min_str = d_min.strftime('%d/%m/%Y') if pd.notna(d_min) else '-'
+            d_max_str = d_max.strftime('%d/%m/%Y') if pd.notna(d_max) else '-'
+            total = len(df)
+            resp_lines = [
+                "## Ola! Sou o IAF - Analista Comercial Frinense",
+                "",
+                "Fui desenvolvido para analisar os dados comerciais da **Frinense Alimentos**.",
+                "",
+                "**O que posso fazer:**",
+                "- Analisar faturamento e volume por periodo, filial, vendedor ou cliente",
+                "- Identificar top clientes, produtos e regioes",
+                "- Detalhar notas fiscais e gerar DANFE em PDF",
+                "- Comparar desempenho entre filiais e periodos",
+                "- Criar rankings e relatorios comerciais",
+                "",
+                "---",
+                "",
+                "**Periodo de dados disponivel:**",
+                "- Primeiro registro: **" + d_min_str + "**",
+                "- Ultimo registro: **" + d_max_str + "**",
+                "- Total de registros: **" + f"{total:,}" + "**",
+                "",
+                "**Minha ultima atualizacao foi:** " + csv_mod,
+            ]
+            resposta = "\n".join(resp_lines)
+        except Exception as e:
+            resposta = "Erro ao carregar informacoes: " + str(e)
+        return JSONResponse(content={"content": [{"type": "text", "text": resposta}]})
 
-Fui desenvolvido para analisar os dados comerciais da **Frinense Alimentos**, respondendo perguntas sobre vendas, clientes, produtos, filiais e vendedores com inteligência artificial.
-
-**O que posso fazer:**
-- Analisar faturamento e volume por período, filial, vendedor ou cliente
-- Identificar top clientes, produtos e regiões
-- Detalhar notas fiscais e gerar DANFE em PDF
-- Comparar desempenho entre filiais e períodos
-- Criar rankings e relatórios comerciais
-
----
-
-**📅 Período de dados disponível:**
-- Primeiro registro: **{d_min_str}**
-- Último registro: **{d_max_str}**
-- Total de registros: **{total:,}**
-
-**🔄 Minha última atualização foi:** {csv_mod}"""
-        return JSONResponse(content={{"content":[{{"type":"text","text":resposta}}]}})
 
     # Se a última mensagem não tem contexto temporal (ex: "1", "2", "sim", "ok", "resumo executivo"),
     # busca no histórico recente (últimas 6 mensagens) para encontrar o período da conversa
