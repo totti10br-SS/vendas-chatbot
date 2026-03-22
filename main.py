@@ -640,12 +640,19 @@ def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None, df_orig: pd.D
             dff = dff[dff['DESC_PRODUTO'].str.lower().str.contains(nome_prod, na=False)]
 
     # ── Filtro por NR NOTA / NUM_DOCTO específico ──
+    # Busca no df_orig (histórico completo) para não depender de filtro de período
     m_nota = re.search(r'\bnr?\s*(?:nota|docto|doc)?\s*[:\s#]?\s*(\d{3,8})\b', pl)
     if m_nota and 'NUM_DOCTO' in dff.columns:
         nr = m_nota.group(1)
-        mask_nota = dff['NUM_DOCTO'].astype(str).str.strip() == nr
+        # Tenta no df completo primeiro
+        base_nota = df_orig if df_orig is not None and len(df_orig) > 0 else dff
+        mask_nota = base_nota['NUM_DOCTO'].astype(str).str.strip() == nr
         if mask_nota.sum() > 0:
-            dff = dff[mask_nota]
+            dff = base_nota[mask_nota]  # retorna só os itens dessa nota
+        else:
+            mask_nota2 = dff['NUM_DOCTO'].astype(str).str.strip() == nr
+            if mask_nota2.sum() > 0:
+                dff = dff[mask_nota2]
 
     # ── "última nota" / "ultimo pedido" — retorna os itens da nota mais recente ──
     if any(x in pl for x in ['última nota','ultima nota','último pedido','ultimo pedido','last nota']) and 'NUM_DOCTO' in dff.columns:
@@ -2430,10 +2437,6 @@ def dashboard_ia3():
         top5 = [{"nome": r.NOMECLIENTE, "fat": round(r.fat, 2), "kg": round(r.kg, 2)}
                 for r in top.itertuples()]
 
-        # Último registro disponível no CSV
-        ultima_data = df['DATASAIDA'].dropna().max()
-        ultima_str = ultima_data.strftime('%d/%m/%Y %H:%M') if pd.notna(ultima_data) else '—'
-
         return JSONResponse({
             "total_registros": total,
             "mes_label":  mes_label,
@@ -2441,8 +2444,7 @@ def dashboard_ia3():
             "kg":         round(kg, 2),
             "margem_pct": margem_pct,
             "desconto":   round(desconto, 2),
-            "top5":       top5,
-            "ultima_atualizacao": ultima_str
+            "top5":       top5
         })
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
