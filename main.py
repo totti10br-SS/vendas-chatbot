@@ -2633,133 +2633,58 @@ def health_ia3():
     return {"status":"ok","sistema":"IA3"}
 
 
-# ── DANFE via Webservice SEFAZ ──────────────────────────────────────────────
+# ── DANFE via MeuDanfe API ──────────────────────────────────────────────────
 @app.get("/danfe/{chave}")
 async def get_danfe(chave: str):
-    import base64 as _b64
-    import tempfile
-    import xml.etree.ElementTree as ET
     from fastapi.responses import Response
 
     if not re.match(r'^\d{44}$', chave):
         raise HTTPException(status_code=400, detail="Chave de acesso inválida.")
 
-    cert_b64   = os.environ.get("CERT_PFX_B64", "")
-    cert_senha = os.environ.get("CERT_PFX_SENHA", "")
-    if not cert_b64 or not cert_senha:
-        raise HTTPException(status_code=500, detail="Certificado digital não configurado.")
+    MEUDANFE_KEY = "0c1588f4-f90e-4711-8b39-87be9a1581da"
 
     try:
-        cert_bytes = _b64.b64decode(cert_b64)
-    except Exception:
-        raise HTTPException(status_code=500, detail="Erro ao decodificar certificado.")
-
-    c_uf = chave[:2]
-    ws_url = "https://nfe.svrs.rs.gov.br/ws/NfeConsulta/NfeConsulta4.asmx"
-
-    # Envelope SOAP 1.2 com namespace exato que a SVRS espera
-    soap_body = (
-        '<?xml version="1.0" encoding="UTF-8"?>'
-        '<soap:Envelope'
-        ' xmlns:soap="http://www.w3.org/2003/05/soap-envelope"'
-        ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
-        ' xmlns:xsd="http://www.w3.org/2001/XMLSchema">'
-        '<soap:Header>'
-        '<nfeCabecMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsultaProtocolo4">'
-        f'<cUF>{c_uf}</cUF>'
-        '<versaoDados>4.00</versaoDados>'
-        '</nfeCabecMsg>'
-        '</soap:Header>'
-        '<soap:Body>'
-        '<nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsultaProtocolo4">'
-        '<consSitNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">'
-        '<tpAmb>1</tpAmb>'
-        '<xServ>CONSULTAR</xServ>'
-        f'<chNFe>{chave}</chNFe>'
-        '</consSitNFe>'
-        '</nfeDadosMsg>'
-        '</soap:Body>'
-        '</soap:Envelope>'
-    )
-
-    key_path = cert_path = None
-    try:
-        from cryptography.hazmat.primitives.serialization import pkcs12, Encoding, PrivateFormat, NoEncryption
-        from cryptography.hazmat.backends import default_backend
-        pfx = pkcs12.load_key_and_certificates(cert_bytes, cert_senha.encode(), default_backend())
-        private_key, certificate, _ = pfx
-        key_pem  = private_key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
-        cert_pem = certificate.public_bytes(Encoding.PEM)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".key") as kf:
-            kf.write(key_pem); key_path = kf.name
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".crt") as cf:
-            cf.write(cert_pem); cert_path = cf.name
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao processar certificado: {str(e)}")
-
-    try:
-        async with httpx.AsyncClient(cert=(cert_path, key_path), verify=False, timeout=30) as client:
-            resp = await client.post(
-                ws_url,
-                content=soap_body.encode("utf-8"),
-                headers={
-                    "Content-Type": "application/soap+xml; charset=utf-8",
-                    "SOAPAction": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsultaProtocolo4/nfeConsultaNF"
-                }
+        # 1ª tentativa: buscar PDF direto pela chave
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(
+                f"https://api.meudanfe.com.br/api/v1/nfe/{chave}/danfe/pdf",
+                headers={"Api-Key": MEUDANFE_KEY}
             )
-        if resp.status_code != 200:
-            raise HTTPException(status_code=502, detail=f"SEFAZ status {resp.status_code}: {resp.text[:500]}")
-        xml_resp = resp.text
-    finally:
-        if key_path:
-            try: os.unlink(key_path)
-            except: pass
-        if cert_path:
-            try: os.unlink(cert_path)
-            except: pass
 
-    try:
-        root = ET.fromstring(xml_resp)
-        xmotivo = root.find(".//{http://www.portalfiscal.inf.br/nfe}xMotivo")
-        cstat = root.find(".//{http://www.portalfiscal.inf.br/nfe}cStat")
-        status_msg = xmotivo.text if xmotivo is not None else "?"
-        status_cod = cstat.text if cstat is not None else "?"
-        nfe_proc = (
-            root.find(".//{http://www.portalfiscal.inf.br/nfe}procNFe") or
-            root.find(".//{http://www.portalfiscal.inf.br/nfe}nfeProc")
-        )
-        if nfe_proc is not None:
-            xml_nfe = ET.tostring(nfe_proc, encoding="unicode")
-        else:
-            nfe_el = root.find(".//{http://www.portalfiscal.inf.br/nfe}NFe")
-            prot_el = root.find(".//{http://www.portalfiscal.inf.br/nfe}protNFe")
-            if nfe_el is not None and prot_el is not None:
-                ns = "http://www.portalfiscal.inf.br/nfe"
-                proc = ET.Element(f"{{{ns}}}procNFe", attrib={"versao": "4.00", "xmlns": ns})
-                proc.append(nfe_el)
-                proc.append(prot_el)
-                xml_nfe = ET.tostring(proc, encoding="unicode")
-            else:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"XML da NF-e não disponível (cStat={status_cod}: {status_msg}). "
-                           f"NF-e de terceiros não pode ser baixada diretamente."
-                )
+        if resp.status_code == 200 and resp.headers.get("content-type","").startswith("application/pdf"):
+            return Response(
+                content=resp.content,
+                media_type="application/pdf",
+                headers={"Content-Disposition": f"inline; filename=DANFE_{chave}.pdf"}
+            )
+
+        # 2ª tentativa: buscar NF-e primeiro (adiciona à base), depois PDF
+        async with httpx.AsyncClient(timeout=30) as client:
+            r2 = await client.get(
+                f"https://api.meudanfe.com.br/api/v1/nfe/{chave}",
+                headers={"Api-Key": MEUDANFE_KEY}
+            )
+
+        if r2.status_code not in (200, 201):
+            raise HTTPException(status_code=502, detail=f"MeuDanfe: erro ao buscar NF-e (status {r2.status_code})")
+
+        # Agora busca o PDF
+        async with httpx.AsyncClient(timeout=30) as client:
+            r3 = await client.get(
+                f"https://api.meudanfe.com.br/api/v1/nfe/{chave}/danfe/pdf",
+                headers={"Api-Key": MEUDANFE_KEY}
+            )
+
+        if r3.status_code == 200:
+            return Response(
+                content=r3.content,
+                media_type="application/pdf",
+                headers={"Content-Disposition": f"inline; filename=DANFE_{chave}.pdf"}
+            )
+
+        raise HTTPException(status_code=502, detail=f"MeuDanfe: não foi possível gerar o PDF (status {r3.status_code})")
+
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao parsear SEFAZ: {str(e)}")
-
-    try:
-        from brazilfiscalreport.danfe import Danfe
-        pdf_buf = io.BytesIO()
-        Danfe(xml=xml_nfe.encode("utf-8")).output(pdf_buf)
-        pdf_bytes = pdf_buf.getvalue()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao gerar PDF: {str(e)}")
-
-    return Response(
-        content=pdf_bytes,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f"inline; filename=DANFE_{chave}.pdf"}
-    )
+        raise HTTPException(status_code=500, detail=f"Erro ao consultar MeuDanfe: {str(e)}")
