@@ -681,20 +681,21 @@ function processDanfe(html) {
 
 function abrirDanfe(chave) {
   var url = '/danfe/' + chave;
-  // Abre o PDF diretamente em nova aba
-  var win = window.open('', '_blank');
-  win.document.write('<html><body style="margin:0;background:#222"><p style="color:#fff;font-family:sans-serif;padding:20px">⏳ Carregando DANFE...</p></body></html>');
   fetch(url)
     .then(function(r) {
       if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
       return r.blob();
     })
     .then(function(blob) {
-      var blobUrl = URL.createObjectURL(new Blob([blob], {type:'application/pdf'}));
-      win.location.href = blobUrl;
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([blob], {type:'application/pdf'}));
+      a.download = 'DANFE_' + chave + '.pdf';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
     })
     .catch(function(err) {
-      win.document.body.innerHTML = '<p style="color:#f55;font-family:sans-serif;padding:20px">❌ Erro: ' + err.message + '</p>';
+      alert('Erro ao baixar DANFE: ' + err.message);
     });
 }
 
