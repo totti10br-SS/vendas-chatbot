@@ -2626,10 +2626,9 @@ async def get_danfe(chave: str):
     Consulta a NF-e na SEFAZ usando o certificado A1 da empresa
     e retorna o PDF da DANFE gerado localmente.
     """
-    import base64
+    import base64 as _base64
     import tempfile
-    import ssl
-    import httpx
+    import xml.etree.ElementTree as ET
     from fastapi.responses import Response
 
     # Validar chave
@@ -2637,26 +2636,24 @@ async def get_danfe(chave: str):
         raise HTTPException(status_code=400, detail="Chave de acesso inválida.")
 
     # Carregar certificado das variáveis de ambiente
-    cert_b64  = os.environ.get("CERT_PFX_B64", "")
+    cert_b64   = os.environ.get("CERT_PFX_B64", "")
     cert_senha = os.environ.get("CERT_PFX_SENHA", "")
     if not cert_b64 or not cert_senha:
         raise HTTPException(status_code=500, detail="Certificado digital não configurado.")
 
     try:
-        cert_bytes = base64.b64decode(cert_b64)
+        cert_bytes = _base64.b64decode(cert_b64)
     except Exception:
         raise HTTPException(status_code=500, detail="Erro ao decodificar certificado.")
 
-    # Extrair cUF da chave (posições 0-1)
+    # Extrair cUF da chave (posições 0-1) — RJ=33 usa SVRS
     c_uf = chave[:2]
-    # RJ = 33, MG = 31 — URL do webservice de consulta por UF
     ws_urls = {
-        "33": "https://nfe.svrs.rs.gov.br/ws/NfeConsulta/NfeConsulta4.asmx",  # RJ usa SVRS
+        "33": "https://nfe.svrs.rs.gov.br/ws/NfeConsulta/NfeConsulta4.asmx",
         "31": "https://nfe.fazenda.mg.gov.br/nfe2/services/NFeConsulta4",
     }
     ws_url = ws_urls.get(c_uf, "https://nfe.svrs.rs.gov.br/ws/NfeConsulta/NfeConsulta4.asmx")
 
-    # Montar envelope SOAP para NfeConsultaProtocolo
     soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
 <soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                  xmlns:xsd="http://www.w3.org/2001/XMLSchema"
@@ -2678,61 +2675,47 @@ async def get_danfe(chave: str):
   </soap12:Body>
 </soap12:Envelope>"""
 
-    # Converter PFX para PEM temporário para uso com httpx
+    # Converter PFX → PEM em memória
+    key_path = cert_path = None
     try:
         from cryptography.hazmat.primitives.serialization import pkcs12, Encoding, PrivateFormat, NoEncryption
         from cryptography.hazmat.backends import default_backend
-
         pfx = pkcs12.load_key_and_certificates(cert_bytes, cert_senha.encode(), default_backend())
         private_key, certificate, _ = pfx
-
         key_pem  = private_key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
         cert_pem = certificate.public_bytes(Encoding.PEM)
-
-        # Salvar PEMs em arquivos temporários
         with tempfile.NamedTemporaryFile(delete=False, suffix=".key") as kf:
-            kf.write(key_pem)
-            key_path = kf.name
+            kf.write(key_pem); key_path = kf.name
         with tempfile.NamedTemporaryFile(delete=False, suffix=".crt") as cf:
-            cf.write(cert_pem)
-            cert_path = cf.name
-
+            cf.write(cert_pem); cert_path = cf.name
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao processar certificado: {str(e)}")
 
+    # Consultar SEFAZ
     try:
         async with httpx.AsyncClient(cert=(cert_path, key_path), verify=False, timeout=30) as client:
             resp = await client.post(
                 ws_url,
                 content=soap_body.encode("utf-8"),
-                headers={
-                    "Content-Type": "application/soap+xml; charset=utf-8",
-                    "SOAPAction": ""
-                }
+                headers={"Content-Type": "application/soap+xml; charset=utf-8", "SOAPAction": ""}
             )
         if resp.status_code != 200:
             raise HTTPException(status_code=502, detail=f"SEFAZ retornou status {resp.status_code}")
-
         xml_resp = resp.text
     finally:
-        # Limpar arquivos temporários
-        import os as _os
-        try: _os.unlink(key_path)
-        except: pass
-        try: _os.unlink(cert_path)
-        except: pass
+        if key_path:
+            try: os.unlink(key_path)
+            except: pass
+        if cert_path:
+            try: os.unlink(cert_path)
+            except: pass
 
-    # Extrair o XML da NF-e da resposta SOAP
-    import xml.etree.ElementTree as ET
+    # Extrair procNFe da resposta SOAP
     try:
         root = ET.fromstring(xml_resp)
-        ns = {"nfe": "http://www.portalfiscal.inf.br/nfe"}
-        # Procura o elemento procNFe ou nfeProc dentro da resposta
-        nfe_proc = root.find(".//{http://www.portalfiscal.inf.br/nfe}procNFe")
+        nfe_proc = root.find(".//{http://www.portalfiscal.inf.br/nfe}procNFe") or \
+                   root.find(".//{http://www.portalfiscal.inf.br/nfe}nfeProc")
         if nfe_proc is None:
-            nfe_proc = root.find(".//{http://www.portalfiscal.inf.br/nfe}nfeProc")
-        if nfe_proc is None:
-            # Tenta pegar o retorno bruto para diagnóstico
             raise HTTPException(status_code=404, detail="NF-e não encontrada ou não autorizada na SEFAZ.")
         xml_nfe = ET.tostring(nfe_proc, encoding="unicode")
     except HTTPException:
@@ -2740,13 +2723,14 @@ async def get_danfe(chave: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao parsear resposta da SEFAZ: {str(e)}")
 
-    # Gerar PDF da DANFE com brazilfiscalreport
+    # Gerar PDF com brazilfiscalreport
     try:
         from brazilfiscalreport.danfe import Danfe
         pdf_buf = io.BytesIO()
-        danfe = Danfe(xml=xml_nfe.encode("utf-8"))
-        danfe.output(pdf_buf)
+        Danfe(xml=xml_nfe.encode("utf-8")).output(pdf_buf)
         pdf_bytes = pdf_buf.getvalue()
+    except ImportError:
+        raise HTTPException(status_code=500, detail="Lib brazilfiscalreport não instalada. Adicione ao requirements.txt.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao gerar PDF da DANFE: {str(e)}")
 
