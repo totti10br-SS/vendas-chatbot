@@ -100,12 +100,21 @@ def filter_for_chat(df: pd.DataFrame, pergunta: str, ctx: dict = None) -> pd.Dat
     }
 
     # ── Filtro por NR NOTA — roda ANTES de tudo, busca direto no NUM_DOCTO ──
-    m_nota_pre = re.search(r'\bnr?\s*(?:nota|fiscal|docto|doc)?\s*[:\s#]?\s*(\d{4,8})\b', pl)
+    # Detecta: "nota 185053", "nota fiscal 185053", "nr 185053", "185053"
+    m_nota_pre = re.search(r'(?:nota\s*fiscal|nota|nr\.?|n\.?f\.?|num\.?\s*docto?)\s*[:\s#]?\s*(\d{4,8})\b', pl)
+    if not m_nota_pre:
+        # Número isolado de 4-8 dígitos quando contexto menciona nota/fiscal
+        if any(x in pl for x in ['nota','fiscal','nf','docto']):
+            m_nota_pre = re.search(r'\b(\d{4,8})\b', pl)
     if m_nota_pre and 'NUM_DOCTO' in dff.columns:
         nr = m_nota_pre.group(1)
+        # Busca exata no NUM_DOCTO — retorna APENAS os itens dessa nota
         mask_nr = dff['NUM_DOCTO'].astype(str).str.strip() == nr
+        logging.warning(f"[IAF NOTA] buscando nr={nr} | encontrou={mask_nr.sum()} itens")
         if mask_nr.sum() > 0:
-            return dff[mask_nr]  # retorna imediatamente — sem nenhum filtro de período
+            dff_nota = dff[mask_nr].copy()
+            logging.warning(f"[IAF NOTA] clientes={dff_nota['NOME_CLIENTE'].unique() if 'NOME_CLIENTE' in dff_nota.columns else '?'}")
+            return dff_nota  # retorna imediatamente — sem nenhum filtro de período
 
     # ── Filtro por CNPJ raiz — roda PRIMEIRO, antes de qualquer filtro temporal ──
     # Detecta: "cnpj 73849952", "cnpj raiz 73849952", "cnpj: 73.849.952/0001-34"
@@ -2059,7 +2068,7 @@ async def chat(req: ChatRequest):
 - "Ontem" / períodos sem movimento: se os dados recebidos forem de uma data diferente do dia literal pedido, processe normalmente e informe apenas UMA linha no início: "_(Dados de DD/MM/AA — dia útil anterior disponível)_". Não peça confirmação, não ofereça opções, vá direto à análise.
 
 ## DETALHE DE NOTA FISCAL
-- Quando o usuário pedir detalhes de uma nota E os dados contiverem apenas 1 NUM_DOCTO (todos os registros são da mesma nota): exiba tabela completa linha a linha:
+- Quando o usuário pedir detalhes de uma nota: exiba APENAS os dados exatos que estão nos dados fornecidos. NUNCA adicione, invente ou misture dados de outros clientes ou notas. O CLIENTE correto é o que aparece no campo NOME_CLIENTE dos dados. Exiba tabela linha a linha:
   | # | PRODUTO | COD | DIVISÃO | QTDE kg | CX | VALOR | R$/kg |
   Depois: totais (kg total, cx total, faturamento total, preço médio), cliente, filial, vendedor, data
 - Quando o usuário pedir "detalhes dessa nota" ou "detalhe da nota X" mas os dados contiverem MÚLTIPLOS NUM_DOCTO: pergunte "Qual o número da nota? (ex: nr 184828)" — NÃO diga que não tem acesso aos dados
@@ -2456,7 +2465,12 @@ Analisa dados de vendas extraídos do Power BI da 3F.
 - Sempre calcule variação vs período anterior quando possível
 - Finalize com 💡 Insight: [ação ou oportunidade]
 - Anomalias > 20%: ⚠️ Atenção:
-- Nunca invente dados
+- ⛔ REGRA ABSOLUTA — NUNCA INVENTAR DADOS:
+- Mostre APENAS o que está nos dados fornecidos. Zero exceções.
+- Se os dados têm X itens, mostre X itens — nem mais, nem menos
+- O cliente, vendedor, filial e valores são EXATAMENTE os que estão nos dados — nunca substitua por outros
+- Se não há dados suficientes para responder: diga "⚠️ Sem dados disponíveis." e pare
+- Nunca use informações de mensagens anteriores para preencher lacunas dos dados atuais
 
 DADOS ({data_label}):
 {sales_data}"""
