@@ -2642,23 +2642,21 @@ async def get_danfe(chave: str):
         raise HTTPException(status_code=500, detail="Erro ao decodificar certificado.")
 
     c_uf = chave[:2]
-    ws_urls = {
-        "33": "https://nfe.svrs.rs.gov.br/ws/NfeConsulta/NfeConsulta4.asmx",
-        "31": "https://nfe.fazenda.mg.gov.br/nfe2/services/NFeConsulta4",
-    }
-    ws_url = ws_urls.get(c_uf, "https://nfe.svrs.rs.gov.br/ws/NfeConsulta/NfeConsulta4.asmx")
+    # RJ (33) usa SVRS — URL correta do NFeConsultaProtocolo4
+    ws_url = "https://nfe.svrs.rs.gov.br/ws/NfeConsulta/NfeConsulta4.asmx"
 
+    # Namespace correto para NFeConsultaProtocolo na SVRS
     soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
-<soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                 xmlns:xsd="http://www.w3.org/2001/XMLSchema"
-                 xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
-  <soap12:Header>
+<soapenv:Envelope xmlns:soapenv="http://www.w3.org/2003/05/soap-envelope"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <soapenv:Header>
     <nfeCabecMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsulta4">
       <cUF>{c_uf}</cUF>
       <versaoDados>4.00</versaoDados>
     </nfeCabecMsg>
-  </soap12:Header>
-  <soap12:Body>
+  </soapenv:Header>
+  <soapenv:Body>
     <nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsulta4">
       <consSitNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
         <tpAmb>1</tpAmb>
@@ -2666,8 +2664,8 @@ async def get_danfe(chave: str):
         <chNFe>{chave}</chNFe>
       </consSitNFe>
     </nfeDadosMsg>
-  </soap12:Body>
-</soap12:Envelope>"""
+  </soapenv:Body>
+</soapenv:Envelope>"""
 
     key_path = cert_path = None
     try:
@@ -2689,10 +2687,14 @@ async def get_danfe(chave: str):
             resp = await client.post(
                 ws_url,
                 content=soap_body.encode("utf-8"),
-                headers={"Content-Type": "application/soap+xml; charset=utf-8", "SOAPAction": ""}
+                headers={
+                    "Content-Type": "application/soap+xml; charset=utf-8",
+                    "SOAPAction": "http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsulta4/nfeConsultaNF"
+                }
             )
         if resp.status_code != 200:
-            raise HTTPException(status_code=502, detail=f"SEFAZ retornou status {resp.status_code}")
+            # Retornar o body do erro para diagnóstico
+            raise HTTPException(status_code=502, detail=f"SEFAZ status {resp.status_code}: {resp.text[:300]}")
         xml_resp = resp.text
     finally:
         if key_path:
@@ -2704,15 +2706,20 @@ async def get_danfe(chave: str):
 
     try:
         root = ET.fromstring(xml_resp)
-        nfe_proc = root.find(".//{http://www.portalfiscal.inf.br/nfe}procNFe") or \
-                   root.find(".//{http://www.portalfiscal.inf.br/nfe}nfeProc")
+        nfe_proc = (
+            root.find(".//{http://www.portalfiscal.inf.br/nfe}procNFe") or
+            root.find(".//{http://www.portalfiscal.inf.br/nfe}nfeProc")
+        )
         if nfe_proc is None:
-            raise HTTPException(status_code=404, detail="NF-e não encontrada ou não autorizada na SEFAZ.")
+            # Pegar mensagem de retorno da SEFAZ para diagnóstico
+            xmotivo = root.find(".//{http://www.portalfiscal.inf.br/nfe}xMotivo")
+            msg = xmotivo.text if xmotivo is not None else xml_resp[:300]
+            raise HTTPException(status_code=404, detail=f"NF-e não encontrada: {msg}")
         xml_nfe = ET.tostring(nfe_proc, encoding="unicode")
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao parsear resposta da SEFAZ: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erro ao parsear SEFAZ: {str(e)}")
 
     try:
         from brazilfiscalreport.danfe import Danfe
@@ -2720,7 +2727,7 @@ async def get_danfe(chave: str):
         Danfe(xml=xml_nfe.encode("utf-8")).output(pdf_buf)
         pdf_bytes = pdf_buf.getvalue()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao gerar PDF da DANFE: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erro ao gerar PDF: {str(e)}")
 
     return Response(
         content=pdf_bytes,
