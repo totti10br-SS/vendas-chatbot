@@ -950,6 +950,37 @@ def dashboard():
 
         dia_label = dia.strftime('%d/%m/%Y')
 
+        # KPIs do mês atual
+        mes_atual = dia.month
+        ano_atual = dia.year
+        df_mes = df[(df['DATA_MOVTO'].dt.month == mes_atual) & (df['DATA_MOVTO'].dt.year == ano_atual)]
+        fat_mes = float(df_mes['VALOR_LIQUIDO'].sum())
+        kg_mes  = float(df_mes['QTDE_PRI'].sum())
+
+        # Top 5 clientes do mês
+        top_mes = (df_mes.groupby('NOME_CLIENTE')
+                   .agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'))
+                   .sort_values('kg', ascending=False)
+                   .head(5)
+                   .reset_index())
+        top5_mes = [{"nome": r.NOME_CLIENTE, "kg": round(r.kg,2), "fat": round(r.fat,2)}
+                    for r in top_mes.itertuples()]
+
+        # Tipos de carne do mês
+        df_mes2 = df_mes.copy()
+        df_mes2['DESC_DIVISAO2'] = df_mes2['DESC_DIVISAO2'].fillna('').str.strip()
+        df_mes2.loc[df_mes2['DESC_DIVISAO2'] == '', 'DESC_DIVISAO2'] = 'SEM CLASS.'
+        tipos_mes_grp = (df_mes2.groupby('DESC_DIVISAO2')
+                         .agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'))
+                         .sort_values('kg', ascending=False)
+                         .reset_index())
+        tipos_mes = [{"tipo": r.DESC_DIVISAO2, "kg": round(r.kg,2), "fat": round(r.fat,2)}
+                     for r in tipos_mes_grp.itertuples()]
+
+        meses_pt = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
+                    'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
+        mes_label = f"{meses_pt[mes_atual-1]}/{ano_atual}"
+
         return JSONResponse({
             "total_registros": total,
             "dia_label": dia_label,
@@ -959,7 +990,12 @@ def dashboard():
             "ultima_nota": ultima_str,
             "csv_modificado": csv_modificado_str,
             "top10": top10,
-            "tipos": tipos
+            "tipos": tipos,
+            "fat_mes": round(fat_mes, 2),
+            "kg_mes":  round(kg_mes, 2),
+            "top5_mes": top5_mes,
+            "tipos_mes": tipos_mes,
+            "mes_label": mes_label
         })
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
