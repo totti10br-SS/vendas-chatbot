@@ -1989,7 +1989,7 @@ async def chat(req: ChatRequest):
 - O insight deve sugerir uma AÇÃO ou destacar uma OPORTUNIDADE, não apenas repetir dados
 
 ## COMPORTAMENTOS ESPECÍFICOS
-- "Últimas vendas de [cliente]": tabela DATA | NR NOTA | COD PRODUTO | DESCRIÇÃO | QTDE kg | CX | R$/kg — últimos 15 registros, data decrescente
+- "Últimas vendas de [cliente]": SEMPRE inicie com "📦 Cliente: **[NOME_CLIENTE exato]**" na primeira linha. Se os dados contiverem MÚLTIPLOS clientes distintos (mais de 1 NOME_CLIENTE único), liste os candidatos numerados e peça para o usuário especificar qual. Se for 1 único cliente, mostre tabela DATA | NR NOTA | COD PRODUTO | DESCRIÇÃO | QTDE kg | CX | R$/kg — últimos 15 registros, data decrescente
 - Período sem detalhe especificado (mensal/trimestral/anual): ofereça 4 opções antes de processar: "1) Resumo executivo 2) Análise por dia 3) Ranking produtos/vendedores 4) Comparativo filiais"
 - EXCEÇÃO: se o usuário já especificou o que quer ("resumo", "ranking", "análise detalhada"), processe direto
 - Filtro UF: reconhece siglas (ES, RJ...) e nomes por extenso. Destaque: volume, faturamento, clientes, produtos, cidades
