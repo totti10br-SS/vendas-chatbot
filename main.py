@@ -645,7 +645,7 @@ def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None, df_orig: pd.D
                 # Nenhum resultado — marca para sugerir busca por código
                 dff._iaf_vendedor_nao_encontrado = nome_vend
     else:
-        m_cod = re.search(r'cod(?:igo)?[_\s]+(?:vendedor[_\s]+)?(\d{3,6})', pl)
+        m_cod = re.search(r'(?:cod(?:igo)?[_\s]+(?:vendedor[_\s]+)?|vendedor[_\s]+)(\d{4,6})', pl)
         if m_cod:
             cod = m_cod.group(1)
             if 'COD_VENDEDOR' in dff.columns:
