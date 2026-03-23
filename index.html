@@ -466,6 +466,10 @@ body.modo-vasco .welcome p strong{color:#fff;}
         <div class="kpi-mini-label">Volume</div>
         <div class="kpi-mini-value" id="kpiKg">—</div>
       </div>
+      <div class="kpi-mini">
+        <div class="kpi-mini-label">Total CX30</div>
+        <div class="kpi-mini-value" id="kpiCx30">—</div>
+      </div>
     </div>
     <div class="tipo-carne-box" id="tipoCarne" style="display:none">
       <div class="tipo-carne-title">📦 Tipo de Carne</div>
@@ -523,7 +527,7 @@ function toggleDash(){
 }
 let modoAtivo='normal';
 function fmtBRL(v){return 'R$ '+parseFloat(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
-function fmtKg(v){return parseFloat(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+' kg';}
+function fmtKg(v){return parseFloat(v||0).toLocaleString('pt-BR',{minimumFractionDigits:0,maximumFractionDigits:0})+' KG';})+' kg';}
 
 function renderMarkdown(text){
   // Normaliza line endings (evita falha da regex com \r\n)
@@ -580,6 +584,7 @@ async function init(){
     document.getElementById('posicaoBar').style.display='block';
     document.getElementById('kpiFat').textContent=fmtBRL(d.fat_mes||d.fat);
     document.getElementById('kpiKg').textContent=fmtKg(d.kg_mes||d.kg);
+    document.getElementById('kpiCx30').textContent=Math.round((d.kg_mes||d.kg)/30).toLocaleString('pt-BR')+' cx';
 
     const list=document.getElementById('clientesList');
     (d.top5_mes||d.top10).slice(0,5).forEach((c,i)=>{
