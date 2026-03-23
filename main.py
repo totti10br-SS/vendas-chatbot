@@ -46,24 +46,9 @@ def get_drive_service():
         creds.refresh(Request())
     return build('drive', 'v3', credentials=creds)
 
-def load_df():
-    """Baixa CSV do Drive e retorna (df, csv_modificado_str).
-    O modifiedTime é capturado usando o mesmo service já autenticado,
-    evitando uma segunda autenticação separada."""
-    from datetime import timezone
+def load_df() -> pd.DataFrame:
+    """Sempre busca CSV diretamente do Drive — sem cache."""
     service = get_drive_service()
-
-    # modifiedTime no mesmo service — zero custo extra
-    csv_modificado_str = "—"
-    try:
-        meta = service.files().get(fileId=FILE_ID, fields='modifiedTime').execute()
-        mod = meta.get('modifiedTime', '')
-        if mod:
-            dt_utc = datetime.strptime(mod, '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=timezone.utc)
-            csv_modificado_str = dt_utc.astimezone().strftime('%d/%m/%Y %H:%M')
-    except Exception:
-        pass
-
     req = service.files().get_media(fileId=FILE_ID)
     buf = io.BytesIO()
     dl = MediaIoBaseDownload(buf, req)
@@ -81,7 +66,7 @@ def load_df():
     # COD_VENDEDOR: remove decimal (4063.0 → 4063)
     if 'COD_VENDEDOR' in df.columns:
         df['COD_VENDEDOR'] = pd.to_numeric(df['COD_VENDEDOR'], errors='coerce').fillna(0).astype(int).astype(str).str.zfill(4)
-    return df, csv_modificado_str
+    return df
 
 def get_dia_referencia(df: pd.DataFrame):
     """Retorna o último dia com dados (hoje se existir, senão último disponível)."""
@@ -891,18 +876,6 @@ def is_summary_query(pergunta: str) -> bool:
 
 # ─── ROUTES ───
 
-@app.on_event("startup")
-async def warmup():
-    """Baixa o CSV no startup do Railway — nenhum usuário espera o primeiro download."""
-    import threading
-    def _bg():
-        try:
-            _, __ = load_df()
-            logging.info("IAF warmup: CSV carregado no startup.")
-        except Exception as e:
-            logging.warning(f"IAF warmup falhou (não crítico): {e}")
-    threading.Thread(target=_bg, daemon=True).start()
-
 @app.get("/", response_class=HTMLResponse)
 def root():
     for p in ["menu.html", os.path.join(os.path.dirname(__file__), "menu.html"), "/app/menu.html"]:
@@ -923,7 +896,7 @@ def iaf():
 def dashboard():
     """Retorna KPIs + top10 clientes — JSON leve, sem CSV."""
     try:
-        df, csv_modificado_str = load_df()
+        df = load_df()
         dia = get_dia_referencia(df)
         df_dia = df[df['DATA_MOVTO'].dt.date == dia]
 
@@ -958,6 +931,23 @@ def dashboard():
         tipos = [{"tipo": r.DESC_DIVISAO2, "kg": round(r.kg,2), "fat": round(r.fat,2)}
                  for r in tipos_grp.itertuples()]
 
+        # Horário de modificação do arquivo no Google Drive
+        csv_modificado_str = "—"
+        try:
+            service = get_drive_service()
+            file_meta = service.files().get(
+                fileId=FILE_ID,
+                fields='modifiedTime'
+            ).execute()
+            modified_utc = file_meta.get('modifiedTime','')
+            if modified_utc:
+                from datetime import timezone
+                dt_utc = datetime.strptime(modified_utc, '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=timezone.utc)
+                dt_local = dt_utc.astimezone()
+                csv_modificado_str = dt_local.strftime('%d/%m/%Y %H:%M')
+        except:
+            pass
+
         meses_pt = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
                     'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
         mes_label = f"{meses_pt[dia.month-1]}/{dia.year}"
@@ -982,7 +972,7 @@ def dashboard():
 def detalhe_cliente(nome: str):
     """Retorna produtos comprados pelo cliente no dia de referência."""
     try:
-        df, _ = load_df()
+        df = load_df()
         dia = get_dia_referencia(df)
         df_dia = df[df['DATA_MOVTO'].dt.date == dia]
         # Busca tolerante: tenta match exato primeiro, depois contains
@@ -1014,7 +1004,7 @@ def detalhe_cliente(nome: str):
 def detalhe_tipo(tipo: str):
     """Retorna clientes e produtos do tipo de carne no dia de referência."""
     try:
-        df, _ = load_df()
+        df = load_df()
         dia = get_dia_referencia(df)
         df_dia = df[df['DATA_MOVTO'].dt.date == dia]
         df_tipo = df_dia[df_dia['DESC_DIVISAO2'].str.upper() == tipo.upper()]
@@ -1817,7 +1807,7 @@ async def chat(req: ChatRequest):
     # ── Handler especial: Quem Sou Eu ──
     if ultima.startswith('__QUEM_SOU_EU__'):
         try:
-            df, _ = load_df()
+            df = load_df()
             csv_mod = ultima.split('csv_modificado=')[-1].strip() if 'csv_modificado=' in ultima else '-'
             d_min = df['DATA_MOVTO'].dropna().min()
             d_max = df['DATA_MOVTO'].dropna().max()
@@ -1902,7 +1892,7 @@ async def chat(req: ChatRequest):
             pergunta_para_filtro = f"cnpj {ultima.strip()}"
 
     try:
-        df, _ = load_df()
+        df = load_df()
         import logging
         anos_no_df = sorted(df['DATA_MOVTO'].dt.year.dropna().unique().tolist()) if 'DATA_MOVTO' in df.columns else []
         logging.warning(f"[IAF DEBUG] ultima={ultima!r} | pergunta_para_filtro={pergunta_para_filtro!r} | df total={len(df)} | anos_no_df={anos_no_df}")
@@ -2252,7 +2242,7 @@ def health():
 def reload_vendas():
     """Confirma que Drive está acessível."""
     try:
-        _, __ = load_df()
+        load_df()
         return {"status":"ok","message":"CSV carregado com sucesso"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
