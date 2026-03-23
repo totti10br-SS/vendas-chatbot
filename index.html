@@ -452,7 +452,7 @@ body.modo-vasco .welcome p strong{color:#fff;}
 <!-- DASHBOARD COMPACTO -->
 <div id="dashToggleBar" onclick="toggleDash()">
   <span></span>
-  <span style="display:flex;align-items:center;gap:6px;">📊 <span id="dashMesLabel">DASHBOARD</span> <span id="dashToggleIcon">▼</span></span>
+  <span style="display:flex;align-items:center;gap:6px;">📊 DASHBOARD <span id="dashToggleIcon">▼</span></span>
   <span></span>
 </div>
 <div class="dashboard" id="dashboard" style="display:none">
@@ -578,11 +578,11 @@ async function init(){
     // Barra de posição única no topo
     document.getElementById('posicaoData').textContent = atualizadoStr;
     document.getElementById('posicaoBar').style.display='block';
-    document.getElementById('kpiFat').textContent=fmtBRL(d.fat_mes||d.fat);
+    document.getElementById('kpiFat').textContent=fmtBRL(d.fat);
     document.getElementById('kpiKg').textContent=fmtKg(d.kg);
 
     const list=document.getElementById('clientesList');
-    d.top5_mes.forEach((c,i)=>{
+    d.top10.slice(0,5).forEach((c,i)=>{
       const div=document.createElement('div');
       div.className='cliente-row';
       div.innerHTML=`<div class="c-rank">${i+1}</div>
@@ -594,8 +594,7 @@ async function init(){
     });
 
     // Popula box Tipo de Carne fixo com totais do dia
-    if((d.tipos_mes||d.tipos) && (d.tipos_mes||d.tipos).length){
-      const tipos_data = d.tipos_mes||d.tipos;
+    if(d.tipos && d.tipos.length){
       const lista = document.getElementById('tipoCarneLista');
       const dataLabel = d.dia_label || '';
       lista.innerHTML = d.tipos.map(t=>`
@@ -613,7 +612,6 @@ async function init(){
       document.querySelector('.tipo-carne-title').textContent = `📦 Tipo de Carne`;
     }
     document.getElementById('dashToggleBar').style.display='flex';
-      if(d.mes_label) document.getElementById('dashMesLabel').textContent = 'Resumo ' + d.mes_label;
     document.getElementById('initLoader').remove();
     showWelcome(d.total_registros);
     document.getElementById('userInput').disabled=false;
@@ -704,7 +702,8 @@ async function openTipo(tipo){
     const r = await fetch('/tipo/'+encodeURIComponent(tipo));
     const d = await r.json();
     const pm = d.pm.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
-    const cxStr = d.cx_total > 0 ? `<div class="panel-kpi"><div class="panel-kpi-label">Caixas</div><div class="panel-kpi-val">${d.cx_total.toLocaleString('pt-BR')} cx</div></div>` : '';
+    const cx30 = Math.round(d.kg_total / 30);
+    const cxStr = cx30 > 0 ? `<div class="panel-kpi"><div class="panel-kpi-label">Total CX30</div><div class="panel-kpi-val">${cx30.toLocaleString('pt-BR')} cx</div></div>` : '';
     const cliHTML = d.clientes.map((c,i)=>`
       <div class="prod-row" style="cursor:pointer" onclick="openCliente('${c.nome.replace(/'/g,"\\'")}')">
         <div class="prod-nome"><span style="color:var(--muted);font-size:10px;margin-right:5px">${i+1}</span>${c.nome}</div>

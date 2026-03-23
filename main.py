@@ -1043,7 +1043,7 @@ def detalhe_tipo(tipo: str):
 
         fat_total = float(df_tipo['VALOR_LIQUIDO'].sum())
         kg_total  = float(df_tipo['QTDE_PRI'].sum())
-        cx_total  = float(df_tipo['QTDE_AUX'].sum()) if 'QTDE_AUX' in df_tipo.columns else 0
+        cx_total  = round(float(df_tipo['QTDE_PRI'].sum()) / 30, 0)  # CX30 = kg / 30
         notas     = int(df_tipo['NUM_DOCTO'].nunique())
         pm        = round(fat_total / kg_total, 2) if kg_total > 0 else 0
 
@@ -2141,7 +2141,7 @@ async def chat(req: ChatRequest):
 
 ## MÉTRICAS OBRIGATÓRIAS
 - PREÇO MÉDIO (R$/kg): calcule como VALOR_LIQUIDO / QTDE_PRI em toda análise de produto, cliente ou vendedor
-- CAIXAS: sempre exiba QTDE_AUX (cx) junto com kg. Ex: '29.324 kg | 2.324 cx'
+- CAIXAS (CX30): sempre exiba cx30 = kg/30 junto com kg. Ex: '29.324 kg | 977 cx30'
 - Filiais: ITAP (Itaperuna), BJESUS (Bom Jesus), PORC (Porciúncula), TRINDADE (Trindade)
 
 ## INSIGHT FINAL
