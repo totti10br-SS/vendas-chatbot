@@ -452,7 +452,7 @@ body.modo-vasco .welcome p strong{color:#fff;}
 <!-- DASHBOARD COMPACTO -->
 <div id="dashToggleBar" onclick="toggleDash()">
   <span></span>
-  <span style="display:flex;align-items:center;gap:6px;">📊 DASHBOARD <span id="dashToggleIcon">▼</span></span>
+  <span style="display:flex;align-items:center;gap:6px;">📊 <span id="dashMesLabel">DASHBOARD</span> <span id="dashToggleIcon">▼</span></span>
   <span></span>
 </div>
 <div class="dashboard" id="dashboard" style="display:none">
@@ -477,7 +477,7 @@ body.modo-vasco .welcome p strong{color:#fff;}
 
   <div class="top-clientes">
     <div class="top-header">
-      <div class="top-title">Top 5 Clientes</div>
+      <div class="top-title">Top 5 Clientes · <span id="topMesLabel" style="color:var(--muted);font-weight:400;">—</span></div>
     </div>
     <div class="clientes-list" id="clientesList"></div>
   </div>
@@ -578,11 +578,11 @@ async function init(){
     // Barra de posição única no topo
     document.getElementById('posicaoData').textContent = atualizadoStr;
     document.getElementById('posicaoBar').style.display='block';
-    document.getElementById('kpiFat').textContent=fmtBRL(d.fat);
-    document.getElementById('kpiKg').textContent=fmtKg(d.kg);
+    document.getElementById('kpiFat').textContent=fmtBRL(d.fat_mes||d.fat);
+    document.getElementById('kpiKg').textContent=fmtKg(d.kg_mes||d.kg);
 
     const list=document.getElementById('clientesList');
-    d.top10.slice(0,5).forEach((c,i)=>{
+    (d.top5_mes||d.top10).slice(0,5).forEach((c,i)=>{
       const div=document.createElement('div');
       div.className='cliente-row';
       div.innerHTML=`<div class="c-rank">${i+1}</div>
@@ -594,7 +594,8 @@ async function init(){
     });
 
     // Popula box Tipo de Carne fixo com totais do dia
-    if(d.tipos && d.tipos.length){
+    const tipos_show = d.tipos_mes||d.tipos;
+    if(tipos_show && tipos_show.length){
       const lista = document.getElementById('tipoCarneLista');
       const dataLabel = d.dia_label || '';
       lista.innerHTML = d.tipos.map(t=>`
@@ -612,6 +613,14 @@ async function init(){
       document.querySelector('.tipo-carne-title').textContent = `📦 Tipo de Carne`;
     }
     document.getElementById('dashToggleBar').style.display='flex';
+      if(d.mes_label) (function(){
+        if(!d.mes_label) return;
+        const meses=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+        const partes = d.mes_label.split('/');
+        const nomeMes = meses[parseInt(partes[0])-1] || partes[0];
+        document.getElementById('dashMesLabel').textContent = 'Posição ' + nomeMes + '/' + partes[1];
+      })();
+      if(d.mes_label && document.getElementById('topMesLabel')) document.getElementById('topMesLabel').textContent = d.mes_label;
     document.getElementById('initLoader').remove();
     showWelcome(d.total_registros);
     document.getElementById('userInput').disabled=false;

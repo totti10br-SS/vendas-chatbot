@@ -149,8 +149,8 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;ba
   </div>
 </header>
 
-<div id="dashToggleBar" onclick="toggleDash()">
-  <span>📊 DASHBOARD IA3</span><span id="dashToggleIcon">▼</span>
+<div id="dashToggleBar" onclick="toggleDash()" style="justify-content:center;gap:8px;">
+  <span>📊 <span id="dashMesLabelIA3">DASHBOARD IA3</span></span><span id="dashToggleIcon">▼</span>
 </div>
 <div class="dashboard" id="ia3dashboard">
   <div class="kpi-group">
@@ -177,7 +177,7 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;ba
   </div>
   <div class="dash-divider"></div>
   <div class="top-clientes">
-    <div class="top-title">Top 5 Clientes <span id="top-periodo">último mês</span></div>
+    <div class="top-title">Top 5 Clientes · <span id="top-periodo" style="color:var(--muted);font-weight:400;">—</span></div>
     <div class="clientes-list" id="top-list">
       <div style="font-size:11px;color:var(--muted);padding:4px 0">Carregando...</div>
     </div>
@@ -313,9 +313,22 @@ async function loadKPIs(){
     document.getElementById('kpi-qtde').textContent  = fmtKG(d.kg);
     document.getElementById('kpi-margem').textContent = d.margem_pct+'%';
     document.getElementById('kpi-desc').textContent  = fmtM(d.desconto);
-    document.getElementById('top-periodo').textContent = d.mes_label || 'último mês';
+    if(d.mes_label){
+      const partes = d.mes_label.split('/');
+      const meses = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+      const nomeMes = meses[parseInt(partes[0])-1] || partes[0];
+      document.getElementById('top-periodo').textContent = nomeMes + '/' + partes[1];
+    }
     if(d.ultima_atualizacao) document.getElementById('hdr-ultima').textContent = 'Atualizado em: ' + d.ultima_atualizacao;
     window._mesDashboard = d.mes_label ? d.mes_label.split('/').reverse().join('-') : null;
+    if(d.mes_label){
+      const partes2 = d.mes_label.split('/');
+      const meses2 = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+      const nomeMes2 = meses2[parseInt(partes2[0])-1] || partes2[0];
+      const labelFull = 'Posição ' + nomeMes2 + '/' + partes2[1];
+      const el = document.getElementById('dashMesLabelIA3');
+      if(el) el.textContent = labelFull;
+    }
 
     if(d.top5&&d.top5.length){
       document.getElementById('top-list').innerHTML = d.top5.map((c,i)=>
