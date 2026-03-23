@@ -490,6 +490,8 @@ body.modo-vasco .welcome p strong{color:#fff;}
 <div class="main-wrap">
   <div class="left-col">
     <div id="messages">
+        <p>Carregando dashboard...</p>
+      </div>
     </div>
     <div class="input-area">
       <textarea id="userInput" placeholder="Pergunte ao IAF sobre suas vendas..." rows="1"
@@ -568,9 +570,8 @@ async function forceReload(){
 }
 
 function init(){
-  // Padrão IA3: chat disponível imediatamente, dashboard carrega em background
   showWelcome(0);
-  setTimeout(loadDashboard, 500);
+  setTimeout(loadDashboard,500);
 }
 
 async function loadDashboard(){
@@ -579,49 +580,41 @@ async function loadDashboard(){
     if(!r.ok) throw new Error('HTTP '+r.status);
     const d=await r.json();
     document.getElementById('totalReg').textContent=d.total_registros.toLocaleString('pt-BR')+' registros';
-    const atualizadoStr = (d.csv_modificado&&d.csv_modificado!='—'?d.csv_modificado:d.ultima_nota);
-    document.getElementById('csvData').textContent='Atualizado em: '+atualizadoStr;
-    document.getElementById('posicaoData').textContent = atualizadoStr;
+    const atualizado=(d.csv_modificado&&d.csv_modificado!='\u2014')?d.csv_modificado:d.ultima_nota;
+    document.getElementById('csvData').textContent='Atualizado em: '+atualizado;
+    document.getElementById('posicaoData').textContent=atualizado;
     document.getElementById('posicaoBar').style.display='block';
     document.getElementById('kpiFat').textContent=fmtBRL(d.fat);
     document.getElementById('kpiKg').textContent=fmtKg(d.kg);
     document.getElementById('kpiCx30').textContent=Math.round(d.kg/30).toLocaleString('pt-BR')+' cx';
-
     const list=document.getElementById('clientesList');
     list.innerHTML='';
-    d.top10.slice(0,5).forEach((c,i)=>{
+    d.top10.slice(0,5).forEach(function(c,i){
       const div=document.createElement('div');
       div.className='cliente-row';
-      div.innerHTML=`<div class="c-rank">${i+1}</div>
-        <div class="c-nome">${c.nome}</div>
-        <div class="c-vals"><span class="c-kg">${fmtKg(c.kg)}</span><span class="c-fat">${fmtBRL(c.fat)}</span></div>
-        <div class="c-arrow">›</div>`;
-      div.onclick=()=>openCliente(c.nome);
+      div.innerHTML='<div class="c-rank">'+(i+1)+'</div><div class="c-nome">'+c.nome+'</div><div class="c-vals"><span class="c-kg">'+fmtKg(c.kg)+'</span><span class="c-fat">'+fmtBRL(c.fat)+'</span></div><div class="c-arrow">\u203a</div>';
+      div.onclick=function(){openCliente(c.nome);};
       list.appendChild(div);
     });
-
-    if(d.tipos && d.tipos.length){
-      const lista = document.getElementById('tipoCarneLista');
-      lista.innerHTML = d.tipos.map(t=>`
-        <div class="tipo-carne-row" style="cursor:pointer" onclick="openTipo('${t.tipo.replace(/'/g,"\'")}')">
-          <div class="tc-nome">${t.tipo}</div>
-          <div class="tc-vals">
-            <div class="tc-fat">${fmtBRL(t.fat)}</div>
-            <div class="tc-kg">${fmtKg(t.kg)}</div>
-          </div>
-          <div style="color:var(--muted);font-size:11px;padding-left:4px">›</div>
-        </div>`).join('');
+    if(d.tipos&&d.tipos.length){
+      const lista=document.getElementById('tipoCarneLista');
+      lista.innerHTML=d.tipos.map(function(t){
+        return '<div class="tipo-carne-row" style="cursor:pointer" onclick="openTipo(\''+t.tipo.replace(/\'/g,"\\'")+'\')">'
+          +'<div class="tc-nome">'+t.tipo+'</div>'
+          +'<div class="tc-vals"><div class="tc-fat">'+fmtBRL(t.fat)+'</div><div class="tc-kg">'+fmtKg(t.kg)+'</div></div>'
+          +'<div style="color:var(--muted);font-size:11px;padding-left:4px">\u203a</div></div>';
+      }).join('');
       document.getElementById('tipoCarne').style.display='block';
-      window._tiposDia = lista.innerHTML;
-      window._tiposDiaLabel = d.dia_label || '';
-      document.querySelector('.tipo-carne-title').textContent = `📦 Tipo de Carne`;
+      window._tiposDia=lista.innerHTML;
+      window._tiposDiaLabel=d.dia_label||'';
+      document.querySelector('.tipo-carne-title').textContent='\U0001f4e6 Tipo de Carne';
     }
     document.getElementById('dashToggleBar').style.display='flex';
-    if(d.dia_label) document.getElementById('dashMesLabel').textContent = 'Posição do Dia ' + d.dia_label;
-    if(d.mes_label && document.getElementById('topMesLabel')) document.getElementById('topMesLabel').textContent = d.mes_label;
+    if(d.dia_label) document.getElementById('dashMesLabel').textContent='Posi\u00e7\u00e3o do Dia '+d.dia_label;
+    if(d.mes_label&&document.getElementById('topMesLabel')) document.getElementById('topMesLabel').textContent=d.mes_label;
     showWelcome(d.total_registros);
   }catch(err){
-    console.warn('Dashboard não carregou:', err.message);
+    console.warn('Dashboard erro:',err.message);
   }
 }
 
