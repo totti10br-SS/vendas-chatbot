@@ -582,12 +582,12 @@ async function init(){
     // Barra de posição única no topo
     document.getElementById('posicaoData').textContent = atualizadoStr;
     document.getElementById('posicaoBar').style.display='block';
-    document.getElementById('kpiFat').textContent=fmtBRL(d.fat_mes||d.fat);
-    document.getElementById('kpiKg').textContent=fmtKg(d.kg_mes||d.kg);
-    document.getElementById('kpiCx30').textContent=Math.round((d.kg_mes||d.kg)/30).toLocaleString('pt-BR')+' cx';
+    document.getElementById('kpiFat').textContent=fmtBRL(d.fat);
+    document.getElementById('kpiKg').textContent=fmtKg(d.kg);
+    document.getElementById('kpiCx30').textContent=Math.round((d.kg)/30).toLocaleString('pt-BR')+' cx';
 
     const list=document.getElementById('clientesList');
-    (d.top5_mes||d.top10).slice(0,5).forEach((c,i)=>{
+    (d.top10).slice(0,5).forEach((c,i)=>{
       const div=document.createElement('div');
       div.className='cliente-row';
       div.innerHTML=`<div class="c-rank">${i+1}</div>
@@ -599,8 +599,7 @@ async function init(){
     });
 
     // Popula box Tipo de Carne fixo com totais do dia
-    const tipos_show = d.tipos_mes||d.tipos;
-    if(tipos_show && tipos_show.length){
+    if(d.tipos && d.tipos.length){
       const lista = document.getElementById('tipoCarneLista');
       const dataLabel = d.dia_label || '';
       lista.innerHTML = d.tipos.map(t=>`
