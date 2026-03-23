@@ -490,15 +490,11 @@ body.modo-vasco .welcome p strong{color:#fff;}
 <div class="main-wrap">
   <div class="left-col">
     <div id="messages">
-      <div class="init-loader" id="initLoader">
-        <div class="spinner"></div>
-        <p>Carregando dashboard...</p>
-      </div>
     </div>
     <div class="input-area">
       <textarea id="userInput" placeholder="Pergunte ao IAF sobre suas vendas..." rows="1"
-        onkeydown="handleKey(event)" oninput="autoResize(this)" disabled></textarea>
-      <button id="sendBtn" onclick="sendMessage()" disabled>
+        onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+      <button id="sendBtn" onclick="sendMessage()">
         <svg viewBox="0 0 24 24"><path d="M2 21L23 12 2 3v7l15 2-15 2v7z"/></svg>
       </button>
     </div>
@@ -571,23 +567,29 @@ async function forceReload(){
   }
 }
 
-async function init(){
+function init(){
+  // Padrão IA3: chat disponível imediatamente, dashboard carrega em background
+  showWelcome(0);
+  setTimeout(loadDashboard, 500);
+}
+
+async function loadDashboard(){
   try{
     const r=await fetch('/dashboard');
-    if(!r.ok) throw new Error('Erro ao carregar');
+    if(!r.ok) throw new Error('HTTP '+r.status);
     const d=await r.json();
     document.getElementById('totalReg').textContent=d.total_registros.toLocaleString('pt-BR')+' registros';
     const atualizadoStr = (d.csv_modificado&&d.csv_modificado!='—'?d.csv_modificado:d.ultima_nota);
     document.getElementById('csvData').textContent='Atualizado em: '+atualizadoStr;
-    // Barra de posição única no topo
     document.getElementById('posicaoData').textContent = atualizadoStr;
     document.getElementById('posicaoBar').style.display='block';
     document.getElementById('kpiFat').textContent=fmtBRL(d.fat);
     document.getElementById('kpiKg').textContent=fmtKg(d.kg);
-    document.getElementById('kpiCx30').textContent=Math.round((d.kg)/30).toLocaleString('pt-BR')+' cx';
+    document.getElementById('kpiCx30').textContent=Math.round(d.kg/30).toLocaleString('pt-BR')+' cx';
 
     const list=document.getElementById('clientesList');
-    (d.top10).slice(0,5).forEach((c,i)=>{
+    list.innerHTML='';
+    d.top10.slice(0,5).forEach((c,i)=>{
       const div=document.createElement('div');
       div.className='cliente-row';
       div.innerHTML=`<div class="c-rank">${i+1}</div>
@@ -598,12 +600,10 @@ async function init(){
       list.appendChild(div);
     });
 
-    // Popula box Tipo de Carne fixo com totais do dia
     if(d.tipos && d.tipos.length){
       const lista = document.getElementById('tipoCarneLista');
-      const dataLabel = d.dia_label || '';
       lista.innerHTML = d.tipos.map(t=>`
-        <div class="tipo-carne-row" style="cursor:pointer" onclick="openTipo('${t.tipo.replace(/'/g,"\\'")}')">
+        <div class="tipo-carne-row" style="cursor:pointer" onclick="openTipo('${t.tipo.replace(/'/g,"\'")}')">
           <div class="tc-nome">${t.tipo}</div>
           <div class="tc-vals">
             <div class="tc-fat">${fmtBRL(t.fat)}</div>
@@ -613,18 +613,15 @@ async function init(){
         </div>`).join('');
       document.getElementById('tipoCarne').style.display='block';
       window._tiposDia = lista.innerHTML;
-      window._tiposDiaLabel = dataLabel;
+      window._tiposDiaLabel = d.dia_label || '';
       document.querySelector('.tipo-carne-title').textContent = `📦 Tipo de Carne`;
     }
     document.getElementById('dashToggleBar').style.display='flex';
-      if(d.mes_label) if(d.dia_label) document.getElementById('dashMesLabel').textContent = 'Posição do Dia ' + d.dia_label;
-      if(d.mes_label && document.getElementById('topMesLabel')) document.getElementById('topMesLabel').textContent = d.mes_label;
-    document.getElementById('initLoader').remove();
+    if(d.dia_label) document.getElementById('dashMesLabel').textContent = 'Posição do Dia ' + d.dia_label;
+    if(d.mes_label && document.getElementById('topMesLabel')) document.getElementById('topMesLabel').textContent = d.mes_label;
     showWelcome(d.total_registros);
-    document.getElementById('userInput').disabled=false;
-    document.getElementById('sendBtn').disabled=false;
   }catch(err){
-    document.getElementById('initLoader').innerHTML=`<p style="color:var(--yellow)">❌ ${err.message}</p>`;
+    console.warn('Dashboard não carregou:', err.message);
   }
 }
 
