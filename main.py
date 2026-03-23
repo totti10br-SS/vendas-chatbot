@@ -46,9 +46,28 @@ def get_drive_service():
         creds.refresh(Request())
     return build('drive', 'v3', credentials=creds)
 
-def load_df() -> pd.DataFrame:
-    """Sempre busca CSV diretamente do Drive — sem cache."""
+def load_df():
+    """Busca CSV do Drive e retorna (df, csv_modificado_str) — sem cache.
+    O modifiedTime é capturado na mesma chamada que baixa o arquivo,
+    evitando uma segunda requisição ao Drive."""
+    from datetime import timezone
     service = get_drive_service()
+
+    # Pega metadados (modifiedTime) + conteúdo em chamadas separadas,
+    # mas usando o mesmo service já autenticado — só 1 autenticação.
+    csv_modificado_str = "—"
+    try:
+        file_meta = service.files().get(
+            fileId=FILE_ID,
+            fields='modifiedTime'
+        ).execute()
+        modified_utc = file_meta.get('modifiedTime', '')
+        if modified_utc:
+            dt_utc = datetime.strptime(modified_utc, '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=timezone.utc)
+            csv_modificado_str = dt_utc.astimezone().strftime('%d/%m/%Y %H:%M')
+    except Exception:
+        pass
+
     req = service.files().get_media(fileId=FILE_ID)
     buf = io.BytesIO()
     dl = MediaIoBaseDownload(buf, req)
@@ -66,7 +85,7 @@ def load_df() -> pd.DataFrame:
     # COD_VENDEDOR: remove decimal (4063.0 → 4063)
     if 'COD_VENDEDOR' in df.columns:
         df['COD_VENDEDOR'] = pd.to_numeric(df['COD_VENDEDOR'], errors='coerce').fillna(0).astype(int).astype(str).str.zfill(4)
-    return df
+    return df, csv_modificado_str
 
 def get_dia_referencia(df: pd.DataFrame):
     """Retorna o último dia com dados (hoje se existir, senão último disponível)."""
@@ -896,7 +915,7 @@ def iaf():
 def dashboard():
     """Retorna KPIs + top10 clientes — JSON leve, sem CSV."""
     try:
-        df = load_df()
+        df, csv_modificado_str = load_df()
         dia = get_dia_referencia(df)
         df_dia = df[df['DATA_MOVTO'].dt.date == dia]
 
@@ -931,23 +950,6 @@ def dashboard():
         tipos = [{"tipo": r.DESC_DIVISAO2, "kg": round(r.kg,2), "fat": round(r.fat,2)}
                  for r in tipos_grp.itertuples()]
 
-        # Horário de modificação do arquivo no Google Drive
-        csv_modificado_str = "—"
-        try:
-            service = get_drive_service()
-            file_meta = service.files().get(
-                fileId=FILE_ID,
-                fields='modifiedTime'
-            ).execute()
-            modified_utc = file_meta.get('modifiedTime','')
-            if modified_utc:
-                from datetime import timezone
-                dt_utc = datetime.strptime(modified_utc, '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=timezone.utc)
-                dt_local = dt_utc.astimezone()
-                csv_modificado_str = dt_local.strftime('%d/%m/%Y %H:%M')
-        except:
-            pass
-
         meses_pt = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
                     'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
         mes_label = f"{meses_pt[dia.month-1]}/{dia.year}"
@@ -972,7 +974,7 @@ def dashboard():
 def detalhe_cliente(nome: str):
     """Retorna produtos comprados pelo cliente no dia de referência."""
     try:
-        df = load_df()
+        df, _ = load_df()
         dia = get_dia_referencia(df)
         df_dia = df[df['DATA_MOVTO'].dt.date == dia]
         # Busca tolerante: tenta match exato primeiro, depois contains
@@ -1004,7 +1006,7 @@ def detalhe_cliente(nome: str):
 def detalhe_tipo(tipo: str):
     """Retorna clientes e produtos do tipo de carne no dia de referência."""
     try:
-        df = load_df()
+        df, _ = load_df()
         dia = get_dia_referencia(df)
         df_dia = df[df['DATA_MOVTO'].dt.date == dia]
         df_tipo = df_dia[df_dia['DESC_DIVISAO2'].str.upper() == tipo.upper()]
@@ -1807,7 +1809,7 @@ async def chat(req: ChatRequest):
     # ── Handler especial: Quem Sou Eu ──
     if ultima.startswith('__QUEM_SOU_EU__'):
         try:
-            df = load_df()
+            df, _ = load_df()
             csv_mod = ultima.split('csv_modificado=')[-1].strip() if 'csv_modificado=' in ultima else '-'
             d_min = df['DATA_MOVTO'].dropna().min()
             d_max = df['DATA_MOVTO'].dropna().max()
@@ -1892,7 +1894,7 @@ async def chat(req: ChatRequest):
             pergunta_para_filtro = f"cnpj {ultima.strip()}"
 
     try:
-        df = load_df()
+        df, _ = load_df()
         import logging
         anos_no_df = sorted(df['DATA_MOVTO'].dt.year.dropna().unique().tolist()) if 'DATA_MOVTO' in df.columns else []
         logging.warning(f"[IAF DEBUG] ultima={ultima!r} | pergunta_para_filtro={pergunta_para_filtro!r} | df total={len(df)} | anos_no_df={anos_no_df}")
@@ -2242,7 +2244,7 @@ def health():
 def reload_vendas():
     """Confirma que Drive está acessível."""
     try:
-        load_df()
+        _, __ = load_df()
         return {"status":"ok","message":"CSV carregado com sucesso"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
