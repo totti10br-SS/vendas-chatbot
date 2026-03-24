@@ -762,51 +762,128 @@ def aggregate_for_summary(dff: pd.DataFrame) -> str:
     lines.append("")
 
     # Por filial
-    lines.append("## POR FILIAL")
+    lines.append("## DISTRIBUIÇÃO POR FILIAL")
+    has_cx_f = 'QTDE_AUX' in dff.columns
     agg_filial = {'kg':('QTDE_PRI','sum'), 'fat':('VALOR_LIQUIDO','sum'), 'notas':('NUM_DOCTO','nunique')}
-    if 'QTDE_AUX' in dff.columns: agg_filial['cx'] = ('QTDE_AUX','sum')
+    if has_cx_f: agg_filial['cx'] = ('QTDE_AUX','sum')
     por_filial = dff.groupby('NOME_FILIAL').agg(**agg_filial).sort_values('kg', ascending=False)
+    if has_cx_f:
+        lines.append("| FILIAL | VOLUME (KG) | CX | FATURAMENTO | R$/KG | NOTAS |")
+        lines.append("|--------|-------------|-----|-------------|-------|-------|")
+    else:
+        lines.append("| FILIAL | VOLUME (KG) | FATURAMENTO | R$/KG | NOTAS |")
+        lines.append("|--------|-------------|-------------|-------|-------|")
     for idx, r in por_filial.iterrows():
         pm = r.fat/r.kg if r.kg > 0 else 0
-        cx_str = f" | {r.cx:,.0f} cx" if 'cx' in por_filial.columns else ""
-        lines.append(f"{idx}: {r.kg:,.2f} kg{cx_str} | R$ {r.fat:,.2f} | {r.notas} notas | R$ {pm:.2f}/kg")
+        if has_cx_f:
+            lines.append(f"| {idx} | {r.kg:,.2f} | {r.cx:,.0f} | R$ {r.fat:,.2f} | R$ {pm:.2f} | {r.notas} |")
+        else:
+            lines.append(f"| {idx} | {r.kg:,.2f} | R$ {r.fat:,.2f} | R$ {pm:.2f} | {r.notas} |")
+    tf_kg=por_filial['kg'].sum(); tf_fat=por_filial['fat'].sum(); tf_notas=por_filial['notas'].sum()
+    tf_pm=tf_fat/tf_kg if tf_kg>0 else 0
+    if has_cx_f:
+        tf_cx=por_filial['cx'].sum()
+        lines.append(f"| **TOTAIS** | **{tf_kg:,.2f}** | **{tf_cx:,.0f}** | **R$ {tf_fat:,.2f}** | **R$ {tf_pm:.2f}** | **{tf_notas:.0f}** |")
+    else:
+        lines.append(f"| **TOTAIS** | **{tf_kg:,.2f}** | **R$ {tf_fat:,.2f}** | **R$ {tf_pm:.2f}** | **{tf_notas:.0f}** |")
     lines.append("")
 
     # Por dia
-    lines.append("## POR DIA")
+    lines.append("## DESEMPENHO POR DIA")
     lines.append("| DATA | VOLUME (KG) | CX30 | FATURAMENTO | R$/KG | NOTAS |")
     lines.append("|------|-------------|------|-------------|-------|-------|")
     por_dia = dff.groupby(dff['DATA_MOVTO'].dt.strftime('%d/%m')).agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'), notas=('NUM_DOCTO','nunique')).sort_index()
     for idx, r in por_dia.iterrows():
         pm = r.fat/r.kg if r.kg > 0 else 0
         cx30 = round(r.kg/30, 0)
-        lines.append(f"| {idx} | {r.kg:,.2f} | {cx30:,.0f} | R$ {r.fat:,.2f} | R$ {pm:.2f} | {r.notas} |")
-    # Linha de totais
-    t_kg = por_dia['kg'].sum(); t_fat = por_dia['fat'].sum(); t_notas = por_dia['notas'].sum()
-    t_pm = t_fat/t_kg if t_kg > 0 else 0; t_cx30 = round(t_kg/30, 0)
-    lines.append(f"| **TOTAIS** | **{t_kg:,.2f}** | **{t_cx30:,.0f}** | **R$ {t_fat:,.2f}** | **R$ {t_pm:.2f}** | **{t_notas:.0f}** |")
+        lines.append(f"| {idx} | {r.kg:,.0f} | {cx30:,.0f} | R$ {r.fat:,.2f} | R$ {pm:.2f} | {int(r.notas)} |")
+    td_kg=por_dia['kg'].sum(); td_fat=por_dia['fat'].sum(); td_notas=int(por_dia['notas'].sum())
+    td_pm=td_fat/td_kg if td_kg>0 else 0; td_cx30=round(td_kg/30,0)
+    lines.append(f"| **TOTAIS** | **{td_kg:,.0f}** | **{td_cx30:,.0f}** | **R$ {td_fat:,.2f}** | **R$ {td_pm:.2f}** | **{td_notas}** |")
     lines.append("")
 
-    # Top 15 clientes
-    lines.append("## TOP 10 CLIENTES (por volume)")
+    # Previsão de fechamento do mês
+    import numpy as np
+    import calendar as _cal
+    hoje_ref = datetime.now().date()
+    ultimo_dia_mes = _cal.monthrange(hoje_ref.year, hoje_ref.month)[1]
+    # Dias úteis faturados (dias com movimento no período)
+    dias_faturados = len(por_dia)
+    media_kg_dia = td_kg / dias_faturados if dias_faturados > 0 else 0
+    media_fat_dia = td_fat / dias_faturados if dias_faturados > 0 else 0
+    # Dias úteis restantes no mês (seg a sex, excluindo hoje se já faturado)
+    ultimo_data = dff['DATA_MOVTO'].max().date()
+    dias_restantes = []
+    for d in range(ultimo_data.day + 1, ultimo_dia_mes + 1):
+        try:
+            dt = ultimo_data.replace(day=d)
+            if dt.weekday() < 5:  # seg=0 a sex=4
+                dias_restantes.append(dt)
+        except:
+            pass
+    n_rest = len(dias_restantes)
+    prev_kg  = td_kg  + (media_kg_dia  * n_rest)
+    prev_fat = td_fat + (media_fat_dia * n_rest)
+    prev_cx30 = round(prev_kg / 30, 0)
+    lines.append(f"## PREVISÃO DE FECHAMENTO")
+    lines.append(f"Base: {dias_faturados} dias faturados | Média/dia: {media_kg_dia:,.0f} kg | {int(n_rest)} dias úteis restantes")
+    lines.append(f"| MÉTRICA | REALIZADO | PREVISÃO FECHAMENTO |")
+    lines.append(f"|---------|-----------|---------------------|")
+    lines.append(f"| Volume (kg) | {td_kg:,.0f} | **{prev_kg:,.0f}** |")
+    lines.append(f"| CX30 | {td_cx30:,.0f} | **{prev_cx30:,.0f}** |")
+    lines.append(f"| Faturamento | R$ {td_fat:,.2f} | **R$ {prev_fat:,.2f}** |")
+    lines.append("")
+
+    # Top 10 clientes
+    lines.append("## TOP 5 CLIENTES (por volume)")
+    has_cx_c = 'QTDE_AUX' in dff.columns
     agg_cli = {'kg':('QTDE_PRI','sum'), 'fat':('VALOR_LIQUIDO','sum')}
-    if 'QTDE_AUX' in dff.columns: agg_cli['cx'] = ('QTDE_AUX','sum')
+    if has_cx_c: agg_cli['cx'] = ('QTDE_AUX','sum')
     por_cli = dff.groupby('NOME_CLIENTE').agg(**agg_cli).sort_values('kg', ascending=False).head(10)
+    if has_cx_c:
+        lines.append("| CLIENTE | VOLUME (KG) | CX | FATURAMENTO | R$/KG |")
+        lines.append("|---------|-------------|-----|-------------|-------|")
+    else:
+        lines.append("| CLIENTE | VOLUME (KG) | FATURAMENTO | R$/KG |")
+        lines.append("|---------|-------------|-------------|-------|")
     for idx, r in por_cli.iterrows():
         pm = r.fat/r.kg if r.kg > 0 else 0
-        cx_str = f" | {r.cx:,.0f} cx" if 'cx' in por_cli.columns else ""
-        lines.append(f"{idx}: {r.kg:,.2f} kg{cx_str} | R$ {r.fat:,.2f} | R$ {pm:.2f}/kg")
+        if has_cx_c:
+            lines.append(f"| {idx} | {r.kg:,.2f} | {r.cx:,.0f} | R$ {r.fat:,.2f} | R$ {pm:.2f} |")
+        else:
+            lines.append(f"| {idx} | {r.kg:,.2f} | R$ {r.fat:,.2f} | R$ {pm:.2f} |")
+    tc_kg=por_cli['kg'].sum(); tc_fat=por_cli['fat'].sum(); tc_pm=tc_fat/tc_kg if tc_kg>0 else 0
+    if has_cx_c:
+        tc_cx=por_cli['cx'].sum()
+        lines.append(f"| **TOTAIS TOP10** | **{tc_kg:,.2f}** | **{tc_cx:,.0f}** | **R$ {tc_fat:,.2f}** | **R$ {tc_pm:.2f}** |")
+    else:
+        lines.append(f"| **TOTAIS TOP10** | **{tc_kg:,.2f}** | **R$ {tc_fat:,.2f}** | **R$ {tc_pm:.2f}** |")
     lines.append("")
 
-    # Top 15 produtos
-    lines.append("## TOP 10 PRODUTOS (por volume)")
+    # Top 10 produtos
+    lines.append("## TOP 5 PRODUTOS (por volume)")
+    has_cx_p = 'QTDE_AUX' in dff.columns
     agg_prod = {'kg':('QTDE_PRI','sum'), 'fat':('VALOR_LIQUIDO','sum')}
-    if 'QTDE_AUX' in dff.columns: agg_prod['cx'] = ('QTDE_AUX','sum')
+    if has_cx_p: agg_prod['cx'] = ('QTDE_AUX','sum')
     por_prod = dff.groupby(['COD_PRODUTO','DESC_PRODUTO']).agg(**agg_prod).sort_values('kg', ascending=False).head(10)
+    if has_cx_p:
+        lines.append("| PRODUTO | VOLUME (KG) | CX | FATURAMENTO | R$/KG |")
+        lines.append("|---------|-------------|-----|-------------|-------|")
+    else:
+        lines.append("| PRODUTO | VOLUME (KG) | FATURAMENTO | R$/KG |")
+        lines.append("|---------|-------------|-------------|-------|")
     for idx, r in por_prod.iterrows():
         pm = r.fat/r.kg if r.kg > 0 else 0
-        cx_str = f" | {r.cx:,.0f} cx" if 'cx' in por_prod.columns else ""
-        lines.append(f"{idx[1]}: {r.kg:,.2f} kg{cx_str} | R$ {r.fat:,.2f} | R$ {pm:.2f}/kg")
+        if has_cx_p:
+            lines.append(f"| {idx[1]} | {r.kg:,.2f} | {r.cx:,.0f} | R$ {r.fat:,.2f} | R$ {pm:.2f} |")
+        else:
+            lines.append(f"| {idx[1]} | {r.kg:,.2f} | R$ {r.fat:,.2f} | R$ {pm:.2f} |")
+    tp_kg=por_prod['kg'].sum(); tp_fat=por_prod['fat'].sum(); tp_pm=tp_fat/tp_kg if tp_kg>0 else 0
+    if has_cx_p:
+        tp_cx=por_prod['cx'].sum()
+        lines.append(f"| **TOTAIS TOP10** | **{tp_kg:,.2f}** | **{tp_cx:,.0f}** | **R$ {tp_fat:,.2f}** | **R$ {tp_pm:.2f}** |")
+    else:
+        lines.append(f"| **TOTAIS TOP10** | **{tp_kg:,.2f}** | **R$ {tp_fat:,.2f}** | **R$ {tp_pm:.2f}** |")
     lines.append("")
 
     # Todos os vendedores (com código)
@@ -2124,10 +2201,18 @@ async def chat(req: ChatRequest):
 - Seja específico: cite dia (DD/MM/AA), NR NOTA, produto ou cliente quando relevante
 - O insight deve sugerir uma AÇÃO ou destacar uma OPORTUNIDADE, não apenas repetir dados
 
+## PAINEL DE ANÁLISE (após cada resposta com tabelas)
+- Após qualquer resposta com tabelas, adicione uma seção "📊 ANÁLISE RÁPIDA:" com 3 a 5 bullets concisos
+- Formato obrigatório — cada bullet em linha separada:
+  - 🔝 Destaque: [melhor dia/cliente/produto com valor]
+  - 📉 Atenção: [pior resultado ou queda relevante]
+  - 📈 Tendência: [padrão observado nos dados]
+  - 💰 Ticket médio: [R$/kg médio e comparativo]
+  - ⚠️ Alerta: [só se houver anomalia real, caso contrário omita]
+
 ## COMPORTAMENTOS ESPECÍFICOS
 - "Últimas vendas de [cliente]": tabela DATA | NR NOTA | COD PRODUTO | DESCRIÇÃO | QTDE kg | CX | R$/kg — últimos 15 registros, data decrescente
 - Período sem detalhe especificado (mensal/trimestral/anual): ofereça 4 opções antes de processar: "1) Resumo executivo 2) Análise por dia 3) Ranking produtos/vendedores 4) Comparativo filiais"
-- Tabela por dia: use sempre colunas DATA | VOLUME (KG) | CX30 | FATURAMENTO | R$/KG | NOTAS com linha de TOTAIS em negrito no final
 - EXCEÇÃO: se o usuário já especificou o que quer ("resumo", "ranking", "análise detalhada"), processe direto
 - Filtro UF: reconhece siglas (ES, RJ...) e nomes por extenso. Destaque: volume, faturamento, clientes, produtos, cidades
 - Busca por CNPJ: o CSV TEM coluna CNPJ (campo CPF_CGC). Aceita "cnpj 73849952" (raiz 8 dígitos) ou completo. NUNCA diga que o CSV não tem CNPJ. Se os dados retornados já estiverem filtrados por CNPJ, analise normalmente sem comentar sobre a coluna.
