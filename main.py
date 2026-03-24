@@ -775,31 +775,18 @@ def aggregate_for_summary(dff: pd.DataFrame) -> str:
     lines.append(f"→ Volume: {_prev_kg:,.0f} kg | CX30: {_prev_cx30:,.0f} | Faturamento: R$ {_prev_fat:,.2f}")
     lines.append("")
 
-    # Por filial
-    lines.append("## DISTRIBUIÇÃO POR FILIAL")
-    has_cx_f = 'QTDE_AUX' in dff.columns
-    agg_filial = {'kg':('QTDE_PRI','sum'), 'fat':('VALOR_LIQUIDO','sum'), 'notas':('NUM_DOCTO','nunique')}
-    if has_cx_f: agg_filial['cx'] = ('QTDE_AUX','sum')
-    por_filial = dff.groupby('NOME_FILIAL').agg(**agg_filial).sort_values('kg', ascending=False)
-    if has_cx_f:
-        lines.append("| FILIAL | VOLUME (KG) | CX | FATURAMENTO | R$/KG | NOTAS |")
-        lines.append("|--------|-------------|-----|-------------|-------|-------|")
-    else:
-        lines.append("| FILIAL | VOLUME (KG) | FATURAMENTO | R$/KG | NOTAS |")
-        lines.append("|--------|-------------|-------------|-------|-------|")
-    for idx, r in por_filial.iterrows():
+    # Por tipo de corte (DESC_DIVISAO2)
+    lines.append("## DISTRIBUIÇÃO POR TIPO DE CORTE")
+    lines.append("| TIPO DE CORTE | VOLUME (KG) | CX30 | FATURAMENTO | R$/KG |")
+    lines.append("|---------------|-------------|------|-------------|-------|")
+    por_corte = dff.groupby('DESC_DIVISAO2').agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum')).sort_values('kg', ascending=False)
+    for idx, r in por_corte.iterrows():
         pm = r.fat/r.kg if r.kg > 0 else 0
-        if has_cx_f:
-            lines.append(f"| {idx} | {r.kg:,.2f} | {r.cx:,.0f} | R$ {r.fat:,.2f} | R$ {pm:.2f} | {r.notas} |")
-        else:
-            lines.append(f"| {idx} | {r.kg:,.2f} | R$ {r.fat:,.2f} | R$ {pm:.2f} | {r.notas} |")
-    tf_kg=por_filial['kg'].sum(); tf_fat=por_filial['fat'].sum(); tf_notas=por_filial['notas'].sum()
-    tf_pm=tf_fat/tf_kg if tf_kg>0 else 0
-    if has_cx_f:
-        tf_cx=por_filial['cx'].sum()
-        lines.append(f"| **TOTAIS** | **{tf_kg:,.2f}** | **{tf_cx:,.0f}** | **R$ {tf_fat:,.2f}** | **R$ {tf_pm:.2f}** | **{tf_notas:.0f}** |")
-    else:
-        lines.append(f"| **TOTAIS** | **{tf_kg:,.2f}** | **R$ {tf_fat:,.2f}** | **R$ {tf_pm:.2f}** | **{tf_notas:.0f}** |")
+        cx30_c = round(r.kg/30, 0)
+        lines.append(f"| {idx} | {r.kg:,.0f} | {cx30_c:,.0f} | R$ {r.fat:,.2f} | R$ {pm:.2f} |")
+    tc_kg=por_corte['kg'].sum(); tc_fat=por_corte['fat'].sum()
+    tc_pm=tc_fat/tc_kg if tc_kg>0 else 0; tc_cx30=round(tc_kg/30,0)
+    lines.append(f"| **TOTAIS** | **{tc_kg:,.0f}** | **{tc_cx30:,.0f}** | **R$ {tc_fat:,.2f}** | **R$ {tc_pm:.2f}** |")
     lines.append("")
 
     # Por dia
@@ -839,10 +826,11 @@ def aggregate_for_summary(dff: pd.DataFrame) -> str:
     prev_kg  = td_kg  + (media_kg_dia  * n_rest)
     prev_fat = td_fat + (media_fat_dia * n_rest)
     prev_cx30 = round(prev_kg / 30, 0)
-    lines.append(f"## PREVISÃO DE FECHAMENTO")
-    lines.append(f"Base: {dias_faturados} dias faturados | Média/dia: {media_kg_dia:,.0f} kg | {int(n_rest)} dias úteis restantes")
-    lines.append(f"| MÉTRICA | REALIZADO | PREVISÃO FECHAMENTO |")
-    lines.append(f"|---------|-----------|---------------------|")
+    lines.append(f"## PREVISÃO DE FECHAMENTO DO MÊS")
+    lines.append(f"Base de cálculo: {dias_faturados} dias faturados | Média diária: {media_kg_dia:,.0f} kg | R$ {media_fat_dia:,.2f}")
+    lines.append(f"Dias úteis restantes no mês: {int(n_rest)}")
+    lines.append(f"| MÉTRICA | REALIZADO ATÉ AGORA | PREVISÃO FECHAMENTO |")
+    lines.append(f"|---------|---------------------|---------------------|")
     lines.append(f"| Volume (kg) | {td_kg:,.0f} | **{prev_kg:,.0f}** |")
     lines.append(f"| CX30 | {td_cx30:,.0f} | **{prev_cx30:,.0f}** |")
     lines.append(f"| Faturamento | R$ {td_fat:,.2f} | **R$ {prev_fat:,.2f}** |")
@@ -2210,7 +2198,7 @@ async def chat(req: ChatRequest):
 - CAIXAS (CX30): sempre exiba cx30 = kg/30 junto com kg. Ex: '29.324 kg | 977 cx30'
 - Filiais: ITAP (Itaperuna), BJESUS (Bom Jesus), PORC (Porciúncula), TRINDADE (Trindade)
 - TOTAIS OBRIGATÓRIOS: toda tabela DEVE ter linha final "| **TOTAIS** |" com somas de todas colunas numéricas — NUNCA omita
-- PREVISÃO DE FECHAMENTO: quando os dados contiverem seção "## PREVISÃO DE FECHAMENTO", reproduza a tabela COMPLETA e integralmente na resposta, sem resumir ou omitir
+- PREVISÃO DE FECHAMENTO: quando os dados contiverem seção "## PREVISÃO DE FECHAMENTO DO MÊS", SEMPRE reproduza essa seção COMPLETA na resposta — é obrigatória, nunca omita. Mostre a tabela com Realizado e Previsão Fechamento
 
 ## INSIGHT FINAL
 - Finalize SEMPRE com 1 insight executivo precedido de "💡 Insight:" em linha separada
