@@ -93,18 +93,22 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;ba
 .bubble strong{color:var(--yellow);font-weight:700;}
 .bubble p{margin-bottom:8px;color:var(--text);}.bubble p:last-child{margin-bottom:0;}
 .bubble ul{margin:6px 0 6px 17px;}.bubble li{margin-bottom:4px;color:#fff;}
-.bubble table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13px;display:block;overflow-x:auto;}
-.bubble thead tr{background:linear-gradient(90deg,#a80000,#cc0000);}
-.bubble th{padding:9px 12px;text-align:left;font-family:'Barlow Condensed',sans-serif;font-weight:700;color:var(--yellow);font-size:13px;text-transform:uppercase;letter-spacing:.8px;border:none;white-space:nowrap;}
-.bubble td{padding:7px 12px;border:none;border-bottom:1px solid rgba(255,255,255,.06);color:#e8e8e8;font-size:13px;}
-.bubble td:not(:first-child):not(:nth-child(2)){text-align:right;font-variant-numeric:tabular-nums;font-family:'Barlow Condensed',sans-serif;letter-spacing:.3px;}
-.bubble tr:nth-child(odd) td{background:rgba(255,255,255,.03);}
-.bubble tr:nth-child(even) td{background:rgba(0,0,0,.2);}
+.bubble table{width:100%;border-collapse:collapse;margin:10px 0;font-size:15px;display:block;overflow-x:auto;}
+.bubble th{background:rgba(204,0,0,.3);padding:4px 6px;text-align:left;font-family:'Barlow Condensed',sans-serif;font-weight:700;color:var(--yellow);font-size:14px;text-transform:uppercase;border:1px solid rgba(204,0,0,.4);}
+.bubble td{padding:4px 6px;border:1px solid rgba(255,255,255,.1);color:#fff;}
+.bubble td:not(:first-child):not(:nth-child(2)){text-align:right;}
+.bubble tr:nth-child(even) td{background:rgba(255,255,255,.03);}
 .btn-danfe{display:inline-flex;align-items:center;gap:6px;background:#5a5a5a;border:1px solid #888;border-bottom:3px solid #2a2a2a;color:#f0f0f0;font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px;padding:6px 16px 5px;border-radius:5px;cursor:pointer;text-decoration:none;margin-top:10px;transition:all .1s;box-shadow:0 2px 4px rgba(0,0,0,.4);}
 .btn-danfe:hover{background:#666;border-bottom-width:1px;transform:translateY(1px);box-shadow:none;color:#fff;}
 .bubble tr:last-child td{border-bottom:none;}
-.bubble tbody tr:hover td{background:rgba(204,0,0,.18)!important;color:#fff;}
-.bubble tbody tr:hover td:first-child{border-left:3px solid var(--yellow);}
+.semanas-box{display:flex;flex-direction:column;gap:6px;margin-top:12px;padding:12px 14px;background:rgba(204,0,0,.08);border:1px solid rgba(204,0,0,.25);border-left:3px solid var(--red);border-radius:6px;font-family:'Barlow Condensed',sans-serif;}
+.semanas-box-title{font-size:11px;font-weight:700;color:var(--yellow);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;}
+.semana-item{display:flex;flex-direction:column;gap:1px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.06);}
+.semana-item:last-child{border-bottom:none;padding-bottom:0;}
+.semana-label{font-size:12px;font-weight:700;color:var(--yellow);letter-spacing:.5px;}
+.semana-detalhe{font-size:12px;color:rgba(255,255,255,.75);line-height:1.5;}
+.semana-alerta{font-size:11px;color:#ffaa00;margin-top:2px;}
+.bubble tr:hover td{background:rgba(204,0,0,.05);color:var(--text);}
 
 .typing .bubble{display:flex;gap:5px;align-items:center;padding:12px 15px;}
 .dot{width:6px;height:6px;border-radius:50%;background:var(--yellow);opacity:.8;animation:blink 1.2s infinite;}
@@ -559,6 +563,20 @@ function renderMarkdown(text){
   text=text.replace(/\*(.+?)\*/g,'<em>$1</em>');
   text=text.replace(/^[-*] (.+)$/gm,'<li>$1</li>');
   text=text.replace(/\n\n/g,'</p><p>');
+  // Detecta resumo de semanas: "Semana N (dd-dd/mm): ... Semana N+1 ..."
+  text=text.replace(/<p>((?:Semana\s+\d+[^<]*?(?:⚠️[^<]*?)?)+)<\/p>/g,function(m,inner){
+    var parts=inner.split(/(?=Semana\s+\d+)/);
+    var items=parts.filter(function(p){return p.trim();}).map(function(p){
+      var alerta='';
+      p=p.replace(/⚠️([^S]*)/g,function(_,a){alerta='<div class="semana-alerta">⚠️'+a.trim()+'</div>';return '';});
+      var lbl=p.match(/^Semana\s+\d+(?:\s*\([^)]+\))?/);
+      var label=lbl?lbl[0].trim():'';
+      var resto=p.replace(/^Semana\s+\d+(?:\s*\([^)]+\))?[:\s]*/,'').trim().replace(/\|/g,'<br>');
+      return '<div class="semana-item"><div class="semana-label">'+label+'</div><div class="semana-detalhe">'+resto+'</div>'+alerta+'</div>';
+    });
+    if(items.length<2) return m;
+    return '<div class="semanas-box"><div class="semanas-box-title">📅 Resumo por Semana</div>'+items.join('')+'</div>';
+  });
   return '<p>'+text+'</p>';
 }
 async function forceReload(){
