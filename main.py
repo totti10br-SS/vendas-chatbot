@@ -774,10 +774,17 @@ def aggregate_for_summary(dff: pd.DataFrame) -> str:
 
     # Por dia
     lines.append("## POR DIA")
-    por_dia = dff.groupby(dff['DATA_MOVTO'].dt.strftime('%d/%m/%y')).agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'), notas=('NUM_DOCTO','nunique')).sort_index()
+    lines.append("| DATA | VOLUME (KG) | CX30 | FATURAMENTO | R$/KG | NOTAS |")
+    lines.append("|------|-------------|------|-------------|-------|-------|")
+    por_dia = dff.groupby(dff['DATA_MOVTO'].dt.strftime('%d/%m')).agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'), notas=('NUM_DOCTO','nunique')).sort_index()
     for idx, r in por_dia.iterrows():
         pm = r.fat/r.kg if r.kg > 0 else 0
-        lines.append(f"{idx}: {r.kg:,.2f} kg | R$ {r.fat:,.2f} | {r.notas} notas | R$ {pm:.2f}/kg")
+        cx30 = round(r.kg/30, 0)
+        lines.append(f"| {idx} | {r.kg:,.2f} | {cx30:,.0f} | R$ {r.fat:,.2f} | R$ {pm:.2f} | {r.notas} |")
+    # Linha de totais
+    t_kg = por_dia['kg'].sum(); t_fat = por_dia['fat'].sum(); t_notas = por_dia['notas'].sum()
+    t_pm = t_fat/t_kg if t_kg > 0 else 0; t_cx30 = round(t_kg/30, 0)
+    lines.append(f"| **TOTAIS** | **{t_kg:,.2f}** | **{t_cx30:,.0f}** | **R$ {t_fat:,.2f}** | **R$ {t_pm:.2f}** | **{t_notas:.0f}** |")
     lines.append("")
 
     # Top 15 clientes
@@ -2120,6 +2127,7 @@ async def chat(req: ChatRequest):
 ## COMPORTAMENTOS ESPECÍFICOS
 - "Últimas vendas de [cliente]": tabela DATA | NR NOTA | COD PRODUTO | DESCRIÇÃO | QTDE kg | CX | R$/kg — últimos 15 registros, data decrescente
 - Período sem detalhe especificado (mensal/trimestral/anual): ofereça 4 opções antes de processar: "1) Resumo executivo 2) Análise por dia 3) Ranking produtos/vendedores 4) Comparativo filiais"
+- Tabela por dia: use sempre colunas DATA | VOLUME (KG) | CX30 | FATURAMENTO | R$/KG | NOTAS com linha de TOTAIS em negrito no final
 - EXCEÇÃO: se o usuário já especificou o que quer ("resumo", "ranking", "análise detalhada"), processe direto
 - Filtro UF: reconhece siglas (ES, RJ...) e nomes por extenso. Destaque: volume, faturamento, clientes, produtos, cidades
 - Busca por CNPJ: o CSV TEM coluna CNPJ (campo CPF_CGC). Aceita "cnpj 73849952" (raiz 8 dígitos) ou completo. NUNCA diga que o CSV não tem CNPJ. Se os dados retornados já estiverem filtrados por CNPJ, analise normalmente sem comentar sobre a coluna.
