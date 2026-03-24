@@ -756,9 +756,23 @@ def aggregate_for_summary(dff: pd.DataFrame) -> str:
     total_fat = dff['VALOR_LIQUIDO'].sum()
     total_notas = dff['NUM_DOCTO'].nunique()
     preco_medio = total_fat / total_kg if total_kg > 0 else 0
+    import calendar as _cal_rg
+    _hoje = datetime.now().date()
+    _ult_dia_mes = _cal_rg.monthrange(_hoje.year, _hoje.month)[1]
+    _ultimo_data = dff['DATA_MOVTO'].max().date()
+    _dias_fat = dff.groupby(dff['DATA_MOVTO'].dt.date).ngroups
+    _media_kg = total_kg / _dias_fat if _dias_fat > 0 else 0
+    _media_fat = total_fat / _dias_fat if _dias_fat > 0 else 0
+    _dias_rest = sum(1 for d in range(_ultimo_data.day+1, _ult_dia_mes+1)
+                     if _ultimo_data.replace(day=d).weekday() < 5)
+    _prev_kg  = total_kg  + (_media_kg  * _dias_rest)
+    _prev_fat = total_fat + (_media_fat * _dias_rest)
+    _prev_cx30 = round(_prev_kg/30, 0)
     lines.append(f"## RESUMO GERAL")
     total_cx = dff['QTDE_AUX'].sum() if 'QTDE_AUX' in dff.columns else 0
-    lines.append(f"Total: {total_kg:,.2f} kg | {total_cx:,.0f} cx | R$ {total_fat:,.2f} | {total_notas} notas | R$ {preco_medio:.2f}/kg")
+    lines.append(f"Total: {total_kg:,.0f} kg | {total_cx:,.0f} cx | R$ {total_fat:,.2f} | {total_notas} notas | R$ {preco_medio:.2f}/kg")
+    lines.append(f"Previsão fechamento mês ({_dias_rest} dias úteis restantes, base {_dias_fat} dias faturados, média {_media_kg:,.0f} kg/dia):")
+    lines.append(f"→ Volume: {_prev_kg:,.0f} kg | CX30: {_prev_cx30:,.0f} | Faturamento: R$ {_prev_fat:,.2f}")
     lines.append("")
 
     # Por filial
@@ -2195,6 +2209,8 @@ async def chat(req: ChatRequest):
 - PREÇO MÉDIO (R$/kg): calcule como VALOR_LIQUIDO / QTDE_PRI em toda análise de produto, cliente ou vendedor
 - CAIXAS (CX30): sempre exiba cx30 = kg/30 junto com kg. Ex: '29.324 kg | 977 cx30'
 - Filiais: ITAP (Itaperuna), BJESUS (Bom Jesus), PORC (Porciúncula), TRINDADE (Trindade)
+- TOTAIS OBRIGATÓRIOS: toda tabela DEVE ter linha final "| **TOTAIS** |" com somas de todas colunas numéricas — NUNCA omita
+- PREVISÃO DE FECHAMENTO: quando os dados contiverem seção "## PREVISÃO DE FECHAMENTO", reproduza a tabela COMPLETA e integralmente na resposta, sem resumir ou omitir
 
 ## INSIGHT FINAL
 - Finalize SEMPRE com 1 insight executivo precedido de "💡 Insight:" em linha separada
