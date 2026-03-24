@@ -549,15 +549,12 @@ function renderMarkdown(text){
   function parseCells(row){var p=row.split('|');p=p.slice(1,p.length-1);return p.map(function(c){return boldInCell(c.trim());});}
   // Tabelas markdown
   // Detecta linha de base de cálculo da previsão e converte em caixa destacada
-  text=text.replace(/Base de c[aá]lculo:\s*([^|\n]+)\|\s*M[eé]dia di[aá]ria:\s*([^|\n]+)\|\s*([^\n]+)/gi,function(_,dias,media,resto){
-    var diasStr=dias.trim(); var mediaStr=media.trim(); var restoStr=resto.trim();
-    // Extrai dias úteis restantes
-    var restMatch=restoStr.match(/(\d+)/);
-    var restDias=restMatch?restMatch[1]:'—';
+  text=text.replace(/Base de c[aá]lculo:\s*([^|\n]+)\|\s*M[eé]dia di[aá]ria:\s*([^|\n]+)\|\s*Dias [uú]teis restantes:\s*(\d+)/gi,function(_,dias,media,restDias){
+    var diasStr=dias.trim(); var mediaStr=media.trim();
     return '<div class="previsao-base">'
       +'<div class="previsao-base-item"><div class="previsao-base-val">'+diasStr+'</div><div class="previsao-base-label">Dias Faturados</div></div>'
-      +'<div class="previsao-base-item"><div class="previsao-base-val">'+mediaStr+'</div><div class="previsao-base-label">Média / Dia</div></div>'
-      +'<div class="previsao-base-item"><div class="previsao-base-val">'+restDias+'</div><div class="previsao-base-label">Dias Úteis Restantes</div></div>'
+      +'<div class="previsao-base-item"><div class="previsao-base-val">'+mediaStr+'</div><div class="previsao-base-label">Média Diária</div></div>'
+      +'<div class="previsao-base-item"><div class="previsao-base-val" style="color:#ff6">'+restDias+'</div><div class="previsao-base-label">Dias Úteis Restantes</div></div>'
       +'</div>';
   });
   text=text.replace(/\|(.+)\|\n\|[-| :]+\|\n((?:\|.+\|\n?)+)/gm,function(m,header,rows){
