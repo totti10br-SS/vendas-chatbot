@@ -733,9 +733,6 @@ def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None, df_orig: pd.D
         dff_orig = pd.DataFrame()  # retorna vazio — não força fallback 30 dias
         return dff_orig[[c for c in cols if c in dff_orig.columns]] if len(dff_orig) else dff[[c for c in cols if c in dff.columns]]
 
-    if len(dff) > 2000:
-        dff = dff.tail(2000)
-
     return dff[[c for c in cols if c in dff.columns]]
 
 def aggregate_nota(dff: pd.DataFrame) -> str:
