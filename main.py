@@ -34,28 +34,6 @@ app.add_middleware(CORSMiddleware,
 FILE_ID    = os.environ.get("DRIVE_FILE_ID", "")
 CLAUDE_KEY = os.environ.get("CLAUDE_API_KEY", "")
 
-@app.get("/debug-csv")
-def debug_csv():
-    """Mostra qual FILE_ID está em uso e as filiais/meses do CSV."""
-    try:
-        file_id_runtime = os.environ.get("DRIVE_FILE_ID", "NAO_DEFINIDO")
-        df = load_df()
-        filiais = df['FILIAL'].unique().tolist() if 'FILIAL' in df.columns else []
-        # tenta coluna alternativa
-        if not filiais and 'NOME_FILIAL' in df.columns:
-            filiais = df['NOME_FILIAL'].unique().tolist()
-        meses = sorted(df['DATA_MOVTO'].dt.to_period('M').dropna().unique().astype(str).tolist()) if 'DATA_MOVTO' in df.columns else []
-        return JSONResponse({
-            "file_id_startup": FILE_ID,
-            "file_id_runtime": file_id_runtime,
-            "total_linhas": len(df),
-            "colunas": list(df.columns),
-            "filiais": filiais,
-            "meses_disponiveis": meses
-        })
-    except Exception as e:
-        return JSONResponse({"erro": str(e), "file_id_startup": FILE_ID, "file_id_runtime": os.environ.get("DRIVE_FILE_ID", "NAO_DEFINIDO")})
-
 # Sem cache — sempre busca do Drive diretamente
 
 def get_drive_service():
@@ -2189,11 +2167,19 @@ async def chat(req: ChatRequest):
 
     system = f"""Você é o IAF, Analista Comercial Sênior da Frinense Alimentos.
 
+⛔⛔⛔ REGRA ABSOLUTA — NUNCA INVENTAR DADOS ⛔⛔⛔
+- VOCÊ SÓ PODE USAR OS DADOS QUE ESTÃO NA SEÇÃO "DADOS" ABAIXO. ZERO EXCEÇÕES.
+- Se uma filial, cliente, produto, vendedor ou valor NÃO aparece nos dados recebidos = NÃO EXISTE para esta consulta. Não cite, não estime, não complete.
+- NUNCA use informações de mensagens anteriores da conversa para preencher lacunas dos dados atuais.
+- NUNCA some ou agrupe itens que não estejam explicitamente nos dados.
+- Se os dados estiverem vazios ou insuficientes: responda APENAS "⚠️ Sem dados disponíveis para este período/filtro." e pare.
+- Inventar ou estimar qualquer número é PROIBIDO. Se não está nos dados = não existe.
+⛔⛔⛔⛔⛔⛔⛔⛔⛔⛔⛔⛔⛔⛔⛔⛔⛔⛔⛔⛔⛔⛔⛔
+
 ## IDENTIDADE E POSTURA
 - Especialista em indicadores comerciais, foco em volume de vendas (kg)
 - Tom executivo e direto — sem rodeios, sem introduções longas, sem enrolação
 - Prioriza volume (kg) antes de valor financeiro
-- Nunca inventa dados. Se não tiver dados suficientes, diz claramente
 - Raciocínio de gerência comercial: sempre conecta dados com decisão de negócio
 
 ## FORMATO PADRÃO DE RESPOSTAS
@@ -2217,7 +2203,8 @@ async def chat(req: ChatRequest):
 ## MÉTRICAS OBRIGATÓRIAS
 - PREÇO MÉDIO (R$/kg): calcule como VALOR_LIQUIDO / QTDE_PRI em toda análise de produto, cliente ou vendedor
 - CAIXAS (CX30): sempre exiba cx30 = kg/30 junto com kg. Ex: '29.324 kg | 977 cx30'
-- Filiais: ITAP (Itaperuna), BJESUS (Bom Jesus), PORC (Porciúncula), TRINDADE (Trindade)
+- Filiais: ITAP (Itaperuna), BJESUS (Bom Jesus do Itabapoana), PORC (Porciúncula)
+- ⛔ NUNCA mencione filiais que não apareçam nos dados recebidos — se uma filial não está nos dados, ela não existe no período consultado
 - TOTAIS OBRIGATÓRIOS: toda tabela DEVE ter linha final "| **TOTAIS** |" com somas de todas colunas numéricas — NUNCA omita
 - PREVISÃO DE FECHAMENTO: quando os dados contiverem seção "## PREVISÃO DE FECHAMENTO DO MÊS", SEMPRE reproduza essa seção COMPLETA na resposta — é obrigatória, nunca omita. Mostre a tabela com Realizado e Previsão Fechamento
 
