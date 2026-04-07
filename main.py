@@ -34,6 +34,28 @@ app.add_middleware(CORSMiddleware,
 FILE_ID    = os.environ.get("DRIVE_FILE_ID", "")
 CLAUDE_KEY = os.environ.get("CLAUDE_API_KEY", "")
 
+@app.get("/debug-csv")
+def debug_csv():
+    """Mostra qual FILE_ID está em uso e as filiais/meses do CSV."""
+    try:
+        file_id_runtime = os.environ.get("DRIVE_FILE_ID", "NAO_DEFINIDO")
+        df = load_df()
+        filiais = df['FILIAL'].unique().tolist() if 'FILIAL' in df.columns else []
+        # tenta coluna alternativa
+        if not filiais and 'NOME_FILIAL' in df.columns:
+            filiais = df['NOME_FILIAL'].unique().tolist()
+        meses = sorted(df['DATA_MOVTO'].dt.to_period('M').dropna().unique().astype(str).tolist()) if 'DATA_MOVTO' in df.columns else []
+        return JSONResponse({
+            "file_id_startup": FILE_ID,
+            "file_id_runtime": file_id_runtime,
+            "total_linhas": len(df),
+            "colunas": list(df.columns),
+            "filiais": filiais,
+            "meses_disponiveis": meses
+        })
+    except Exception as e:
+        return JSONResponse({"erro": str(e), "file_id_startup": FILE_ID, "file_id_runtime": os.environ.get("DRIVE_FILE_ID", "NAO_DEFINIDO")})
+
 # Sem cache — sempre busca do Drive diretamente
 
 def get_drive_service():
