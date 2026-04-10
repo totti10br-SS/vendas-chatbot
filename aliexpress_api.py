@@ -175,6 +175,13 @@ PALAVRAS_BLOQUEADAS = [
     "raquete", "racket", "racquet",
     "capacete bike", "joelheira", "cotoveleira",
 
+    # Brinquedos e esportes ao ar livre — fora do nicho
+    "bola de futebol", "bola gigante", "bola pvc", "bola praia",
+    "bola verão", "brinquedo", "brinquedos", "toy", "toys",
+    "jogos ao ar livre", "jogos esportivos", "esporte ao ar livre",
+    "gramado esporte", "queda gramado", "presente jogos",
+    "pvc ball", "giant ball", "beach ball", "outdoor game",
+    "kite", "pipa", "pião", "bambolê", "frisbee",
     # Ferramentas de medição e elétrica — fora do nicho
     "multímetro", "multimetro", "alicate amperímetro", "alicate amperimetro",
     "medidor de braçadeira", "medidor de bracadeira", "clamp meter",
