@@ -45,8 +45,11 @@ CATEGORIAS = [
     "ssd 512gb",
     "memoria ram ddr4",
     "memoria ram ddr5",
+    "ram 4gb ddr4",
+    "ram 8gb ddr4",
     "ram 16gb",
     "ram 32gb",
+    "ram 8gb ddr5",
     "processador intel",
     "processador amd ryzen",
     # Monitores
