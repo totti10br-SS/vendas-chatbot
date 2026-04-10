@@ -850,7 +850,12 @@ def montar_pipeline():
     produtos_shopee = buscar_shopee()
 
     log.info("Buscando Mercado Livre API...")
-    produtos_ml = buscar_ml()
+    try:
+        produtos_ml = buscar_ml()
+        log.info(f"Mercado Livre: {len(produtos_ml)} produtos carregados no pipeline")
+    except Exception as e:
+        log.error(f"Mercado Livre erro: {e}")
+        produtos_ml = []
 
     log.info("Buscando Amazon Best Sellers...")
     produtos_amazon = buscar_amazon_best_sellers()
