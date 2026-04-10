@@ -993,6 +993,8 @@ def main():
     log.info(f"🗓️ Sem repetir por: {HORAS_SEM_REPETIR} horas\n")
     for h in HORARIOS:
         schedule.every().day.at(h).do(ciclo)
+    log.info("🚀 Disparando ciclo imediato ao iniciar...")
+    ciclo()
     log.info("⏳ Aguardando próximo horário agendado...")
     while True:
         schedule.run_pending()
