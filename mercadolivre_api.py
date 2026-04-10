@@ -179,16 +179,38 @@ def processar_item(item):
             return None
 
         preco = float(item.get("price", 0) or 0)
-        preco_orig = float(item.get("original_price") or preco)
-
         if preco <= 0:
             return None
         if preco < PRECO_MINIMO or preco > PRECO_MAXIMO:
             return None
 
+        # 1) Tenta original_price direto
+        preco_orig = float(item.get("original_price") or 0)
         desconto = 0
         if preco_orig > preco:
             desconto = int((1 - preco / preco_orig) * 100)
+
+        # 2) Tenta via sale_price
+        if desconto == 0:
+            sale = item.get("sale_price", {}) or {}
+            try:
+                preco_sale     = float(sale.get("amount", 0) or 0)
+                preco_orig_sale = float(sale.get("regular_amount", 0) or 0)
+                if preco_orig_sale > preco_sale > 0:
+                    preco_orig = preco_orig_sale
+                    desconto   = int((1 - preco_sale / preco_orig_sale) * 100)
+            except:
+                pass
+
+        # 3) Tenta via atributo DISCOUNT
+        if desconto == 0:
+            for attr in item.get("attributes", []):
+                if attr.get("id") == "DISCOUNT":
+                    try:
+                        desconto = int(float(str(attr.get("value_name", "0")).replace("%", "").strip()))
+                    except:
+                        pass
+                    break
 
         if desconto < DESCONTO_MINIMO:
             return None
@@ -201,14 +223,12 @@ def processar_item(item):
         if not link_original:
             return None
 
-        # Verifica se tem frete grátis
-        shipping = item.get("shipping", {})
+        shipping     = item.get("shipping", {}) or {}
         frete_gratis = shipping.get("free_shipping", False)
-        frete_txt = "✅ Frete grátis" if frete_gratis else "🚚 Frete a calcular"
+        frete_txt    = "✅ Frete grátis" if frete_gratis else "🚚 Frete a calcular"
 
-        # Imagem
         thumbnail = item.get("thumbnail", "")
-        imagem = thumbnail.replace("I.jpg", "O.jpg") if thumbnail else ""
+        imagem    = thumbnail.replace("I.jpg", "O.jpg") if thumbnail else ""
 
         link_afiliado = gerar_link_afiliado(link_original)
         link_curto    = encurtar_link(link_afiliado)
@@ -216,7 +236,7 @@ def processar_item(item):
         return {
             "nome":           nome,
             "preco":          round(preco, 2),
-            "preco_original": round(preco_orig, 2),
+            "preco_original": round(preco_orig, 2) if preco_orig > preco else 0,
             "desconto":       desconto,
             "loja":           "MERCADOLIVRE",
             "frete":          frete_txt,
@@ -231,13 +251,15 @@ def processar_item(item):
 
 
 def buscar_todos_produtos():
-    todos   = []
-    vistos  = set()
+    todos       = []
+    vistos      = set()
+    total_bruto = 0
 
     # Busca por categorias
     for cat_id, cat_nome in CATEGORIAS:
         try:
             items = buscar_por_categoria(cat_id, limit=8)
+            total_bruto += len(items)
             for item in items:
                 p = processar_item(item)
                 if p:
@@ -255,6 +277,7 @@ def buscar_todos_produtos():
     for keyword in keywords_shuffle:
         try:
             items = buscar_por_keyword(keyword, limit=5)
+            total_bruto += len(items)
             for item in items:
                 p = processar_item(item)
                 if p:
@@ -267,5 +290,5 @@ def buscar_todos_produtos():
             print(f"ML keyword '{keyword}' erro: {e}")
             continue
 
-    print(f"Mercado Livre API: {len(todos)} produtos encontrados")
+    print(f"Mercado Livre API: {total_bruto} itens brutos → {len(todos)} com desconto >= {DESCONTO_MINIMO}%")
     return todos
