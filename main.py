@@ -1,30 +1,38 @@
 import os
 import logging
+import json
+import pickle
+import io
+import re
+import base64
+import calendar
+import threading
+
 os.environ.setdefault('TZ', 'America/Sao_Paulo')
 try:
     import time; time.tzset()
 except AttributeError:
     pass
-import pickle
-import io
-import re
-import base64
+
 import pandas as pd
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 import httpx
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
+# ─────────────────────────────────────────────
+#  CONFIG
+# ─────────────────────────────────────────────
 app = FastAPI()
 app.add_middleware(CORSMiddleware,
     allow_origins=["https://web-production-91aff.up.railway.app"],
@@ -33,54 +41,28 @@ app.add_middleware(CORSMiddleware,
 
 FILE_ID    = os.environ.get("DRIVE_FILE_ID", "")
 CLAUDE_KEY = os.environ.get("CLAUDE_API_KEY", "")
+MEUDANFE_KEY = "0c1588f4-f90e-4711-8b39-87be9a1581da"
 
-@app.get("/debug-csv")
-def debug_csv():
-    try:
-        file_id_runtime = os.environ.get("DRIVE_FILE_ID", "NAO_DEFINIDO")
-        df = load_df()
-        filiais = df['NOME_FILIAL'].unique().tolist() if 'NOME_FILIAL' in df.columns else []
-        meses = sorted(df['DATA_MOVTO'].dt.to_period('M').dropna().unique().astype(str).tolist())
-        return JSONResponse({"file_id_startup": FILE_ID, "file_id_runtime": file_id_runtime,
-                             "total_linhas": len(df), "colunas": list(df.columns),
-                             "filiais": filiais, "meses_disponiveis": meses})
-    except Exception as e:
-        return JSONResponse({"erro": str(e), "file_id_startup": FILE_ID})
+FILIAIS_VALIDAS = {"ITAP", "BJESUS", "PORC"}
 
-@app.get("/debug-marco")
-def debug_marco():
-    try:
-        df = load_df()
-        marco = df[(df['DATA_MOVTO'].dt.year == 2026) & (df['DATA_MOVTO'].dt.month == 3)]
-        fat   = float(marco['VALOR_LIQUIDO'].sum())
-        kg    = float(marco['QTDE_PRI'].sum())
-        notas = int(marco['NUM_DOCTO'].nunique())
-        filiais = marco['NOME_FILIAL'].value_counts().to_dict() if 'NOME_FILIAL' in marco.columns else {}
-        ctx = {}
-        dff = filter_for_chat(df, "resumo de vendas de marco de 2026", ctx)
-        fat_f = float(dff['VALOR_LIQUIDO'].sum()) if 'VALOR_LIQUIDO' in dff.columns else 0
-        kg_f  = float(dff['QTDE_PRI'].sum())      if 'QTDE_PRI'      in dff.columns else 0
-        return JSONResponse({
-            "csv_direto_marco2026": {"linhas": len(marco), "faturamento": round(fat,2), "kg": round(kg,2), "notas": notas, "filiais": filiais},
-            "apos_filter_for_chat": {"linhas": len(dff), "faturamento": round(fat_f,2), "kg": round(kg_f,2), "ctx": ctx}
-        })
-    except Exception as e:
-        return JSONResponse({"erro": str(e)})
-
-# Sem cache — sempre busca do Drive diretamente
+# ─────────────────────────────────────────────
+#  CACHE EM MEMÓRIA (30 minutos)
+# ─────────────────────────────────────────────
+_cache_lock = threading.Lock()
+_cache = {"df": None, "ts": None, "file_id": None}
+CACHE_TTL = 1800  # 30 minutos
 
 def get_drive_service():
     token_bytes = os.environ.get("GOOGLE_TOKEN_PICKLE")
     if not token_bytes:
         raise HTTPException(status_code=500, detail="Token do Google Drive não configurado.")
-    import base64
     creds = pickle.loads(base64.b64decode(token_bytes))
     if creds and creds.expired and creds.refresh_token:
         creds.refresh(Request())
     return build('drive', 'v3', credentials=creds)
 
-def load_df() -> pd.DataFrame:
-    """Sempre busca CSV diretamente do Drive — sem cache."""
+def _download_df() -> pd.DataFrame:
+    """Baixa CSV do Drive e retorna DataFrame tratado."""
     service = get_drive_service()
     req = service.files().get_media(fileId=FILE_ID)
     buf = io.BytesIO()
@@ -90,910 +72,528 @@ def load_df() -> pd.DataFrame:
         _, done = dl.next_chunk()
     buf.seek(0)
     df = pd.read_csv(buf, sep=';', encoding='utf-8-sig', low_memory=False)
-    # Detecta formato da data no CSV (DD/MM/YYYY brasileiro vs YYYY-MM-DD ISO)
-    sample = df['DATA_MOVTO'].dropna().iloc[0] if len(df) > 0 else ''
-    use_dayfirst = bool(re.match(r'\d{1,2}/\d{1,2}/\d{2,4}', str(sample)))
+
+    # Data
+    sample = str(df['DATA_MOVTO'].dropna().iloc[0]) if len(df) > 0 else ''
+    use_dayfirst = bool(re.match(r'\d{1,2}/\d{1,2}/\d{2,4}', sample))
     df['DATA_MOVTO'] = pd.to_datetime(df['DATA_MOVTO'], errors='coerce', dayfirst=use_dayfirst)
+
+    # Numéricos
     df['VALOR_LIQUIDO'] = pd.to_numeric(df['VALOR_LIQUIDO'], errors='coerce').fillna(0)
     df['QTDE_PRI']      = pd.to_numeric(df['QTDE_PRI'],      errors='coerce').fillna(0)
-    # COD_VENDEDOR: remove decimal (4063.0 → 4063)
+    df['QTDE_AUX']      = pd.to_numeric(df.get('QTDE_AUX', 0), errors='coerce').fillna(0)
+
+    # Vendedor sem decimal
     if 'COD_VENDEDOR' in df.columns:
         df['COD_VENDEDOR'] = pd.to_numeric(df['COD_VENDEDOR'], errors='coerce').fillna(0).astype(int).astype(str).str.zfill(4)
+
+    # Filial — garante apenas filiais válidas
+    if 'NOME_FILIAL' in df.columns:
+        df = df[df['NOME_FILIAL'].isin(FILIAIS_VALIDAS)]
+
+    logging.info(f"[CACHE] CSV baixado: {len(df)} linhas | FILE_ID={FILE_ID}")
     return df
 
-def get_dia_referencia(df: pd.DataFrame):
-    """Retorna o último dia com dados (hoje se existir, senão último disponível)."""
-    hoje = datetime.now().date()
-    if (df['DATA_MOVTO'].dt.date == hoje).any():
-        return hoje
-    ultimo = df['DATA_MOVTO'].dropna().dt.date.max()
-    return ultimo
+def load_df() -> pd.DataFrame:
+    """Retorna DataFrame do cache ou baixa novo se expirado."""
+    with _cache_lock:
+        agora = time.time()
+        if (
+            _cache["df"] is not None
+            and _cache["file_id"] == FILE_ID
+            and _cache["ts"] is not None
+            and (agora - _cache["ts"]) < CACHE_TTL
+        ):
+            return _cache["df"].copy()
+        df = _download_df()
+        _cache["df"] = df
+        _cache["ts"] = agora
+        _cache["file_id"] = FILE_ID
+        return df.copy()
 
-def filter_for_chat(df: pd.DataFrame, pergunta: str, ctx: dict = None) -> pd.DataFrame:
-    """Filtra dados para o chat baseado na pergunta. ctx é um dict opcional onde avisos são escritos."""
-    if ctx is None:
-        ctx = {}
-    pl = pergunta.lower()
+def invalidar_cache():
+    with _cache_lock:
+        _cache["df"] = None
+        _cache["ts"] = None
+
+# ─────────────────────────────────────────────
+#  ETAPA 1 — INTERPRETAR (Claude → JSON de filtro)
+# ─────────────────────────────────────────────
+async def interpretar_pergunta(pergunta: str, historico: list, df: pd.DataFrame) -> dict:
+    """Claude lê a pergunta e devolve um JSON de filtro estruturado."""
+
+    # Contexto do DataFrame para o Claude saber o que existe
+    d_min = df['DATA_MOVTO'].min().strftime('%d/%m/%Y') if pd.notna(df['DATA_MOVTO'].min()) else '?'
+    d_max = df['DATA_MOVTO'].max().strftime('%d/%m/%Y') if pd.notna(df['DATA_MOVTO'].max()) else '?'
+    filiais = sorted(df['NOME_FILIAL'].dropna().unique().tolist()) if 'NOME_FILIAL' in df.columns else []
+    hoje = datetime.now().strftime('%d/%m/%Y')
+
+    # Histórico resumido (últimas 6 msgs)
+    hist_txt = ""
+    for m in historico[-6:]:
+        papel = "Usuário" if m["role"] == "user" else "IAF"
+        hist_txt += f"{papel}: {m['content'][:200]}\n"
+
+    system_interpret = f"""Você é um interpretador de perguntas sobre vendas. 
+Retorne APENAS um JSON válido, sem texto adicional, sem markdown, sem explicações.
+
+CONTEXTO DOS DADOS:
+- Período disponível: {d_min} até {d_max}
+- Hoje: {hoje}
+- Filiais: {', '.join(filiais)}
+
+HISTÓRICO RECENTE DA CONVERSA:
+{hist_txt}
+
+PERGUNTA ATUAL: {pergunta}
+
+Retorne JSON com esta estrutura exata:
+{{
+  "tipo": "resumo_mensal|resumo_diario|ultimas_vendas|detalhe_nota|ranking_clientes|ranking_produtos|ranking_vendedores|comparativo|grafico|cnpj_query|periodo_livre|saudacao|indefinido",
+  "data_inicio": "YYYY-MM-DD ou null",
+  "data_fim": "YYYY-MM-DD ou null",
+  "filial": "ITAP|BJESUS|PORC ou null",
+  "cliente": "nome parcial ou null",
+  "cnpj_raiz": "8 dígitos ou null",
+  "vendedor": "nome parcial ou null",
+  "nr_nota": "número ou null",
+  "uf": "sigla ou null",
+  "precisa_cliente": true|false,
+  "precisa_periodo": true|false,
+  "comparar_periodo_anterior": true|false,
+  "observacao": "qualquer detalhe extra relevante ou null"
+}}
+
+REGRAS:
+- "hoje" = {hoje}
+- "mês passado" = mês anterior ao atual
+- "esta semana" = segunda-feira até hoje
+- Se período não especificado e tipo for resumo: use o último mês disponível
+- Se cliente não especificado e tipo for ultimas_vendas: precisa_cliente=true
+- Se nr_nota mencionado: tipo="detalhe_nota"
+- Para comparativos entre períodos: tipo="comparativo", coloque ambos os períodos em observacao
+- NUNCA invente dados, apenas interprete a pergunta"""
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={"Content-Type": "application/json",
+                     "x-api-key": CLAUDE_KEY,
+                     "anthropic-version": "2023-06-01"},
+            json={"model": "claude-haiku-4-5-20251001",
+                  "max_tokens": 300,
+                  "system": system_interpret,
+                  "messages": [{"role": "user", "content": pergunta}]}
+        )
+    if r.status_code != 200:
+        raise HTTPException(status_code=r.status_code, detail=r.text)
+
+    texto = r.json()["content"][0]["text"].strip()
+    # Remove markdown se vier
+    texto = re.sub(r'^```json\s*', '', texto)
+    texto = re.sub(r'\s*```$', '', texto)
+    try:
+        return json.loads(texto)
+    except Exception:
+        logging.warning(f"[INTERPRETAR] JSON inválido: {texto}")
+        return {"tipo": "indefinido", "data_inicio": None, "data_fim": None,
+                "filial": None, "cliente": None, "cnpj_raiz": None,
+                "vendedor": None, "nr_nota": None, "uf": None,
+                "precisa_cliente": False, "precisa_periodo": False,
+                "comparar_periodo_anterior": False, "observacao": None}
+
+# ─────────────────────────────────────────────
+#  ETAPA 2 — CALCULAR (Python faz tudo)
+# ─────────────────────────────────────────────
+def _aplicar_filtros(df: pd.DataFrame, filtro: dict) -> pd.DataFrame:
+    """Aplica filtros do JSON ao DataFrame. Retorna dff limpo."""
     dff = df.copy()
 
-    hoje = datetime.now()
-
-    # ── Helpers de mês ──
-    MESES_MAP = {
-        'janeiro':1,'fevereiro':2,'março':3,'marco':3,'abril':4,'maio':5,
-        'junho':6,'julho':7,'agosto':8,'setembro':9,'outubro':10,'novembro':11,'dezembro':12,
-        'jan':1,'fev':2,'mar':3,'abr':4,'mai':5,'jun':6,
-        'jul':7,'ago':8,'set':9,'out':10,'nov':11,'dez':12
-    }
-    DIAS_SEMANA = {
-        'segunda':0,'segunda-feira':0,'seg':0,
-        'terça':1,'terca':1,'terça-feira':1,'ter':1,
-        'quarta':2,'quarta-feira':2,'qua':2,
-        'quinta':3,'quinta-feira':3,'qui':3,
-        'sexta':4,'sexta-feira':4,'sex':4,
-        'sábado':5,'sabado':5,'sab':5,
-        'domingo':6,'dom':6
-    }
-
-    # ── Filtro por NR NOTA — roda ANTES de tudo, busca direto no NUM_DOCTO ──
-    # Detecta: "nota 185053", "nota fiscal 185053", "nr 185053", "185053"
-    m_nota_pre = re.search(r'(?:nota\s*fiscal|nota|nr\.?|n\.?f\.?|num\.?\s*docto?)\s*[:\s#]?\s*(\d{4,8})\b', pl)
-    if not m_nota_pre:
-        # Número isolado de 4-8 dígitos quando contexto menciona nota/fiscal
-        if any(x in pl for x in ['nota','fiscal','nf','docto']):
-            m_nota_pre = re.search(r'\b(\d{4,8})\b', pl)
-    if m_nota_pre and 'NUM_DOCTO' in dff.columns:
-        nr = m_nota_pre.group(1)
-        # Busca exata no NUM_DOCTO — retorna APENAS os itens dessa nota
-        mask_nr = dff['NUM_DOCTO'].astype(str).str.strip() == nr
-        logging.warning(f"[IAF NOTA] buscando nr={nr} | encontrou={mask_nr.sum()} itens")
-        if mask_nr.sum() > 0:
-            dff_nota = dff[mask_nr].copy()
-            logging.warning(f"[IAF NOTA] clientes={dff_nota['NOME_CLIENTE'].unique() if 'NOME_CLIENTE' in dff_nota.columns else '?'}")
-            return dff_nota  # retorna imediatamente — sem nenhum filtro de período
-
-    # ── Filtro por CNPJ raiz — roda PRIMEIRO, antes de qualquer filtro temporal ──
-    # Detecta: "cnpj 73849952", "cnpj raiz 73849952", "cnpj: 73.849.952/0001-34"
-    # Também detecta número isolado de 8+ dígitos quando contexto menciona "cnpj"
-    m_cnpj_pre = re.search(r'cnpj\s*(?:raiz\s*)?[:\s]*(\d[\d\.\-\/]{7,17}\d|\d{8,14})', pl)
-    if not m_cnpj_pre and 'cnpj' in pl:
-        # Contexto tem "cnpj" mas número pode estar separado (ex: "qual o cnpj? \n 73849952")
-        m_cnpj_pre = re.search(r'\b(\d{8,14})\b', pl)
-    if m_cnpj_pre and 'CPF_CGC' in dff.columns:
-        digits = re.sub(r'\D', '', m_cnpj_pre.group(1))
-        raiz = digits[:8]
-        cnpj_col = dff['CPF_CGC'].astype(str).str.replace(r'\D', '', regex=True)
-        mask_cnpj = cnpj_col.str.startswith(raiz)
-        logging.warning(f"[IAF DEBUG CNPJ] raiz={raiz} | dff antes={len(dff)} | mask_sum={mask_cnpj.sum()}")
-        if mask_cnpj.sum() > 0:
-            dff = dff[mask_cnpj]
-            ctx['cnpj_filtrado'] = raiz
-            logging.warning(f"[IAF DEBUG CNPJ] dff apos filtro CNPJ={len(dff)}")
-        else:
-            # CNPJ não existe — zera dff e marca ctx para não buscar por nome
-            ctx['cnpj_nao_encontrado'] = raiz
-            ctx['cnpj_filtrado'] = raiz  # marca mesmo assim para bloquear filtro de cliente
-            dff = dff.iloc[0:0].copy()
-            ctx['aviso'] = f"⚠️ Nenhum cliente encontrado com CNPJ raiz {raiz}."
-
-    # ── Intervalo de datas explícito: "de DD/MM/YYYY a DD/MM/YYYY" ──
-    m_range = re.search(r'(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})\s+a[té]?\s+(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})', pl)
-    if m_range:
+    # Período
+    if filtro.get("data_inicio"):
         try:
-            d1 = datetime(int(m_range.group(3)) if len(m_range.group(3))==4 else 2000+int(m_range.group(3)),
-                          int(m_range.group(2)), int(m_range.group(1)))
-            d2 = datetime(int(m_range.group(6)) if len(m_range.group(6))==4 else 2000+int(m_range.group(6)),
-                          int(m_range.group(5)), int(m_range.group(4)))
-            dff = dff[(dff['DATA_MOVTO'] >= d1) & (dff['DATA_MOVTO'] <= d2 + timedelta(days=1))]
-        except:
-            pass
-        return _finalize_filter(dff, pl, ctx, df)
-
-    # ── Ano explícito ──
-    anos = re.findall(r'\b(202[0-9])\b', pergunta)
-    ano_ref = int(anos[0]) if anos else hoje.year
-
-    # ── Datas ISO: "2026-03-15" ou "2026/03/15" ──
-    m_iso = re.search(r'(202[0-9])[\-/](\d{1,2})[\-/](\d{1,2})', pl)
-    if m_iso:
+            d1 = pd.to_datetime(filtro["data_inicio"])
+            dff = dff[dff['DATA_MOVTO'] >= d1]
+        except: pass
+    if filtro.get("data_fim"):
         try:
-            d_iso = datetime(int(m_iso.group(1)), int(m_iso.group(2)), int(m_iso.group(3)))
-            dff = dff[dff['DATA_MOVTO'].dt.date == d_iso.date()]
-            return _finalize_filter(dff, pl, ctx, df)
+            d2 = pd.to_datetime(filtro["data_fim"]) + timedelta(days=1)
+            dff = dff[dff['DATA_MOVTO'] < d2]
         except: pass
 
-    # ── Intervalo de datas explícito: "de DD/MM/YYYY a DD/MM/YYYY" ──
-    m_range = re.search(r'(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})\s+a[té]?\s+(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})', pl)
-    if m_range:
-        try:
-            d1 = datetime(int(m_range.group(3)) if len(m_range.group(3))==4 else 2000+int(m_range.group(3)),
-                          int(m_range.group(2)), int(m_range.group(1)))
-            d2 = datetime(int(m_range.group(6)) if len(m_range.group(6))==4 else 2000+int(m_range.group(6)),
-                          int(m_range.group(5)), int(m_range.group(4)))
-            dff = dff[(dff['DATA_MOVTO'] >= d1) & (dff['DATA_MOVTO'] <= d2 + timedelta(days=1))]
-        except: pass
-        return _finalize_filter(dff, pl, ctx, df)
+    # Filial
+    if filtro.get("filial") and 'NOME_FILIAL' in dff.columns:
+        dff = dff[dff['NOME_FILIAL'].str.upper() == filtro["filial"].upper()]
 
-    # ── Abreviações: "jan/26", "fev 2026", "mar/26" ──
-    m_abrev = re.search(r'\b(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[/\s]+(20\d{2}|\d{2})\b', pl)
-    if m_abrev:
-        mes_abrev = MESES_MAP.get(m_abrev.group(1), 0)
-        ano_abrev_str = m_abrev.group(2)
-        ano_abrev = int(ano_abrev_str) if len(ano_abrev_str) == 4 else 2000 + int(ano_abrev_str)
-        if mes_abrev:
-            dff = dff[(dff['DATA_MOVTO'].dt.month == mes_abrev) &
-                      (dff['DATA_MOVTO'].dt.year == ano_abrev)]
-            return _finalize_filter(dff, pl, ctx, df)
+    # UF
+    if filtro.get("uf") and 'UF' in dff.columns:
+        dff = dff[dff['UF'].str.upper() == filtro["uf"].upper()]
 
-    # ── Meses por extenso (suporta abreviações também) ──
-    meses_encontrados = []
-    for nome, num in MESES_MAP.items():
-        for m in re.finditer(r'\b' + nome + r'\b', pl):
-            trecho = pl[m.start():m.start()+30]
-            ano_local = re.search(r'202[0-9]', trecho)
-            ano_mes = int(ano_local.group()) if ano_local else None
-            meses_encontrados.append((m.start(), num, ano_mes))
-    # Remove duplicatas mantendo o primeiro de cada posição
-    seen = set()
-    meses_uniq = []
-    for pos, num, ano in sorted(meses_encontrados, key=lambda x: x[0]):
-        if num not in seen:
-            seen.add(num)
-            meses_uniq.append((pos, num, ano))
-
-    if len(meses_uniq) >= 2:
-        _, mes_ini, ano_ini = meses_uniq[0]
-        _, mes_fim, ano_fim = meses_uniq[-1]
-        ano_ini = ano_ini or (int(anos[0]) if anos else hoje.year)
-        ano_fim = ano_fim or (int(anos[-1]) if len(anos) > 1 else ano_ini)
-        d1 = pd.Timestamp(ano_ini, mes_ini, 1)
-        d2 = pd.Timestamp(ano_fim, mes_fim + 1, 1) - timedelta(days=1) if mes_fim < 12 else pd.Timestamp(ano_fim + 1, 1, 1) - timedelta(days=1)
-        dff = dff[(dff['DATA_MOVTO'] >= d1) & (dff['DATA_MOVTO'] <= d2)]
-        return _finalize_filter(dff, pl, ctx, df)
-    elif len(meses_uniq) == 1:
-        _, mes_encontrado, ano_mes = meses_uniq[0]
-        ano_usar = ano_mes or ano_ref
-        dff = dff[(dff['DATA_MOVTO'].dt.month == mes_encontrado) &
-                  (dff['DATA_MOVTO'].dt.year == ano_usar)]
-        return _finalize_filter(dff, pl, ctx, df)
-
-    # ── Trimestre (Q1/Q2/Q3/Q4 também) ──
-    m_qtri = re.search(r'\bq([1-4])\b', pl)
-    if m_qtri or 'trimestre' in pl or '1º tri' in pl or 'primeiro trimestre' in pl:
-        if m_qtri:
-            tri = int(m_qtri.group(1))
-        elif '2º tri' in pl or 'segundo trimestre' in pl: tri = 2
-        elif '3º tri' in pl or 'terceiro trimestre' in pl: tri = 3
-        elif '4º tri' in pl or 'quarto trimestre' in pl: tri = 4
-        else: tri = 1
-        mes_ini = (tri - 1) * 3 + 1
-        mes_fim = mes_ini + 2
-        dff = dff[(dff['DATA_MOVTO'].dt.month >= mes_ini) &
-                  (dff['DATA_MOVTO'].dt.month <= mes_fim) &
-                  (dff['DATA_MOVTO'].dt.year == ano_ref)]
-        return _finalize_filter(dff, pl, ctx, df)
-
-    # ── Semestre ──
-    if 'semestre' in pl:
-        if '1º sem' in pl or 'primeiro semestre' in pl:
-            dff = dff[(dff['DATA_MOVTO'].dt.month <= 6) & (dff['DATA_MOVTO'].dt.year == ano_ref)]
-        else:
-            dff = dff[(dff['DATA_MOVTO'].dt.month >= 7) & (dff['DATA_MOVTO'].dt.year == ano_ref)]
-        return _finalize_filter(dff, pl, ctx, df)
-
-    # ── Quinzena ──
-    if 'quinzena' in pl:
-        mes_q = hoje.month
-        ano_q = hoje.year
-        # Tenta detectar mês/ano junto com quinzena
-        for nome, num in MESES_MAP.items():
-            if nome in pl:
-                mes_q = num
-                break
-        if anos: ano_q = int(anos[0])
-        if 'segunda quinzena' in pl or '2ª quinzena' in pl or '2a quinzena' in pl:
-            d1 = pd.Timestamp(ano_q, mes_q, 16)
-            d2 = pd.Timestamp(ano_q, mes_q + 1, 1) - timedelta(days=1) if mes_q < 12 else pd.Timestamp(ano_q + 1, 1, 1) - timedelta(days=1)
-        else:  # primeira quinzena (default)
-            d1 = pd.Timestamp(ano_q, mes_q, 1)
-            d2 = pd.Timestamp(ano_q, mes_q, 15)
-        dff = dff[(dff['DATA_MOVTO'] >= d1) & (dff['DATA_MOVTO'] <= d2)]
-        return _finalize_filter(dff, pl, ctx, df)
-
-    # ── Ano inteiro ──
-    if re.search(r'\bano\b', pl) and anos:
-        dff = dff[dff['DATA_MOVTO'].dt.year == ano_ref]
-        return _finalize_filter(dff, pl, ctx, df)
-
-    # ── Ano passado / ano anterior ──
-    if any(x in pl for x in ['ano passado','ano anterior','ano retrasado']):
-        ano_alvo = hoje.year - (2 if 'retrasado' in pl else 1)
-        dff = dff[dff['DATA_MOVTO'].dt.year == ano_alvo]
-        return _finalize_filter(dff, pl, ctx, df)
-
-    # ── Ano atual ──
-    if any(x in pl for x in ['ano atual','este ano','esse ano']):
-        dff = dff[dff['DATA_MOVTO'].dt.year == hoje.year]
-        return _finalize_filter(dff, pl, ctx, df)
-
-    # ── Âncoras abertas: "desde X" / "a partir de X" ──
-    m_desde = re.search(r'(?:desde|a partir d[eo]|apartir d[eo])\s+(?:(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})|(\w+)(?:\s+de\s+(202[0-9]))?)', pl)
-    if m_desde:
-        try:
-            if m_desde.group(1):  # data DD/MM/YYYY
-                d_ini = datetime(int(m_desde.group(3)) if len(m_desde.group(3))==4 else 2000+int(m_desde.group(3)),
-                                 int(m_desde.group(2)), int(m_desde.group(1)))
-            else:  # mês por extenso
-                nome_mes = m_desde.group(4)
-                mes_d = MESES_MAP.get(nome_mes, 0)
-                ano_d = int(m_desde.group(5)) if m_desde.group(5) else ano_ref
-                d_ini = datetime(ano_d, mes_d, 1) if mes_d else datetime(hoje.year, 1, 1)
-            dff = dff[dff['DATA_MOVTO'] >= pd.Timestamp(d_ini)]
-            return _finalize_filter(dff, pl, ctx, df)
-        except: pass
-
-    # ── Âncoras fechadas: "até X" ──
-    m_ate = re.search(r'(?:até|ate)\s+(?:(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})|(\w+)(?:\s+de\s+(202[0-9]))?)', pl)
-    if m_ate and 'até hoje' not in pl and 'ate hoje' not in pl:
-        try:
-            if m_ate.group(1):
-                d_fim = datetime(int(m_ate.group(3)) if len(m_ate.group(3))==4 else 2000+int(m_ate.group(3)),
-                                 int(m_ate.group(2)), int(m_ate.group(1)))
-            else:
-                nome_mes = m_ate.group(4)
-                mes_a = MESES_MAP.get(nome_mes, 0)
-                ano_a = int(m_ate.group(5)) if m_ate.group(5) else ano_ref
-                if mes_a:
-                    d_fim = pd.Timestamp(ano_a, mes_a + 1, 1) - timedelta(days=1) if mes_a < 12 else pd.Timestamp(ano_a + 1, 1, 1) - timedelta(days=1)
-                    d_fim = d_fim.to_pydatetime()
-                else:
-                    d_fim = hoje
-            dff = dff[dff['DATA_MOVTO'] <= pd.Timestamp(d_fim)]
-            return _finalize_filter(dff, pl, ctx, df)
-        except: pass
-
-    # ── Início do ano / fim do ano ──
-    if any(x in pl for x in ['início do ano','inicio do ano','começo do ano']):
-        dff = dff[(dff['DATA_MOVTO'] >= pd.Timestamp(hoje.year, 1, 1)) &
-                  (dff['DATA_MOVTO'] <= pd.Timestamp(hoje.date()))]
-        return _finalize_filter(dff, pl, ctx, df)
-
-    # ── Dia específico: "dia 15", "dia 15 de março" ──
-    m_dia = re.search(r'\bdia\s+(\d{1,2})\b', pl)
-    if m_dia:
-        dia_num = int(m_dia.group(1))
-        if len(meses_uniq) == 1:
-            _, mes_d, ano_d = meses_uniq[0]
-            ano_usar = ano_d or ano_ref
-            try:
-                d_exato = datetime(ano_usar, mes_d, dia_num)
-                dff = dff[dff['DATA_MOVTO'].dt.date == d_exato.date()]
-                return _finalize_filter(dff, pl, ctx, df)
-            except: pass
-        else:
-            # Sem mês explícito — usa mês atual
-            try:
-                d_exato = datetime(hoje.year, hoje.month, dia_num)
-                dff = dff[dff['DATA_MOVTO'].dt.date == d_exato.date()]
-                return _finalize_filter(dff, pl, ctx, df)
-            except: pass
-
-    # ── Dia da semana: "vendas de segunda", "sextas-feiras" ──
-    for dia_nome, dia_num in DIAS_SEMANA.items():
-        if re.search(r'\b' + dia_nome + r'\b', pl):
-            dff = dff[dff['DATA_MOVTO'].dt.dayofweek == dia_num]
-            # Aplica também filtro de período se houver mês/ano
-            if anos:
-                dff = dff[dff['DATA_MOVTO'].dt.year == ano_ref]
-            return _finalize_filter(dff, pl, ctx, df)
-
-    # ── Dias úteis / fim de semana ──
-    if any(x in pl for x in ['dias úteis','dias uteis','dia útil','dia util']):
-        dff = dff[dff['DATA_MOVTO'].dt.dayofweek < 5]
-        if anos: dff = dff[dff['DATA_MOVTO'].dt.year == ano_ref]
-        return _finalize_filter(dff, pl, ctx, df)
-    if any(x in pl for x in ['fim de semana','fins de semana','fds','final de semana']):
-        dff = dff[dff['DATA_MOVTO'].dt.dayofweek >= 5]
-        if anos: dff = dff[dff['DATA_MOVTO'].dt.year == ano_ref]
-        return _finalize_filter(dff, pl, ctx, df)
-
-    # ── Relativos ──
-    if any(x in pl for x in ['mês passado','mes passado','mês anterior','mes anterior']):
-        primeiro_dia_mes_atual = hoje.replace(day=1)
-        ultimo_dia_mes_passado = primeiro_dia_mes_atual - timedelta(days=1)
-        primeiro_dia_mes_passado = ultimo_dia_mes_passado.replace(day=1)
-        dff = dff[(dff['DATA_MOVTO'] >= pd.Timestamp(primeiro_dia_mes_passado)) &
-                  (dff['DATA_MOVTO'] <= pd.Timestamp(ultimo_dia_mes_passado))]
-
-    elif any(x in pl for x in ['este mês','esse mês','este mes','esse mes','mês atual','mes atual']):
-        primeiro_dia = hoje.replace(day=1)
-        dff = dff[dff['DATA_MOVTO'] >= pd.Timestamp(primeiro_dia)]
-
-    elif any(x in pl for x in ['semana passada','semana anterior']):
-        dias_desde_segunda = hoje.weekday()
-        ultima_segunda = hoje - timedelta(days=dias_desde_segunda + 7)
-        ultimo_domingo = ultima_segunda + timedelta(days=6)
-        dff = dff[(dff['DATA_MOVTO'] >= pd.Timestamp(ultima_segunda)) &
-                  (dff['DATA_MOVTO'] <= pd.Timestamp(ultimo_domingo) + timedelta(days=1))]
-
-    elif any(x in pl for x in ['esta semana','essa semana','semana atual']):
-        dias_desde_segunda = hoje.weekday()
-        segunda = hoje - timedelta(days=dias_desde_segunda)
-        dff = dff[dff['DATA_MOVTO'] >= pd.Timestamp(segunda)]
-
-    elif any(x in pl for x in ['última semana','ultima semana','ultimos 7 dias','últimos 7 dias']):
-        dff = dff[dff['DATA_MOVTO'] >= hoje - timedelta(days=7)]
-
-    elif 'ontem' in pl:
-        dia = hoje - timedelta(days=1)
-        dff_ontem = dff[(dff['DATA_MOVTO'] >= pd.Timestamp(dia.date())) &
-                        (dff['DATA_MOVTO'] < pd.Timestamp(hoje.date()))]
-        if len(dff_ontem) > 0:
-            dff = dff_ontem
-        else:
-            dias_disp = sorted(dff['DATA_MOVTO'].dt.date.unique(), reverse=True)
-            if len(dias_disp) >= 2:
-                dia_ant = dias_disp[1]
-            elif len(dias_disp) == 1:
-                dia_ant = dias_disp[0]
-            else:
-                dia_ant = dia.date()
-            dff = dff[dff['DATA_MOVTO'].dt.date == dia_ant]
-
-    elif 'hoje' in pl:
-        dff = dff[dff['DATA_MOVTO'] >= pd.Timestamp(hoje.date())]
-
-    elif any(x in pl for x in ['último mês','ultimo mes','ultimos 30','últimos 30']):
-        dff = dff[dff['DATA_MOVTO'] >= hoje - timedelta(days=30)]
-
-    else:
-        # ── "últimos N meses/dias/semanas/anos" ──
-        m_rel = re.search(r'[uú]ltimos?\s+(\d+)\s+(m[eê]s(?:es)?|dia[s]?|semana[s]?|ano[s]?)', pl)
-        if m_rel:
-            n = int(m_rel.group(1))
-            unidade = m_rel.group(2)
-            if 'ano' in unidade:
-                dff = dff[dff['DATA_MOVTO'] >= hoje - timedelta(days=365*n)]
-            elif 'm' in unidade:
-                primeiro_mes_atual = hoje.replace(day=1)
-                mes = primeiro_mes_atual.month - n
-                ano = primeiro_mes_atual.year + (mes - 1) // 12
-                mes = ((mes - 1) % 12) + 1
-                d_ini = pd.Timestamp(ano, mes, 1)
-                dff = dff[dff['DATA_MOVTO'] >= d_ini]
-            elif 'semana' in unidade:
-                dff = dff[dff['DATA_MOVTO'] >= hoje - timedelta(weeks=n)]
-            else:
-                dff = dff[dff['DATA_MOVTO'] >= hoje - timedelta(days=n)]
-        elif anos:
-            dff = dff[dff['DATA_MOVTO'].dt.year == int(anos[0])]
-
-    return _finalize_filter(dff, pl, ctx, df)
-
-
-def _finalize_filter(dff: pd.DataFrame, pl: str, ctx: dict = None, df_orig: pd.DataFrame = None) -> pd.DataFrame:
-    if ctx is None:
-        ctx = {}
-    if df_orig is None:
-        df_orig = dff
-    """Aplica filtros de filial/cliente/vendedor/produto e limita tamanho."""
-    hoje = datetime.now()
-
-    filiais = {'itap':'ITAP','bjesus':'BJESUS','porc':'PORC','trindade':'TRINDADE'}
-    for key, val in filiais.items():
-        if key in pl:
-            dff = dff[dff['NOME_FILIAL'].str.upper() == val]
-            break
-
-    # ── Filtro por UF / Estado ──
-    estados_map = {
-        r'\bes\b': 'ES', r'\brj\b': 'RJ', r'\bsp\b': 'SP', r'\bmg\b': 'MG',
-        r'\bba\b': 'BA', r'\bpr\b': 'PR', r'\bsc\b': 'SC', r'\brs\b': 'RS',
-        r'\bgo\b': 'GO', r'\bdf\b': 'DF', r'\bms\b': 'MS', r'\bmt\b': 'MT',
-        r'\bpa\b': 'PA', r'\bam\b': 'AM', r'\bce\b': 'CE', r'\bpe\b': 'PE',
-        r'\bma\b': 'MA', r'\bpi\b': 'PI', r'\brn\b': 'RN', r'\bpb\b': 'PB',
-        r'\bal\b': 'AL', r'\bse\b': 'SE', r'\bto\b': 'TO', r'\bro\b': 'RO',
-        r'\bac\b': 'AC', r'\brr\b': 'RR', r'\bap\b': 'AP',
-        r'esp[ii]rito\s+santo': 'ES',
-        r'rio\s+de\s+janeiro': 'RJ',
-        r's[ao]o\s+paulo': 'SP',
-        r'minas\s+gerais': 'MG',
-        r'bahia': 'BA',
-        r'paran[a]': 'PR',
-        r'santa\s+catarina': 'SC',
-        r'rio\s+grande\s+do\s+sul': 'RS',
-        r'goi[a]s': 'GO',
-        r'distrito\s+federal': 'DF',
-        r'mato\s+grosso\s+do\s+sul': 'MS',
-        r'mato\s+grosso': 'MT',
-        r'par[a]': 'PA',
-        r'amazonas': 'AM',
-        r'cear[a]': 'CE',
-        r'pernambuco': 'PE',
-        r'maranh[ao]o': 'MA',
-        r'piau[i]': 'PI',
-        r'rio\s+grande\s+do\s+norte': 'RN',
-        r'para[i]ba': 'PB',
-        r'alagoas': 'AL',
-        r'sergipe': 'SE',
-        r'tocantins': 'TO',
-        r'rond[o]nia': 'RO',
-        r'acre': 'AC',
-        r'roraima': 'RR',
-        r'amap[a]': 'AP',
-    }
-    if 'UF' in dff.columns:
-        for padrao, uf in estados_map.items():
-            if re.search(padrao, pl):
-                dff = dff[dff['UF'].str.upper() == uf]
-                break
-
-    # Busca por código numérico de cliente: "cod cliente 18676" / "cliente cod 18676"
-    m_cod_cli = re.search(r'(?:cod(?:igo)?[_\s]+cliente[_\s]+|cliente[_\s]+cod(?:igo)?[_\s]+)(\d{3,6})', pl)
-    if m_cod_cli and 'COD_CLIENTE' in dff.columns:
-        cod = m_cod_cli.group(1)
-        mask_cod = dff['COD_CLIENTE'].astype(str).str.strip() == cod
-        if mask_cod.sum() > 0:
-            dff = dff[mask_cod]
-
-    # ── Filtro por cliente ──
-    def _melhor_cliente(dff, termo):
-        """Retorna df filtrado pelo cliente mais parecido com o termo buscado."""
-        mask = dff['NOME_CLIENTE'].str.lower().str.contains(termo, na=False)
-        if mask.sum() == 0:
-            return dff, False
-        candidatos = dff[mask]['NOME_CLIENTE'].str.lower().unique()
-        if len(candidatos) == 1:
-            # Mesmo com 1 candidato, usa prefixo para pegar todas as variações do grupo
-            prefixo = candidatos[0][:20].strip()
-            mask_pref = dff['NOME_CLIENTE'].str.lower().str.contains(re.escape(prefixo), na=False)
-            return dff[mask_pref], True
-
-        def score(nome, termo):
-            # Prioridade 1: nome começa com o termo (ex: "atakarejo distribuidor" começa com "atakarejo")
-            if nome.startswith(termo):
-                return 0
-            palavras_nome = nome.split()
-            # Prioridade 2: alguma palavra do nome é EXATAMENTE o termo
-            if termo in palavras_nome:
-                return 1
-            # Prioridade 3: termo é a primeira palavra significativa do nome
-            if palavras_nome and palavras_nome[0] == termo:
-                return 2
-            # Prioridade 4: distância de edição entre termo e a palavra mais parecida do nome
-            def levenshtein(a, b):
-                dp = list(range(len(b) + 1))
-                for ca in a:
-                    ndp = [dp[0] + 1]
-                    for j, cb in enumerate(b):
-                        ndp.append(min(dp[j] + (0 if ca == cb else 1), dp[j+1] + 1, ndp[j] + 1))
-                    dp = ndp
-                return dp[len(b)]
-            min_dist = min(levenshtein(termo, p) for p in palavras_nome)
-            # Penaliza nomes mais longos (termo "atakarejo" em "VALIM ATAKAREJO 1,5" deve perder)
-            return 10 + min_dist + len(palavras_nome)
-
-        melhor = min(candidatos, key=lambda c: score(c, termo))
-        # Usa os primeiros 20 chars do melhor nome para capturar todas as variações do grupo
-        # Ex: "ATAKAREJO DISTRIBUIDOR" pega todos os CNPJs diferentes do mesmo grupo
-        prefixo = melhor[:20].strip()
-        mask_melhor = dff['NOME_CLIENTE'].str.lower().str.contains(re.escape(prefixo), na=False)
-        if mask_melhor.sum() == 0:
-            # Fallback: match exato
-            mask_melhor = dff['NOME_CLIENTE'].str.lower() == melhor
-        return dff[mask_melhor], True
-
-    # Prioridade 1: padrão explícito "cliente: NOME" ou "para o NOME" ou "do cliente NOME" ou "o cliente NOME"
-    m_cliente = re.search(r'(?:cliente[:\s]+|para\s+(?:o|a)\s+|do\s+cliente\s+|o\s+cliente\s+)([a-záéíóúâêîôûãõç0-9\s]+)', pl)
-    logging.warning(f"[IAF DEBUG FINALIZE] dff={len(dff)} | cnpj_filtrado={ctx.get('cnpj_filtrado')} | m_cliente={'SIM:'+m_cliente.group(1)[:20] if m_cliente else 'NAO'}")
-    if m_cliente and ctx.get('cnpj_filtrado'):
-        # CNPJ já aplicado — ignorar extração de nome de cliente para não zerar dff
-        m_cliente = None
-    if m_cliente:
-        # Corta em palavras de parada: preposições, ano, verbos comuns
-        nome_cli = re.split(
-            r'\s+(?:em|de|no|na|para|do|da|dos|das|nos|nas|com|\d{4}|'
-            r'comprou|compra|compras|fez|teve|tem|faz|realizou|realizou|pediu|pedidos|'
-            r'quanto|qual|quais|como|quando|onde|quanto)\b',
-            m_cliente.group(1)
-        )[0].strip()
-        # Limpa artigos soltos no início
-        nome_cli = re.sub(r'^(o|a|os|as|um|uma)\s+', '', nome_cli).strip()
-        if len(nome_cli) > 2:
-            dff_cli, achou = _melhor_cliente(dff, nome_cli)
-            if achou:
-                dff = dff_cli
-            else:
-                # Não achou no período — busca em todo o df (sem filtro de período) para sugerir
-                mask_global = df_orig['NOME_CLIENTE'].str.lower().str.contains(nome_cli[:5], na=False)
-                sugestoes = df_orig[mask_global]['NOME_CLIENTE'].unique()[:3].tolist() if mask_global.sum() > 0 else []
-                if len(sugestoes) == 1:
-                    # Só 1 candidato — usa automaticamente sem perguntar
-                    mask_auto = dff['NOME_CLIENTE'].str.lower().str.contains(sugestoes[0][:10].lower(), na=False)
-                    if mask_auto.sum() > 0:
-                        dff = dff[mask_auto]
-                    else:
-                        # Candidato existe mas não no período filtrado
-                        dff = dff.iloc[0:0].copy()
-                        ctx['cliente_nao_encontrado'] = (nome_cli, sugestoes)
-                else:
-                    dff = dff.iloc[0:0].copy()
-                    ctx['cliente_nao_encontrado'] = (nome_cli, sugestoes)
-    else:
-        # Prioridade 2: busca livre — palavras que não são stop-words comuns
-        # Não roda se CNPJ já foi filtrado (evita falso match em "raiz", "cnpj", etc.)
-        if ctx.get('cnpj_filtrado'):
-            pass
-        else:
-            stopwords = {'últimas','ultimas','vendas','venda','quais','qual','como','foram','mais','este',
-                         'essa','esse','para','pela','pelo','mês','mes','ano','2025','2026','2024','2023',
-                         'analise','análise','resumo','faca','fazer','quero','cliente','clientes','filial',
-                         'produto','vendedor','ranking','comparar','total','faça','faz','uma','uns','umas',
-                         'dados','traz','traga','mostra','mostre','lista','liste','apresenta','analisa',
-                         'sobre','com','sem','entre','desde','ate','até','ontem','hoje','semana','março',
-                         'marco','janeiro','fevereiro','abril','maio','junho','julho','agosto','setembro',
-                         'outubro','novembro','dezembro','trimestre','semestre','periodo','período',
-                         'cnpj','cpfcgc','raiz','cpf','cgc','numero','número'}
-            nao_tem_filtro_especifico = not any(x in pl for x in [
-                'produto:','vendedor:','filial:','ranking','comparar','top ','total geral'])
-            if nao_tem_filtro_especifico:
-                palavras = [p for p in pl.split() if len(p) > 3 and p not in stopwords]
-                if palavras:
-                    achou = False
-                    for tam in [3, 2, 1]:
-                        for i in range(len(palavras) - tam + 1):
-                            termo = ' '.join(palavras[i:i+tam])
-                            dff_cli, ok = _melhor_cliente(dff, termo)
-                            if ok:
-                                dff = dff_cli
-                                achou = True
-                                break
-                        if achou:
-                            break
-
-    cols = ['NOME_FILIAL','DATA_MOVTO','NUM_DOCTO','COD_PRODUTO','DESC_PRODUTO','NOME_CLIENTE',
-            'NOM_VENDEDOR','COD_VENDEDOR','QTDE_PRI','QTDE_AUX','VALOR_LIQUIDO','DESC_DIVISAO2','DESC_DIVISAO3','UF','CIDADE','CPF_CGC']
-
-    if any(x in pl for x in ['últimas vendas','ultimas vendas','ultima venda','última venda']):
-        dff = dff.sort_values('DATA_MOVTO', ascending=False).head(15)
-        return dff[[c for c in cols if c in dff.columns]]
-
-    # Filtro de vendedor — busca por palavras separadas (mais tolerante)
-    m = re.search(r'vendedor[:\s]+([a-záéíóúâêîôûãõç\s]+)', pl)
-    if m:
-        nome_vend = re.split(r'\s+(?:em|de|no|na|para|do|da|nos|nas|\d{4})\b', m.group(1))[0].strip()
-        if len(nome_vend) > 2:
-            # Tenta primeiro match exato da string completa
-            mask = dff['NOM_VENDEDOR'].str.lower().str.contains(nome_vend, na=False)
-            if mask.sum() == 0:
-                # Fallback: busca por cada palavra separada (todas devem estar presentes)
-                palavras_vend = [p for p in nome_vend.split() if len(p) > 2]
-                if palavras_vend:
-                    mask = pd.Series([True] * len(dff), index=dff.index)
-                    for palavra in palavras_vend:
-                        mask = mask & dff['NOM_VENDEDOR'].str.lower().str.contains(palavra, na=False)
+    # Cliente por nome
+    if filtro.get("cliente") and 'NOME_CLIENTE' in dff.columns:
+        nome = filtro["cliente"]
+        # Match progressivo: 20 chars → 10 → 5
+        for tam in [20, 10, 5]:
+            mask = dff['NOME_CLIENTE'].str.lower().str.contains(nome.lower()[:tam], na=False)
             if mask.sum() > 0:
                 dff = dff[mask]
-            else:
-                # Nenhum resultado — marca para sugerir busca por código
-                dff._iaf_vendedor_nao_encontrado = nome_vend
-    else:
-        m_cod = re.search(r'(?:cod(?:igo)?[_\s]+(?:vendedor[_\s]+)?|vendedor[_\s]+)(\d{4,6})', pl)
-        if m_cod:
-            cod = m_cod.group(1)
-            if 'COD_VENDEDOR' in dff.columns:
-                dff_cod = dff[dff['COD_VENDEDOR'].astype(str).str.strip() == cod]
-                if len(dff_cod) > 0:
-                    dff = dff_cod
+                break
 
-    m = re.search(r'produto[:\s]+([a-záéíóúâêîôûãõç\s]+)', pl)
-    if m:
-        nome_prod = re.split(r'\s+(?:em|de|no|na|para|do|da|\d{4})\b', m.group(1))[0].strip()
-        if len(nome_prod) > 2:
-            dff = dff[dff['DESC_PRODUTO'].str.lower().str.contains(nome_prod, na=False)]
+    # Cliente por CNPJ raiz
+    if filtro.get("cnpj_raiz") and 'CPF_CGC' in dff.columns:
+        raiz = re.sub(r'\D', '', filtro["cnpj_raiz"])[:8]
+        col = dff['CPF_CGC'].astype(str).str.replace(r'\D', '', regex=True)
+        dff = dff[col.str.startswith(raiz)]
 
-    # ── Filtro por NR NOTA / NUM_DOCTO específico ──
-    m_nota = re.search(r'\bnr?\s*(?:nota|docto|doc)?\s*[:\s#]?\s*(\d{3,8})\b', pl)
-    if m_nota and 'NUM_DOCTO' in dff.columns:
-        nr = m_nota.group(1)
-        # Busca no df completo para não depender de filtro de período
-        base_nota = df_orig if df_orig is not None and len(df_orig) > 0 else dff
-        mask_nota = base_nota['NUM_DOCTO'].astype(str).str.strip() == nr
-        if mask_nota.sum() > 0:
-            dff_nota = base_nota[mask_nota]
-            # Múltiplas filiais com mesmo número de nota — filtra pela filial mais recente/frequente
-            if 'NOME_FILIAL' in dff_nota.columns and dff_nota['NOME_FILIAL'].nunique() > 1:
-                # Prefere filial que já estava no contexto (filtro de período)
-                if 'NOME_FILIAL' in dff.columns and len(dff) > 0:
-                    filiais_ctx = dff['NOME_FILIAL'].unique()
-                    mask_fil = dff_nota['NOME_FILIAL'].isin(filiais_ctx)
-                    if mask_fil.sum() > 0:
-                        dff_nota = dff_nota[mask_fil]
-                # Se ainda múltiplas, pega a mais frequente
-                if dff_nota['NOME_FILIAL'].nunique() > 1:
-                    filial_principal = dff_nota['NOME_FILIAL'].value_counts().index[0]
-                    dff_nota = dff_nota[dff_nota['NOME_FILIAL'] == filial_principal]
-            dff = dff_nota
-        else:
-            # Fallback: busca no dff filtrado por período
-            mask_nota2 = dff['NUM_DOCTO'].astype(str).str.strip() == nr
-            if mask_nota2.sum() > 0:
-                dff = dff[mask_nota2]
+    # Vendedor
+    if filtro.get("vendedor") and 'NOM_VENDEDOR' in dff.columns:
+        nome_v = filtro["vendedor"]
+        for tam in [20, 10, 5]:
+            mask = dff['NOM_VENDEDOR'].str.lower().str.contains(nome_v.lower()[:tam], na=False)
+            if mask.sum() > 0:
+                dff = dff[mask]
+                break
 
-    # ── "última nota" / "ultimo pedido" — retorna os itens da nota mais recente ──
-    if any(x in pl for x in ['última nota','ultima nota','último pedido','ultimo pedido','last nota']) and 'NUM_DOCTO' in dff.columns:
-        if len(dff) > 0:
-            ultima_data = dff['DATA_MOVTO'].max()
-            dff_dia = dff[dff['DATA_MOVTO'] == ultima_data]
-            # Pega o maior NUM_DOCTO do dia mais recente (ou o único)
-            ultimo_nr = dff_dia['NUM_DOCTO'].max()
-            dff = dff[dff['NUM_DOCTO'] == ultimo_nr]
+    # Nota fiscal
+    if filtro.get("nr_nota") and 'NUM_DOCTO' in dff.columns:
+        dff = dff[dff['NUM_DOCTO'].astype(str).str.strip() == str(filtro["nr_nota"]).strip()]
 
-    if len(dff) == 0:
-        dff_orig = pd.DataFrame()  # retorna vazio — não força fallback 30 dias
-        return dff_orig[[c for c in cols if c in dff_orig.columns]] if len(dff_orig) else dff[[c for c in cols if c in dff.columns]]
+    return dff
 
-    return dff[[c for c in cols if c in dff.columns]]
+def _periodo_anterior(filtro: dict) -> tuple:
+    """Calcula data_inicio/fim do período anterior equivalente."""
+    try:
+        d1 = pd.to_datetime(filtro["data_inicio"])
+        d2 = pd.to_datetime(filtro["data_fim"])
+        delta = d2 - d1 + timedelta(days=1)
+        pa_fim = d1 - timedelta(days=1)
+        pa_ini = pa_fim - delta + timedelta(days=1)
+        return pa_ini, pa_fim
+    except:
+        return None, None
 
-def aggregate_nota(dff: pd.DataFrame) -> str:
-    """Agrega dados de uma nota fiscal específica — evita estouro de tokens."""
-    lines = []
+def calcular(df: pd.DataFrame, filtro: dict) -> dict:
+    """Calcula todos os dados necessários. Retorna dict com resultados."""
+    tipo = filtro.get("tipo", "indefinido")
+    dff = _aplicar_filtros(df, filtro)
+    n = len(dff)
 
-    # Cabeçalho
-    if 'NUM_DOCTO' in dff.columns:
-        notas = dff['NUM_DOCTO'].unique()
-        lines.append(f"NOTA(S): {', '.join(str(n) for n in notas)}")
-    if 'DATA_MOVTO' in dff.columns:
-        data = dff['DATA_MOVTO'].max()
-        lines.append(f"DATA: {data.strftime('%d/%m/%Y') if hasattr(data, 'strftime') else data}")
-    if 'NOME_CLIENTE' in dff.columns:
-        lines.append(f"CLIENTE: {dff['NOME_CLIENTE'].iloc[0]}")
+    resultado = {
+        "tipo": tipo,
+        "filtro_aplicado": filtro,
+        "n_registros": n,
+        "dados": {}
+    }
+
+    if n == 0:
+        resultado["sem_dados"] = True
+        return resultado
+
+    resultado["sem_dados"] = False
+    d = resultado["dados"]
+
+    # ── Métricas base sempre calculadas ──
+    fat   = round(float(dff['VALOR_LIQUIDO'].sum()), 2)
+    kg    = round(float(dff['QTDE_PRI'].sum()), 2)
+    cx    = round(kg / 30, 0)
+    notas = int(dff['NUM_DOCTO'].nunique()) if 'NUM_DOCTO' in dff.columns else 0
+    pm    = round(fat / kg, 2) if kg > 0 else 0
+    d_min = dff['DATA_MOVTO'].min()
+    d_max = dff['DATA_MOVTO'].max()
+
+    d["faturamento"]  = fat
+    d["kg"]           = kg
+    d["cx30"]         = int(cx)
+    d["notas"]        = notas
+    d["preco_medio"]  = pm
+    d["periodo_ini"]  = d_min.strftime('%d/%m/%Y') if pd.notna(d_min) else None
+    d["periodo_fim"]  = d_max.strftime('%d/%m/%Y') if pd.notna(d_max) else None
+
+    # ── Por filial ──
     if 'NOME_FILIAL' in dff.columns:
-        lines.append(f"FILIAL: {dff['NOME_FILIAL'].iloc[0]}")
-    if 'NOM_VENDEDOR' in dff.columns:
-        lines.append(f"VENDEDOR: {dff['NOM_VENDEDOR'].iloc[0]}")
-    lines.append("")
+        por_filial = dff.groupby('NOME_FILIAL').agg(
+            kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'),
+            notas=('NUM_DOCTO','nunique')
+        ).sort_values('kg', ascending=False)
+        d["por_filial"] = [
+            {"filial": idx,
+             "kg": round(float(r.kg),2),
+             "cx30": int(round(r.kg/30,0)),
+             "faturamento": round(float(r.fat),2),
+             "pm": round(float(r.fat)/float(r.kg),2) if r.kg > 0 else 0,
+             "notas": int(r.notas)}
+            for idx, r in por_filial.iterrows()
+        ]
 
-    # Totais gerais
-    fat   = dff['VALOR_LIQUIDO'].sum() if 'VALOR_LIQUIDO' in dff.columns else 0
-    kg    = dff['QTDE_PRI'].sum()      if 'QTDE_PRI'      in dff.columns else 0
-    cx    = dff['QTDE_AUX'].sum()      if 'QTDE_AUX'      in dff.columns else 0
-    pm    = fat / kg if kg > 0 else 0
-    lines.append(f"TOTAIS: R$ {fat:,.2f} | {kg:,.2f} kg | {cx:,.0f} cx | R$ {pm:.2f}/kg")
-    lines.append("")
-
-    # Itens da nota
-    lines.append("ITENS:")
-    cols_prod = [c for c in ['COD_PRODUTO','DESC_PRODUTO','QTDE_PRI','QTDE_AUX','VALOR_UNITARIO','VALOR_LIQUIDO','DESC_DIVISAO2'] if c in dff.columns]
-
-    # Inclui chave de acesso NF-e se disponível
-    if 'CHAVE_ACESSO' in dff.columns:
-        chave = dff['CHAVE_ACESSO'].dropna().iloc[0] if len(dff) > 0 else ''
-        if chave and len(str(chave).strip()) == 44:
-            lines.append(f"CHAVE_ACESSO_NFE: {str(chave).strip()}")
-    for _, row in dff[cols_prod].iterrows():
-        linha = " | ".join(f"{c}: {row[c]}" for c in cols_prod)
-        lines.append(linha)
-
-    return "\n".join(lines)
-
-def aggregate_for_summary(dff: pd.DataFrame) -> str:
-    """Agrega dados para resumos mensais — evita estouro de tokens."""
-    lines = []
-    
-    # Totais gerais
-    total_kg = dff['QTDE_PRI'].sum()
-    total_fat = dff['VALOR_LIQUIDO'].sum()
-    total_notas = dff['NUM_DOCTO'].nunique()
-    preco_medio = total_fat / total_kg if total_kg > 0 else 0
-    import calendar as _cal_rg
-    _hoje = datetime.now().date()
-    _ult_dia_mes = _cal_rg.monthrange(_hoje.year, _hoje.month)[1]
-    _ultimo_data = dff['DATA_MOVTO'].max().date()
-    _dias_fat = dff.groupby(dff['DATA_MOVTO'].dt.date).ngroups
-    _media_kg = total_kg / _dias_fat if _dias_fat > 0 else 0
-    _media_fat = total_fat / _dias_fat if _dias_fat > 0 else 0
-    _dias_rest = sum(1 for d in range(_ultimo_data.day+1, _ult_dia_mes+1)
-                     if _ultimo_data.replace(day=d).weekday() < 5)
-    _prev_kg  = total_kg  + (_media_kg  * _dias_rest)
-    _prev_fat = total_fat + (_media_fat * _dias_rest)
-    _prev_cx30 = round(_prev_kg/30, 0)
-    lines.append(f"## RESUMO GERAL")
-    total_cx = dff['QTDE_AUX'].sum() if 'QTDE_AUX' in dff.columns else 0
-    lines.append(f"Total: {total_kg:,.0f} kg | {total_cx:,.0f} cx | R$ {total_fat:,.2f} | {total_notas} notas | R$ {preco_medio:.2f}/kg")
-    lines.append(f"Previsão fechamento mês ({_dias_rest} dias úteis restantes, base {_dias_fat} dias faturados, média {_media_kg:,.0f} kg/dia):")
-    lines.append(f"→ Volume: {_prev_kg:,.0f} kg | CX30: {_prev_cx30:,.0f} | Faturamento: R$ {_prev_fat:,.2f}")
-    lines.append("")
-
-    # Por tipo de corte (DESC_DIVISAO2)
-    lines.append("## DISTRIBUIÇÃO POR TIPO DE CORTE")
-    lines.append("| TIPO DE CORTE | VOLUME (KG) | CX30 | FATURAMENTO | R$/KG |")
-    lines.append("|---------------|-------------|------|-------------|-------|")
-    por_corte = dff.groupby('DESC_DIVISAO2').agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum')).sort_values('kg', ascending=False)
-    for idx, r in por_corte.iterrows():
-        pm = r.fat/r.kg if r.kg > 0 else 0
-        cx30_c = round(r.kg/30, 0)
-        lines.append(f"| {idx} | {r.kg:,.0f} | {cx30_c:,.0f} | R$ {r.fat:,.2f} | R$ {pm:.2f} |")
-    tc_kg=por_corte['kg'].sum(); tc_fat=por_corte['fat'].sum()
-    tc_pm=tc_fat/tc_kg if tc_kg>0 else 0; tc_cx30=round(tc_kg/30,0)
-    lines.append(f"| **TOTAIS** | **{tc_kg:,.0f}** | **{tc_cx30:,.0f}** | **R$ {tc_fat:,.2f}** | **R$ {tc_pm:.2f}** |")
-    lines.append("")
-
-    # Por dia
-    lines.append("## DESEMPENHO POR DIA")
-    lines.append("| DATA | VOLUME (KG) | CX30 | FATURAMENTO | R$/KG | NOTAS |")
-    lines.append("|------|-------------|------|-------------|-------|-------|")
-    por_dia = dff.groupby(dff['DATA_MOVTO'].dt.strftime('%d/%m')).agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'), notas=('NUM_DOCTO','nunique')).sort_index()
-    for idx, r in por_dia.iterrows():
-        pm = r.fat/r.kg if r.kg > 0 else 0
-        cx30 = round(r.kg/30, 0)
-        lines.append(f"| {idx} | {r.kg:,.0f} | {cx30:,.0f} | R$ {r.fat:,.2f} | R$ {pm:.2f} | {int(r.notas)} |")
-    td_kg=por_dia['kg'].sum(); td_fat=por_dia['fat'].sum(); td_notas=int(por_dia['notas'].sum())
-    td_pm=td_fat/td_kg if td_kg>0 else 0; td_cx30=round(td_kg/30,0)
-    lines.append(f"| **TOTAIS** | **{td_kg:,.0f}** | **{td_cx30:,.0f}** | **R$ {td_fat:,.2f}** | **R$ {td_pm:.2f}** | **{td_notas}** |")
-    lines.append("")
-
-    # Previsão de fechamento do mês
-    import numpy as np
-    import calendar as _cal
-    hoje_ref = datetime.now().date()
-    ultimo_dia_mes = _cal.monthrange(hoje_ref.year, hoje_ref.month)[1]
-    # Dias úteis faturados (dias com movimento no período)
-    dias_faturados = len(por_dia)
-    media_kg_dia = td_kg / dias_faturados if dias_faturados > 0 else 0
-    media_fat_dia = td_fat / dias_faturados if dias_faturados > 0 else 0
-    # Dias úteis restantes no mês (seg a sex, excluindo hoje se já faturado)
-    ultimo_data = dff['DATA_MOVTO'].max().date()
-    dias_restantes = []
-    for d in range(ultimo_data.day + 1, ultimo_dia_mes + 1):
-        try:
-            dt = ultimo_data.replace(day=d)
-            if dt.weekday() < 5:  # seg=0 a sex=4
-                dias_restantes.append(dt)
-        except:
-            pass
-    n_rest = len(dias_restantes)
-    prev_kg  = td_kg  + (media_kg_dia  * n_rest)
-    prev_fat = td_fat + (media_fat_dia * n_rest)
-    prev_cx30 = round(prev_kg / 30, 0)
-    lines.append(f"## PREVISÃO DE FECHAMENTO DO MÊS")
-    lines.append(f"Base de cálculo: {dias_faturados} dias faturados | Média diária: {media_kg_dia:,.0f} kg | Dias úteis restantes: {int(n_rest)}")
-    lines.append(f"| MÉTRICA | REALIZADO ATÉ AGORA | PREVISÃO FECHAMENTO |")
-    lines.append(f"|---------|---------------------|---------------------|")
-    lines.append(f"| Volume (kg) | {td_kg:,.0f} | **{prev_kg:,.0f}** |")
-    lines.append(f"| CX30 | {td_cx30:,.0f} | **{prev_cx30:,.0f}** |")
-    lines.append(f"| Faturamento | R$ {td_fat:,.2f} | **R$ {prev_fat:,.2f}** |")
-    lines.append("")
-
-    # Top 10 clientes
-    lines.append("## TOP 5 CLIENTES (por volume)")
-    has_cx_c = 'QTDE_AUX' in dff.columns
-    agg_cli = {'kg':('QTDE_PRI','sum'), 'fat':('VALOR_LIQUIDO','sum')}
-    if has_cx_c: agg_cli['cx'] = ('QTDE_AUX','sum')
-    por_cli = dff.groupby('NOME_CLIENTE').agg(**agg_cli).sort_values('kg', ascending=False).head(10)
-    if has_cx_c:
-        lines.append("| CLIENTE | VOLUME (KG) | CX | FATURAMENTO | R$/KG |")
-        lines.append("|---------|-------------|-----|-------------|-------|")
-    else:
-        lines.append("| CLIENTE | VOLUME (KG) | FATURAMENTO | R$/KG |")
-        lines.append("|---------|-------------|-------------|-------|")
-    for idx, r in por_cli.iterrows():
-        pm = r.fat/r.kg if r.kg > 0 else 0
-        if has_cx_c:
-            lines.append(f"| {idx} | {r.kg:,.2f} | {r.cx:,.0f} | R$ {r.fat:,.2f} | R$ {pm:.2f} |")
-        else:
-            lines.append(f"| {idx} | {r.kg:,.2f} | R$ {r.fat:,.2f} | R$ {pm:.2f} |")
-    tc_kg=por_cli['kg'].sum(); tc_fat=por_cli['fat'].sum(); tc_pm=tc_fat/tc_kg if tc_kg>0 else 0
-    if has_cx_c:
-        tc_cx=por_cli['cx'].sum()
-        lines.append(f"| **TOTAIS TOP10** | **{tc_kg:,.2f}** | **{tc_cx:,.0f}** | **R$ {tc_fat:,.2f}** | **R$ {tc_pm:.2f}** |")
-    else:
-        lines.append(f"| **TOTAIS TOP10** | **{tc_kg:,.2f}** | **R$ {tc_fat:,.2f}** | **R$ {tc_pm:.2f}** |")
-    lines.append("")
-
-    # Top 10 produtos
-    lines.append("## TOP 5 PRODUTOS (por volume)")
-    has_cx_p = 'QTDE_AUX' in dff.columns
-    agg_prod = {'kg':('QTDE_PRI','sum'), 'fat':('VALOR_LIQUIDO','sum')}
-    if has_cx_p: agg_prod['cx'] = ('QTDE_AUX','sum')
-    por_prod = dff.groupby(['COD_PRODUTO','DESC_PRODUTO']).agg(**agg_prod).sort_values('kg', ascending=False).head(10)
-    if has_cx_p:
-        lines.append("| PRODUTO | VOLUME (KG) | CX | FATURAMENTO | R$/KG |")
-        lines.append("|---------|-------------|-----|-------------|-------|")
-    else:
-        lines.append("| PRODUTO | VOLUME (KG) | FATURAMENTO | R$/KG |")
-        lines.append("|---------|-------------|-------------|-------|")
-    for idx, r in por_prod.iterrows():
-        pm = r.fat/r.kg if r.kg > 0 else 0
-        if has_cx_p:
-            lines.append(f"| {idx[1]} | {r.kg:,.2f} | {r.cx:,.0f} | R$ {r.fat:,.2f} | R$ {pm:.2f} |")
-        else:
-            lines.append(f"| {idx[1]} | {r.kg:,.2f} | R$ {r.fat:,.2f} | R$ {pm:.2f} |")
-    tp_kg=por_prod['kg'].sum(); tp_fat=por_prod['fat'].sum(); tp_pm=tp_fat/tp_kg if tp_kg>0 else 0
-    if has_cx_p:
-        tp_cx=por_prod['cx'].sum()
-        lines.append(f"| **TOTAIS TOP10** | **{tp_kg:,.2f}** | **{tp_cx:,.0f}** | **R$ {tp_fat:,.2f}** | **R$ {tp_pm:.2f}** |")
-    else:
-        lines.append(f"| **TOTAIS TOP10** | **{tp_kg:,.2f}** | **R$ {tp_fat:,.2f}** | **R$ {tp_pm:.2f}** |")
-    lines.append("")
-
-    # Todos os vendedores (com código)
-    lines.append("## VENDEDORES (por volume)")
-    if 'COD_VENDEDOR' in dff.columns:
-        agg_v = {'kg':('QTDE_PRI','sum'), 'fat':('VALOR_LIQUIDO','sum')}
-        if 'QTDE_AUX' in dff.columns: agg_v['cx'] = ('QTDE_AUX','sum')
-        por_vend = dff.groupby(['COD_VENDEDOR','NOM_VENDEDOR']).agg(**agg_v).sort_values('kg', ascending=False)
-        for idx, r in por_vend.iterrows():
-            pm = r.fat/r.kg if r.kg > 0 else 0
-            cx_str = f" | {r.cx:,.0f} cx" if 'cx' in por_vend.columns else ""
-            lines.append(f"{idx[0]} | {idx[1]}: {r.kg:,.2f} kg{cx_str} | R$ {r.fat:,.2f} | R$ {pm:.2f}/kg")
-    else:
-        agg_v = {'kg':('QTDE_PRI','sum'), 'fat':('VALOR_LIQUIDO','sum')}
-        if 'QTDE_AUX' in dff.columns: agg_v['cx'] = ('QTDE_AUX','sum')
-        por_vend = dff.groupby('NOM_VENDEDOR').agg(**agg_v).sort_values('kg', ascending=False)
-        for idx, r in por_vend.iterrows():
-            pm = r.fat/r.kg if r.kg > 0 else 0
-            cx_str = f" | {r.cx:,.0f} cx" if 'cx' in por_vend.columns else ""
-            lines.append(f"{idx}: {r.kg:,.2f} kg{cx_str} | R$ {r.fat:,.2f} | R$ {pm:.2f}/kg")
-    lines.append("")
-
-    # Por UF / Estado
-    if 'UF' in dff.columns:
-        lines.append("## POR ESTADO (UF)")
-        agg_uf = {'kg':('QTDE_PRI','sum'), 'fat':('VALOR_LIQUIDO','sum'), 'notas':('NUM_DOCTO','nunique')}
-        if 'QTDE_AUX' in dff.columns: agg_uf['cx'] = ('QTDE_AUX','sum')
-        por_uf = dff.groupby('UF').agg(**agg_uf).sort_values('kg', ascending=False)
-        for idx, r in por_uf.iterrows():
-            pm = r.fat/r.kg if r.kg > 0 else 0
-            cx_str = f" | {r.cx:,.0f} cx" if 'cx' in por_uf.columns else ""
-            lines.append(f"{idx}: {r.kg:,.2f} kg{cx_str} | R$ {r.fat:,.2f} | {r.notas} notas | R$ {pm:.2f}/kg")
-        lines.append("")
-
-    # Por tipo de carne
-    lines.append("## POR TIPO DE CARNE (DESC_DIVISAO2)")
-    por_tipo = dff.groupby('DESC_DIVISAO2').agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum')).sort_values('kg', ascending=False)
-    for idx, r in por_tipo.iterrows():
-        pm = r.fat/r.kg if r.kg > 0 else 0
-        lines.append(f"{idx}: {r.kg:,.2f} kg | R$ {r.fat:,.2f} | R$ {pm:.2f}/kg")
-
-    return "\n".join(lines)
-
-def is_summary_query(pergunta: str) -> bool:
-    """Detecta se é uma pergunta de resumo/análise geral que precisa de agregação."""
-    pl = pergunta.lower()
-    summary_keywords = [
-        'como está','como esta','como foi','como ficou','me mostra','me mostre',
-        'resumo','análise','analise','comparar','comparativo',
-        'ranking','top','total','mês','mes','periodo','período','evolução','evolucao',
-        'desempenho','performance','balanço','balanco','visão geral','visao geral',
-        'quanto vendeu','quanto foi','quanto faturou','quero os dados','quero ver',
-        'trimestre','semestre','semana','janeiro','fevereiro','março','marco','abril',
-        'maio','junho','julho','agosto','setembro','outubro','novembro','dezembro',
-        'mês passado','mes passado','mês anterior','mes anterior','este mês','esse mês',
-        'este mes','esse mes','semana passada','semana anterior','esta semana','essa semana'
+    # ── Por dia ──
+    por_dia = dff.groupby(dff['DATA_MOVTO'].dt.date).agg(
+        kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'),
+        notas=('NUM_DOCTO','nunique')
+    ).sort_index()
+    d["por_dia"] = [
+        {"data": str(idx),
+         "kg": round(float(r.kg),2),
+         "cx30": int(round(r.kg/30,0)),
+         "faturamento": round(float(r.fat),2),
+         "pm": round(float(r.fat)/float(r.kg),2) if r.kg > 0 else 0,
+         "notas": int(r.notas)}
+        for idx, r in por_dia.iterrows()
     ]
-    # Não agregar se for busca específica de cliente/produto/nota/última nota
-    specific_keywords = ['últimas vendas','ultimas vendas','ultima venda','última venda',
-                         'nota ','nr ','última nota','ultima nota','último pedido','ultimo pedido',
-                         'nr nota','nr_nota','numero da nota','número da nota']
-    if any(x in pl for x in specific_keywords):
-        return False
 
-    # Sempre agrega se tiver "últimos N meses/semanas"
-    if re.search(r'[uú]ltimos?\s+\d+\s+(m[eê]s|semana)', pl):
-        return True
+    # ── Dias faturados e média diária ──
+    dias_fat = len(por_dia)
+    d["dias_faturados"]  = dias_fat
+    d["media_diaria_kg"] = round(kg / dias_fat, 0) if dias_fat > 0 else 0
+    d["media_diaria_fat"] = round(fat / dias_fat, 2) if dias_fat > 0 else 0
 
-    # Sempre agrega se tiver intervalo de datas explícito (período longo)
-    if re.search(r'\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}\s+a[té]?\s+\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}', pl):
-        return True
+    # ── Previsão de fechamento do mês ──
+    try:
+        ult_data = d_max.date()
+        ult_dia_mes = calendar.monthrange(ult_data.year, ult_data.month)[1]
+        dias_rest = sum(
+            1 for day in range(ult_data.day + 1, ult_dia_mes + 1)
+            if ult_data.replace(day=day).weekday() < 5
+        )
+        d["dias_uteis_restantes"] = dias_rest
+        d["previsao_kg"]  = round(kg  + d["media_diaria_kg"]  * dias_rest, 0)
+        d["previsao_fat"] = round(fat + d["media_diaria_fat"] * dias_rest, 2)
+        d["previsao_cx30"] = int(round(d["previsao_kg"] / 30, 0))
+    except:
+        d["dias_uteis_restantes"] = 0
 
-    return any(x in pl for x in summary_keywords)
+    # ── Top clientes ──
+    if 'NOME_CLIENTE' in dff.columns:
+        top_cli = dff.groupby('NOME_CLIENTE').agg(
+            kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'),
+            notas=('NUM_DOCTO','nunique')
+        ).sort_values('kg', ascending=False).head(15)
+        d["top_clientes"] = [
+            {"nome": idx,
+             "kg": round(float(r.kg),2),
+             "cx30": int(round(r.kg/30,0)),
+             "faturamento": round(float(r.fat),2),
+             "pm": round(float(r.fat)/float(r.kg),2) if r.kg > 0 else 0,
+             "notas": int(r.notas)}
+            for idx, r in top_cli.iterrows()
+        ]
 
-# ─── ROUTES ───
+    # ── Top produtos ──
+    if 'DESC_PRODUTO' in dff.columns:
+        top_prod = dff.groupby('DESC_PRODUTO').agg(
+            kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum')
+        ).sort_values('kg', ascending=False).head(15)
+        d["top_produtos"] = [
+            {"nome": idx,
+             "kg": round(float(r.kg),2),
+             "cx30": int(round(r.kg/30,0)),
+             "faturamento": round(float(r.fat),2),
+             "pm": round(float(r.fat)/float(r.kg),2) if r.kg > 0 else 0}
+            for idx, r in top_prod.iterrows()
+        ]
 
+    # ── Top vendedores ──
+    if 'NOM_VENDEDOR' in dff.columns and 'COD_VENDEDOR' in dff.columns:
+        top_vend = dff.groupby(['COD_VENDEDOR','NOM_VENDEDOR']).agg(
+            kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'),
+            notas=('NUM_DOCTO','nunique')
+        ).sort_values('kg', ascending=False).head(20)
+        d["top_vendedores"] = [
+            {"cod": idx[0], "nome": idx[1],
+             "kg": round(float(r.kg),2),
+             "cx30": int(round(r.kg/30,0)),
+             "faturamento": round(float(r.fat),2),
+             "pm": round(float(r.fat)/float(r.kg),2) if r.kg > 0 else 0,
+             "notas": int(r.notas)}
+            for idx, r in top_vend.iterrows()
+        ]
+
+    # ── Por tipo de corte ──
+    if 'DESC_DIVISAO2' in dff.columns:
+        por_tipo = dff.groupby('DESC_DIVISAO2').agg(
+            kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum')
+        ).sort_values('kg', ascending=False)
+        d["por_tipo_corte"] = [
+            {"tipo": idx,
+             "kg": round(float(r.kg),2),
+             "cx30": int(round(r.kg/30,0)),
+             "faturamento": round(float(r.fat),2),
+             "pm": round(float(r.fat)/float(r.kg),2) if r.kg > 0 else 0}
+            for idx, r in por_tipo.iterrows()
+        ]
+
+    # ── Detalhe de nota fiscal ──
+    if tipo == "detalhe_nota" and 'NUM_DOCTO' in dff.columns:
+        cols_nota = [c for c in ['NUM_DOCTO','DATA_MOVTO','NOME_CLIENTE','NOME_FILIAL',
+                                  'NOM_VENDEDOR','COD_PRODUTO','DESC_PRODUTO','DESC_DIVISAO2',
+                                  'QTDE_PRI','QTDE_AUX','VALOR_UNITARIO','VALOR_LIQUIDO',
+                                  'CHAVE_ACESSO'] if c in dff.columns]
+        itens = []
+        for _, row in dff[cols_nota].iterrows():
+            item = {}
+            for c in cols_nota:
+                v = row[c]
+                if hasattr(v, 'strftime'):
+                    item[c] = v.strftime('%d/%m/%Y')
+                elif pd.isna(v):
+                    item[c] = None
+                else:
+                    item[c] = v
+            itens.append(item)
+        d["itens_nota"] = itens
+        d["chave_acesso"] = str(dff['CHAVE_ACESSO'].dropna().iloc[0]).strip() if 'CHAVE_ACESSO' in dff.columns and len(dff) > 0 else None
+
+    # ── Últimas vendas de cliente ──
+    if tipo == "ultimas_vendas" and filtro.get("cliente"):
+        cols_venda = [c for c in ['DATA_MOVTO','NUM_DOCTO','COD_PRODUTO','DESC_PRODUTO',
+                                   'QTDE_PRI','QTDE_AUX','VALOR_LIQUIDO','NOME_FILIAL'] if c in dff.columns]
+        ultimas = dff[cols_venda].sort_values('DATA_MOVTO', ascending=False).head(20)
+        registros = []
+        for _, row in ultimas.iterrows():
+            item = {}
+            for c in cols_venda:
+                v = row[c]
+                if hasattr(v, 'strftime'):
+                    item[c] = v.strftime('%d/%m/%Y')
+                elif pd.isna(v):
+                    item[c] = None
+                else:
+                    item[c] = v
+            registros.append(item)
+        d["ultimas_vendas"] = registros
+        if 'NOME_CLIENTE' in dff.columns:
+            d["cliente_encontrado"] = dff['NOME_CLIENTE'].iloc[0]
+
+    # ── Comparativo com período anterior ──
+    if filtro.get("comparar_periodo_anterior") and filtro.get("data_inicio") and filtro.get("data_fim"):
+        pa_ini, pa_fim = _periodo_anterior(filtro)
+        if pa_ini:
+            filtro_pa = {**filtro, "data_inicio": pa_ini.strftime('%Y-%m-%d'),
+                         "data_fim": pa_fim.strftime('%Y-%m-%d'),
+                         "comparar_periodo_anterior": False}
+            dff_pa = _aplicar_filtros(df, filtro_pa)
+            if len(dff_pa) > 0:
+                fat_pa = round(float(dff_pa['VALOR_LIQUIDO'].sum()), 2)
+                kg_pa  = round(float(dff_pa['QTDE_PRI'].sum()), 2)
+                d["comparativo"] = {
+                    "periodo_anterior_ini": pa_ini.strftime('%d/%m/%Y'),
+                    "periodo_anterior_fim": pa_fim.strftime('%d/%m/%Y'),
+                    "faturamento_anterior": fat_pa,
+                    "kg_anterior": kg_pa,
+                    "var_fat_pct": round((fat - fat_pa) / fat_pa * 100, 1) if fat_pa > 0 else None,
+                    "var_kg_pct":  round((kg  - kg_pa)  / kg_pa  * 100, 1) if kg_pa  > 0 else None,
+                }
+
+    # ── CNPJ query ──
+    if tipo == "cnpj_query" and filtro.get("cliente") and 'CPF_CGC' in df.columns:
+        nome_busca = filtro["cliente"]
+        mask = df['NOME_CLIENTE'].str.lower().str.contains(nome_busca.lower()[:10], na=False)
+        rows = df[mask][['NOME_CLIENTE','CPF_CGC']].dropna()
+        rows['raiz'] = rows['CPF_CGC'].astype(str).str.replace(r'\D','',regex=True).str[:8]
+        raizes = rows.groupby('raiz')['NOME_CLIENTE'].first().reset_index()
+        d["cnpjs"] = [{"nome": r['NOME_CLIENTE'], "cnpj_raiz": r['raiz']} for _, r in raizes.iterrows()]
+
+    return resultado
+
+# ─────────────────────────────────────────────
+#  ETAPA 3 — NARRAR (Claude formata o resultado)
+# ─────────────────────────────────────────────
+async def narrar(pergunta: str, resultado: dict, historico: list, modo: str = "normal") -> str:
+    """Claude recebe JSON com dados calculados e formata a resposta."""
+
+    if resultado.get("sem_dados"):
+        return "⚠️ Sem dados disponíveis para o período/filtro solicitado."
+
+    personalidade = ""
+    if modo == "mengo":
+        personalidade = "\nMODO NAÇÃO 🔴⚫: Tempere com referências rubro-negras, mas NUNCA altere os números."
+    elif modo == "vasco":
+        personalidade = "\nMODO GIGANTE DA COLINA ⬛⬜: Tempere com referências vascaínas, mas NUNCA altere os números."
+
+    dados_json = json.dumps(resultado["dados"], ensure_ascii=False, indent=2)
+    tipo = resultado.get("tipo", "")
+
+    system_narrar = f"""Você é o IAF, Analista Comercial Sênior da Frinense Alimentos.{personalidade}
+
+⛔⛔⛔ REGRA ABSOLUTA — NUNCA INVENTAR DADOS ⛔⛔⛔
+- USE APENAS os números do JSON abaixo. ZERO EXCEÇÕES.
+- NUNCA arredonde, estime ou altere qualquer valor.
+- Se um campo não existe no JSON = não existe. Não mencione.
+- Filiais válidas: ITAP, BJESUS, PORC. Qualquer outra NÃO EXISTE.
+⛔⛔⛔⛔⛔⛔⛔⛔⛔⛔⛔⛔⛔⛔⛔⛔⛔⛔⛔⛔
+
+## FORMATO
+- Tom executivo e direto — sem "Olá", "Claro!", "Com prazer"
+- Use Markdown: ## títulos, **negrito**, tabelas com | Col |
+- Valores: R$ X.XXX.XXX,XX | Kg: X.XXX.XXX kg | Datas: DD/MM/AA
+- CX30 = kg/30 — sempre exiba junto com kg
+- Toda tabela DEVE ter linha "| **TOTAIS** |" no final
+- Finalize com: 💡 **Insight:** [ação ou oportunidade concreta]
+- Após tabelas: 📊 **ANÁLISE RÁPIDA:** com 3-4 bullets (🔝 Destaque / 📉 Atenção / 📈 Tendência / 💰 Ticket médio)
+
+## COMPORTAMENTOS POR TIPO
+- resumo_mensal / resumo_diario: Mostre KPIs gerais → por filial → por dia → previsão fechamento → top clientes → top produtos
+- detalhe_nota: Mostre cabeçalho (filial, cliente, vendedor) + tabela de itens + DANFE se tiver chave_acesso
+- ultimas_vendas: Tabela DATA | NR NOTA | PRODUTO | KG | CX | R$ | R$/kg — decrescente, sem totais
+- ranking_clientes: Tabela com posição, nome, kg, cx30, faturamento, R$/kg
+- ranking_vendedores: Tabela com cod, nome, kg, cx30, faturamento, notas
+- comparativo: Mostre período atual vs anterior com variação % em cada métrica
+- cnpj_query: Liste clientes com CNPJ raiz formatado
+
+## NOTA FISCAL — FORMATO OBRIGATÓRIO
+## NOTA FISCAL [NR] · [DATA]
+**Filial:** [F] | **Cliente:** [C] | **Vendedor:** [V]
+
+| # | PRODUTO | COD | DIVISÃO | KG | CX | VALOR | R$/kg |
+|---|---------|-----|---------|----|----|-------|-------|
+| 1 | ... | ... | ... | ... | ... | ... | ... |
+| **TOTAIS** | | | | [soma] | [soma] | [soma] | [pm] |
+
+Se chave_acesso disponível: adicione linha em branco + "DANFE:[chave]"
+
+DADOS CALCULADOS (use SOMENTE estes):
+{dados_json}"""
+
+    # Histórico para contexto (últimas 6 msgs)
+    msgs = []
+    for m in historico[-6:]:
+        msgs.append({"role": m["role"], "content": m["content"][:500]})
+    msgs.append({"role": "user", "content": pergunta})
+
+    # Max tokens por tipo
+    max_tok = 4000 if tipo in ("resumo_mensal", "comparativo") else 2000 if tipo == "detalhe_nota" else 1500
+
+    async with httpx.AsyncClient(timeout=90) as client:
+        r = await client.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={"Content-Type": "application/json",
+                     "x-api-key": CLAUDE_KEY,
+                     "anthropic-version": "2023-06-01"},
+            json={"model": "claude-haiku-4-5-20251001",
+                  "max_tokens": max_tok,
+                  "system": system_narrar,
+                  "messages": msgs}
+        )
+    if r.status_code != 200:
+        raise HTTPException(status_code=r.status_code, detail=r.text)
+    return r.json()["content"][0]["text"]
+
+# ─────────────────────────────────────────────
+#  MODELOS
+# ─────────────────────────────────────────────
+class Message(BaseModel):
+    role: str
+    content: str
+
+class ChatRequest(BaseModel):
+    messages: List[Message]
+    modo: str = "normal"
+
+# ─────────────────────────────────────────────
+#  ROUTES — ESTÁTICAS
+# ─────────────────────────────────────────────
 @app.get("/", response_class=HTMLResponse)
 def root():
-    for p in ["menu.html", os.path.join(os.path.dirname(__file__), "menu.html"), "/app/menu.html"]:
+    for p in ["menu.html", "/app/menu.html"]:
         if os.path.exists(p):
             with open(p, "r", encoding="utf-8") as f:
                 return HTMLResponse(content=f.read())
@@ -1001,1687 +601,358 @@ def root():
 
 @app.get("/iaf", response_class=HTMLResponse)
 def iaf():
-    for p in ["index.html", os.path.join(os.path.dirname(__file__), "index.html"), "/app/index.html"]:
+    for p in ["index.html", "/app/index.html"]:
         if os.path.exists(p):
             with open(p, "r", encoding="utf-8") as f:
                 return HTMLResponse(content=f.read())
     return HTMLResponse("<h1>IAF</h1>")
 
+# ─────────────────────────────────────────────
+#  ROUTES — DASHBOARD
+# ─────────────────────────────────────────────
 @app.get("/dashboard")
 def dashboard():
-    """Retorna KPIs + top10 clientes — JSON leve, sem CSV."""
     try:
         df = load_df()
-        dia = get_dia_referencia(df)
+        hoje = datetime.now().date()
+        dia = hoje if (df['DATA_MOVTO'].dt.date == hoje).any() else df['DATA_MOVTO'].dt.date.max()
         df_dia = df[df['DATA_MOVTO'].dt.date == dia]
 
         fat   = float(df_dia['VALOR_LIQUIDO'].sum())
         kg    = float(df_dia['QTDE_PRI'].sum())
-        notas = int(df_dia.shape[0])
-        total = int(df.shape[0])
+        notas = int(df_dia['NUM_DOCTO'].nunique()) if 'NUM_DOCTO' in df_dia.columns else 0
 
-        # Última nota com hora
         ultima_str = "—"
-        ultima = df.dropna(subset=['DATA_MOVTO']).sort_values('DATA_MOVTO').iloc[-1]['DATA_MOVTO']
-        if pd.notna(ultima):
-            ultima_str = ultima.strftime('%d/%m/%Y %H:%M')
+        try:
+            ultima = df.dropna(subset=['DATA_MOVTO']).sort_values('DATA_MOVTO').iloc[-1]['DATA_MOVTO']
+            ultima_str = ultima.strftime('%d/%m/%Y %H:%M') if pd.notna(ultima) else "—"
+        except: pass
 
-        # Top 10 clientes por volume
         top = (df_dia.groupby('NOME_CLIENTE')
                .agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'))
-               .sort_values('kg', ascending=False)
-               .head(10)
-               .reset_index())
+               .sort_values('kg', ascending=False).head(10).reset_index())
         top10 = [{"nome": r.NOME_CLIENTE, "kg": round(r.kg,2), "fat": round(r.fat,2)}
                  for r in top.itertuples()]
 
-        # Tipos de carne do dia (DESC_DIVISAO2)
         df_dia2 = df_dia.copy()
         df_dia2['DESC_DIVISAO2'] = df_dia2['DESC_DIVISAO2'].fillna('').str.strip()
         df_dia2.loc[df_dia2['DESC_DIVISAO2'] == '', 'DESC_DIVISAO2'] = 'SEM CLASS.'
         tipos_grp = (df_dia2.groupby('DESC_DIVISAO2')
                      .agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'))
-                     .sort_values('kg', ascending=False)
-                     .reset_index())
+                     .sort_values('kg', ascending=False).reset_index())
         tipos = [{"tipo": r.DESC_DIVISAO2, "kg": round(r.kg,2), "fat": round(r.fat,2)}
                  for r in tipos_grp.itertuples()]
 
-        # Horário de modificação do arquivo no Google Drive
         csv_modificado_str = "—"
         try:
             service = get_drive_service()
-            file_meta = service.files().get(
-                fileId=FILE_ID,
-                fields='modifiedTime'
-            ).execute()
-            modified_utc = file_meta.get('modifiedTime','')
-            if modified_utc:
-                from datetime import timezone
-                dt_utc = datetime.strptime(modified_utc, '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=timezone.utc)
-                dt_local = dt_utc.astimezone()
-                csv_modificado_str = dt_local.strftime('%d/%m/%Y %H:%M')
-        except:
-            pass
+            meta = service.files().get(fileId=FILE_ID, fields='modifiedTime').execute()
+            mod = meta.get('modifiedTime','')
+            if mod:
+                dt_utc = datetime.strptime(mod, '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=timezone.utc)
+                csv_modificado_str = dt_utc.astimezone().strftime('%d/%m/%Y %H:%M')
+        except: pass
 
         meses_pt = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
                     'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
-        mes_label = f"{meses_pt[dia.month-1]}/{dia.year}"
-        dia_label = dia.strftime('%d/%m/%Y')
-
         return JSONResponse({
-            "total_registros": total,
-            "dia_label": dia_label,
-            "mes_label": mes_label,
-            "fat": round(fat, 2),
-            "kg":  round(kg, 2),
-            "notas": notas,
-            "ultima_nota": ultima_str,
-            "csv_modificado": csv_modificado_str,
-            "top10": top10,
-            "tipos": tipos
+            "total_registros": len(df),
+            "dia_label":       dia.strftime('%d/%m/%Y'),
+            "mes_label":       f"{meses_pt[dia.month-1]}/{dia.year}",
+            "fat":             round(fat,2),
+            "kg":              round(kg,2),
+            "notas":           notas,
+            "ultima_nota":     ultima_str,
+            "csv_modificado":  csv_modificado_str,
+            "top10":           top10,
+            "tipos":           tipos
         })
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/cliente/{nome:path}")
 def detalhe_cliente(nome: str):
-    """Retorna produtos comprados pelo cliente no dia de referência."""
     try:
         df = load_df()
-        dia = get_dia_referencia(df)
+        hoje = datetime.now().date()
+        dia = hoje if (df['DATA_MOVTO'].dt.date == hoje).any() else df['DATA_MOVTO'].dt.date.max()
         df_dia = df[df['DATA_MOVTO'].dt.date == dia]
-        # Busca tolerante: tenta match exato primeiro, depois contains
-        mask_exato = df_dia['NOME_CLIENTE'].str.upper() == nome.upper()
-        if mask_exato.sum() == 0:
-            mask_exato = df_dia['NOME_CLIENTE'].str.upper().str.contains(nome.upper()[:20], na=False)
-        df_cli = df_dia[mask_exato]
-
+        mask = df_dia['NOME_CLIENTE'].str.upper() == nome.upper()
+        if mask.sum() == 0:
+            mask = df_dia['NOME_CLIENTE'].str.upper().str.contains(nome.upper()[:20], na=False)
+        df_cli = df_dia[mask]
         fat_total = float(df_cli['VALOR_LIQUIDO'].sum())
         kg_total  = float(df_cli['QTDE_PRI'].sum())
-
         prods = (df_cli.groupby(['DESC_PRODUTO','DESC_DIVISAO2'])
                  .agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'))
-                 .sort_values('kg', ascending=False)
-                 .reset_index())
+                 .sort_values('kg', ascending=False).reset_index())
         produtos = [{"nome": r.DESC_PRODUTO, "tipo": r.DESC_DIVISAO2, "kg": round(r.kg,2), "fat": round(r.fat,2)}
                     for r in prods.itertuples()]
-
-        return JSONResponse({
-            "nome": nome,
-            "fat_total": round(fat_total,2),
-            "kg_total":  round(kg_total,2),
-            "produtos": produtos
-        })
+        return JSONResponse({"nome": nome, "fat_total": round(fat_total,2),
+                             "kg_total": round(kg_total,2), "produtos": produtos})
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/tipo/{tipo}")
 def detalhe_tipo(tipo: str):
-    """Retorna clientes e produtos do tipo de carne no dia de referência."""
     try:
         df = load_df()
-        dia = get_dia_referencia(df)
+        hoje = datetime.now().date()
+        dia = hoje if (df['DATA_MOVTO'].dt.date == hoje).any() else df['DATA_MOVTO'].dt.date.max()
         df_dia = df[df['DATA_MOVTO'].dt.date == dia]
         df_tipo = df_dia[df_dia['DESC_DIVISAO2'].str.upper() == tipo.upper()]
-
         fat_total = float(df_tipo['VALOR_LIQUIDO'].sum())
         kg_total  = float(df_tipo['QTDE_PRI'].sum())
-        cx_total  = round(float(df_tipo['QTDE_PRI'].sum()) / 30, 0)  # CX30 = kg / 30
         notas     = int(df_tipo['NUM_DOCTO'].nunique())
         pm        = round(fat_total / kg_total, 2) if kg_total > 0 else 0
-
-        # Top clientes do tipo
-        clientes = (df_tipo.groupby('NOME_CLIENTE')
-                    .agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'))
-                    .sort_values('kg', ascending=False)
-                    .head(10).reset_index())
-        clientes_list = [{"nome": r.NOME_CLIENTE, "kg": round(r.kg,2), "fat": round(r.fat,2)}
-                         for r in clientes.itertuples()]
-
-        # Top produtos do tipo
-        produtos = (df_tipo.groupby('DESC_PRODUTO')
-                    .agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'))
-                    .sort_values('kg', ascending=False)
-                    .head(10).reset_index())
-        produtos_list = [{"nome": r.DESC_PRODUTO, "kg": round(r.kg,2), "fat": round(r.fat,2)}
-                         for r in produtos.itertuples()]
-
+        clientes = (df_tipo.groupby('NOME_CLIENTE').agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'))
+                    .sort_values('kg', ascending=False).head(10).reset_index())
+        produtos = (df_tipo.groupby('DESC_PRODUTO').agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'))
+                    .sort_values('kg', ascending=False).head(10).reset_index())
         return JSONResponse({
-            "tipo": tipo,
-            "fat_total": round(fat_total,2),
-            "kg_total":  round(kg_total,2),
-            "cx_total":  round(cx_total,0),
-            "notas":     notas,
-            "pm":        pm,
-            "clientes":  clientes_list,
-            "produtos":  produtos_list
+            "tipo": tipo, "fat_total": round(fat_total,2), "kg_total": round(kg_total,2),
+            "cx_total": round(kg_total/30,0), "notas": notas, "pm": pm,
+            "clientes": [{"nome": r.NOME_CLIENTE, "kg": round(r.kg,2), "fat": round(r.fat,2)} for r in clientes.itertuples()],
+            "produtos": [{"nome": r.DESC_PRODUTO, "kg": round(r.kg,2), "fat": round(r.fat,2)} for r in produtos.itertuples()]
         })
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-def is_chart_query(pergunta: str) -> bool:
-    """Detecta se o usuário quer um gráfico."""
-    pl = pergunta.lower()
-    return any(x in pl for x in [
-        'gráfico','grafico','chart','plotar','plot','visualiz',
-        'evolução','evolucao','tendencia','tendência','barra','linha','pizza','pie'
-    ])
-
-def is_pdf_query(pergunta: str) -> bool:
-    """Detecta se o usuário quer exportar PDF."""
-    pl = pergunta.lower()
-    return any(x in pl for x in ['pdf','exportar','exporta','gerar relatório','gerar relatorio','imprimir','download'])
-
-def is_pptx_query(pergunta: str) -> bool:
-    """Detecta se o usuário quer uma apresentação PowerPoint."""
-    pl = pergunta.lower()
-    return any(x in pl for x in [
-        'apresentação','apresentacao','powerpoint','pptx','ppt','slides','slide deck',
-        'deck','apresentar para','apresentar à','apresentar a diretoria',
-        'apresentar ao board','pitch','reunião de','reuniao de'
-    ])
-
-def gerar_pptx(conteudo_md: str) -> str:
-    """Gera apresentação PowerPoint executiva com layout Frinense a partir de Markdown."""
-    import subprocess, tempfile, os, re as _re
-
-    # Paleta Frinense
-    C_RED      = "C0392B"
-    C_RED_DRK  = "7B241C"
-    C_YELLOW   = "F5C800"
-    C_BLACK    = "1A1A1A"
-    C_DARK     = "1C2833"
-    C_WHITE    = "FFFFFF"
-    C_GRAY_L   = "F4F4F4"
-    C_GRAY_M   = "888888"
-    C_GRAY_D   = "444444"
-    C_GREEN    = "1A6B3A"
-
-    # Parseia Markdown em seções de slides
-    slides_raw = []
-    current = {"title": "", "subtitle": "", "items": [], "table": [], "kpis": []}
-    linhas = conteudo_md.split('\n')
-
-    for linha in linhas:
-        l = linha.strip()
-        if l.startswith('# ') and not l.startswith('## '):
-            if current["title"]:
-                slides_raw.append(dict(current))
-            current = {"title": l[2:].strip(), "subtitle": "", "items": [], "table": [], "kpis": []}
-        elif l.startswith('## '):
-            if current["title"]:
-                slides_raw.append(dict(current))
-            current = {"title": l[3:].strip(), "subtitle": "", "items": [], "table": [], "kpis": []}
-        elif l.startswith('### '):
-            current["subtitle"] = l[4:].strip()
-        elif l.startswith('| ') and '|' in l[1:]:
-            if not _re.match(r'^\|[\s\-\|:]+\|$', l):
-                cols = [c.strip() for c in l.strip('|').split('|')]
-                current["table"].append(cols)
-        elif l.startswith('- ') or l.startswith('* '):
-            current["items"].append(l[2:].strip())
-        elif l.startswith('**') and ':' in l:
-            current["kpis"].append(l.strip('*').strip())
-        elif l and not l.startswith('---'):
-            if current["subtitle"] == "" and current["title"]:
-                pass  # ignora texto solto por enquanto
-
-    if current["title"]:
-        slides_raw.append(dict(current))
-
-    # Gera JS para pptxgenjs
-    def esc(s):
-        return s.replace('\\','\\\\').replace('"','\\"').replace('\n','\\n').replace('\r','')
-
-    def strip_md(s):
-        s = _re.sub(r'\*\*(.+?)\*\*', r'\1', s)
-        s = _re.sub(r'\*(.+?)\*', r'\1', s)
-        return s.strip()
-
-    js_slides = []
-
-    for idx, slide in enumerate(slides_raw):
-        titulo = esc(strip_md(slide["title"]))
-        subtitulo = esc(strip_md(slide["subtitle"]))
-        items = [strip_md(x) for x in slide["items"]]
-        table = [[strip_md(c) for c in row] for row in slide["table"]]
-        kpis  = slide["kpis"]
-        is_first = (idx == 0)
-        is_last  = (idx == len(slides_raw) - 1)
-
-        lines = [f'  // ── Slide {idx+1}: {titulo[:40]} ──']
-        lines.append('  { const slide = pres.addSlide();')
-
-        # ── CAPA ──
-        if is_first:
-            lines.append(f'  slide.background = {{ color: "{C_RED_DRK}" }};')
-            # Faixa preta esquerda decorativa
-            lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:0, y:0, w:0.18, h:5.625, fill:{{ color:"{C_BLACK}" }}, line:{{ color:"{C_BLACK}" }} }});')
-            # Accent amarelo topo
-            lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:0, y:0, w:10, h:0.07, fill:{{ color:"{C_YELLOW}" }}, line:{{ color:"{C_YELLOW}" }} }});')
-            # Accent amarelo rodapé
-            lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:0, y:5.55, w:10, h:0.075, fill:{{ color:"{C_YELLOW}" }}, line:{{ color:"{C_YELLOW}" }} }});')
-            # Bloco título
-            lines.append(f'  slide.addText("{titulo}", {{ x:0.5, y:1.5, w:9, h:1.6, fontSize:42, fontFace:"Calibri", bold:true, color:"{C_WHITE}", valign:"middle", margin:0 }});')
-            if subtitulo:
-                lines.append(f'  slide.addText("{subtitulo}", {{ x:0.5, y:3.2, w:8, h:0.6, fontSize:18, fontFace:"Calibri", color:"FFCCCC", valign:"top", margin:0 }});')
-            # Data e empresa
-            from datetime import datetime as _dt
-            data_hoje = _dt.now().strftime('%d/%m/%Y')
-            lines.append(f'  slide.addText("Frinense Alimentos  ·  {data_hoje}  ·  Uso Interno", {{ x:0.5, y:5.0, w:9, h:0.4, fontSize:10, fontFace:"Calibri", color:"FFAAAA", align:"left", margin:0 }});')
-
-        # ── CONCLUSÃO / ÚLTIMO SLIDE ──
-        elif is_last:
-            lines.append(f'  slide.background = {{ color: "{C_DARK}" }};')
-            lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:0, y:0, w:0.18, h:5.625, fill:{{ color:"{C_RED}" }}, line:{{ color:"{C_RED}" }} }});')
-            lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:0, y:5.55, w:10, h:0.075, fill:{{ color:"{C_YELLOW}" }}, line:{{ color:"{C_YELLOW}" }} }});')
-            lines.append(f'  slide.addText("{titulo}", {{ x:0.5, y:1.8, w:9, h:1.4, fontSize:36, fontFace:"Calibri", bold:true, color:"{C_WHITE}", valign:"middle", align:"center", margin:0 }});')
-            if items:
-                bullets = [{{ "text": esc(x), "options": {{ "bullet": True, "breakLine": True, "fontSize": 15, "color": "DDDDDD" }} }} for x in items]
-                bullet_js = '[' + ','.join([f'{{ text: "{esc(x)}", options: {{ bullet: true, breakLine: true, fontSize: 15, color: "DDDDDD" }} }}' for x in items[:-1]] +
-                            [f'{{ text: "{esc(items[-1])}", options: {{ bullet: true, fontSize: 15, color: "DDDDDD" }} }}']) + ']'
-                lines.append(f'  slide.addText({bullet_js}, {{ x:1.5, y:3.2, w:7, h:1.8, fontFace:"Calibri", valign:"top", margin:0 }});')
-            lines.append(f'  slide.addText("IAF · Analista Comercial · Frinense Alimentos", {{ x:0.5, y:5.1, w:9, h:0.35, fontSize:9, fontFace:"Calibri", color:"777777", align:"center", margin:0 }});')
-
-        # ── SLIDES COM KPIs ──
-        elif len(kpis) >= 2:
-            lines.append(f'  slide.background = {{ color: "{C_GRAY_L}" }};')
-            # Header vermelho
-            lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:0, y:0, w:10, h:0.85, fill:{{ color:"{C_RED}" }}, line:{{ color:"{C_RED}" }} }});')
-            lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:0, y:0.83, w:10, h:0.055, fill:{{ color:"{C_YELLOW}" }}, line:{{ color:"{C_YELLOW}" }} }});')
-            lines.append(f'  slide.addText("{titulo}", {{ x:0.35, y:0.1, w:9.3, h:0.65, fontSize:22, fontFace:"Calibri", bold:true, color:"{C_WHITE}", valign:"middle", margin:0 }});')
-            # KPI cards
-            n_kpi = min(len(kpis), 4)
-            kw = 9.0 / n_kpi
-            for ki, kpi in enumerate(kpis[:n_kpi]):
-                parts = kpi.split(':', 1)
-                label = parts[0].strip() if len(parts) > 1 else f"KPI {ki+1}"
-                valor = parts[1].strip() if len(parts) > 1 else parts[0].strip()
-                kx = 0.4 + ki * kw
-                lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:{kx:.2f}, y:1.1, w:{kw-0.12:.2f}, h:1.5, fill:{{ color:"{C_WHITE}" }}, line:{{ color:"E0E0E0", width:0.5 }}, shadow:{{ type:"outer", blur:4, offset:2, angle:135, color:"000000", opacity:0.08 }} }});')
-                lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:{kx:.2f}, y:1.1, w:{kw-0.12:.2f}, h:0.1, fill:{{ color:"{C_RED}" }}, line:{{ color:"{C_RED}" }} }});')
-                lines.append(f'  slide.addText("{esc(valor)}", {{ x:{kx:.2f}, y:1.25, w:{kw-0.12:.2f}, h:0.85, fontSize:26, fontFace:"Calibri", bold:true, color:"{C_RED}", align:"center", valign:"middle", margin:0 }});')
-                lines.append(f'  slide.addText("{esc(label)}", {{ x:{kx:.2f}, y:2.1, w:{kw-0.12:.2f}, h:0.35, fontSize:10, fontFace:"Calibri", color:"{C_GRAY_M}", align:"center", margin:0 }});')
-            # Bullets abaixo dos KPIs
-            if items:
-                bullet_js = '[' + ','.join([f'{{ text: "{esc(x)}", options: {{ bullet: true, breakLine: true, fontSize: 13, color: "{C_GRAY_D}" }} }}' for x in items[:-1]] +
-                            [f'{{ text: "{esc(items[-1])}", options: {{ bullet: true, fontSize: 13, color: "{C_GRAY_D}" }} }}']) + ']'
-                lines.append(f'  slide.addText({bullet_js}, {{ x:0.5, y:2.85, w:9, h:2.4, fontFace:"Calibri", valign:"top", margin:0 }});')
-
-        # ── SLIDES COM TABELA ──
-        elif table and len(table) >= 2:
-            lines.append(f'  slide.background = {{ color: "{C_WHITE}" }};')
-            lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:0, y:0, w:10, h:0.85, fill:{{ color:"{C_RED}" }}, line:{{ color:"{C_RED}" }} }});')
-            lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:0, y:0.83, w:10, h:0.055, fill:{{ color:"{C_YELLOW}" }}, line:{{ color:"{C_YELLOW}" }} }});')
-            lines.append(f'  slide.addText("{titulo}", {{ x:0.35, y:0.1, w:9.3, h:0.65, fontSize:22, fontFace:"Calibri", bold:true, color:"{C_WHITE}", valign:"middle", margin:0 }});')
-            n_cols = max(len(r) for r in table)
-            table_data = []
-            for ri, row in enumerate(table[:16]):
-                row_norm = (row + [''] * n_cols)[:n_cols]
-                cells = []
-                for ci, cell in enumerate(row_norm):
-                    if ri == 0:
-                        cells.append(f'{{ text: "{esc(cell)}", options: {{ bold: true, color: "{C_WHITE}", fill: {{ color: "{C_RED}" }}, align: "center", fontSize: 11 }} }}')
-                    else:
-                        bg = C_WHITE if ri % 2 == 1 else "F9F9F9"
-                        align = "right" if ci > 0 else "left"
-                        cells.append(f'{{ text: "{esc(cell)}", options: {{ color: "{C_GRAY_D}", fill: {{ color: "{bg}" }}, align: "{align}", fontSize: 10 }} }}')
-                table_data.append('[' + ','.join(cells) + ']')
-            col_w = round(9.0 / n_cols, 2)
-            table_js = '[' + ','.join(table_data) + ']'
-            lines.append(f'  slide.addTable({table_js}, {{ x:0.4, y:1.05, w:9.2, colW:[{",".join([str(col_w)]*n_cols)}], border:{{ pt:0.5, color:"E0E0E0" }}, rowH:0.38 }});')
-            if subtitulo:
-                lines.append(f'  slide.addText("{subtitulo}", {{ x:0.4, y:5.2, w:9.2, h:0.3, fontSize:9, fontFace:"Calibri", color:"{C_GRAY_M}", italic:true, margin:0 }});')
-
-        # ── SLIDES COM BULLETS (padrão) ──
-        else:
-            lines.append(f'  slide.background = {{ color: "{C_WHITE}" }};')
-            lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:0, y:0, w:10, h:0.85, fill:{{ color:"{C_RED}" }}, line:{{ color:"{C_RED}" }} }});')
-            lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:0, y:0.83, w:10, h:0.055, fill:{{ color:"{C_YELLOW}" }}, line:{{ color:"{C_YELLOW}" }} }});')
-            lines.append(f'  slide.addText("{titulo}", {{ x:0.35, y:0.1, w:9.3, h:0.65, fontSize:22, fontFace:"Calibri", bold:true, color:"{C_WHITE}", valign:"middle", margin:0 }});')
-            if subtitulo:
-                lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:0.4, y:0.98, w:9.2, h:0.4, fill:{{ color:"F4F4F4" }}, line:{{ color:"E0E0E0", width:0.5 }} }});')
-                lines.append(f'  slide.addText("{subtitulo}", {{ x:0.5, y:0.98, w:9, h:0.4, fontSize:13, fontFace:"Calibri", color:"{C_GRAY_D}", italic:true, valign:"middle", margin:0 }});')
-            if items:
-                y_start = 1.55 if subtitulo else 1.1
-                # Dois colunas se muitos items
-                if len(items) > 5:
-                    mid = (len(items) + 1) // 2
-                    left_items  = items[:mid]
-                    right_items = items[mid:]
-                    for col_items, cx in [(left_items, 0.4), (right_items, 5.1)]:
-                        if col_items:
-                            bullet_js = '[' + ','.join([f'{{ text: "{esc(x)}", options: {{ bullet: true, breakLine: true, fontSize: 14, color: "{C_GRAY_D}" }} }}' for x in col_items[:-1]] +
-                                        [f'{{ text: "{esc(col_items[-1])}", options: {{ bullet: true, fontSize: 14, color: "{C_GRAY_D}" }} }}']) + ']'
-                            lines.append(f'  slide.addText({bullet_js}, {{ x:{cx}, y:{y_start:.2f}, w:4.5, h:{5.625-y_start-0.4:.2f}, fontFace:"Calibri", valign:"top", margin:0 }});')
-                else:
-                    bullet_js = '[' + ','.join([f'{{ text: "{esc(x)}", options: {{ bullet: true, breakLine: true, fontSize: 15, color: "{C_GRAY_D}", paraSpaceAfter: 6 }} }}' for x in items[:-1]] +
-                                [f'{{ text: "{esc(items[-1])}", options: {{ bullet: true, fontSize: 15, color: "{C_GRAY_D}", paraSpaceAfter: 6 }} }}']) + ']'
-                    lines.append(f'  slide.addText({bullet_js}, {{ x:0.5, y:{y_start:.2f}, w:9, h:{5.625-y_start-0.4:.2f}, fontFace:"Calibri", valign:"top", margin:0 }});')
-            elif not table:
-                lines.append(f'  slide.addText("Sem conteúdo disponível", {{ x:1, y:2.5, w:8, h:1, fontSize:16, color:"{C_GRAY_M}", align:"center", margin:0 }});')
-
-        # Rodapé em todos os slides exceto capa
-        if not is_first:
-            lines.append(f'  slide.addShape(pres.shapes.RECTANGLE, {{ x:0, y:5.45, w:10, h:0.175, fill:{{ color:"F0F0F0" }}, line:{{ color:"E0E0E0", width:0.5 }} }});')
-            lines.append(f'  slide.addText("IAF · Frinense Alimentos · Confidencial", {{ x:0.35, y:5.47, w:7, h:0.15, fontSize:7.5, fontFace:"Calibri", color:"{C_GRAY_M}", margin:0 }});')
-            lines.append(f'  slide.addText("{idx+1}", {{ x:9.5, y:5.47, w:0.4, h:0.15, fontSize:7.5, fontFace:"Calibri", color:"{C_GRAY_M}", align:"right", margin:0 }});')
-
-        lines.append('  }')
-        js_slides.append('\n'.join(lines))
-
-    js_code = f"""
-const pptxgen = require("pptxgenjs");
-const pres = new pptxgen();
-pres.layout = 'LAYOUT_16x9';
-pres.author = 'IAF - Frinense Alimentos';
-pres.title = 'Relatorio de Vendas';
-
-{chr(10).join(js_slides)}
-
-pres.writeFile({{ fileName: "/tmp/iaf_apresentacao.pptx" }}).then(() => {{
-  process.exit(0);
-}}).catch(e => {{
-  console.error(e);
-  process.exit(1);
-}});
-"""
-
-    try:
-        # Escreve e executa o script JS
-        js_path = '/tmp/gerar_pptx.js'
-        with open(js_path, 'w') as f:
-            f.write(js_code)
-
-        result = subprocess.run(
-            ['node', js_path],
-            capture_output=True, text=True, timeout=30
-        )
-        if result.returncode != 0:
-            raise Exception(f"Node error: {result.stderr[:500]}")
-
-        with open('/tmp/iaf_apresentacao.pptx', 'rb') as f:
-            pptx_b64 = base64.b64encode(f.read()).decode('utf-8')
-
-        from datetime import datetime as _dt
-        nome = f"IAF_Apresentacao_{_dt.now().strftime('%d%m%Y_%H%M')}.pptx"
-        html = (
-            f'<div style="margin-top:8px;">'
-            f'<a href="data:application/vnd.openxmlformats-officedocument.presentationml.presentation;base64,{pptx_b64}" '
-            f'download="{nome}" '
-            f'style="display:inline-flex;align-items:center;gap:6px;background:#1a5276;'
-            f'color:#fff;padding:9px 18px;border-radius:6px;text-decoration:none;'
-            f'font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;'
-            f'letter-spacing:.5px;border:1px solid rgba(245,200,0,.4);">'
-            f'&#8595; BAIXAR APRESENTAÇÃO (.pptx)</a>'
-            f'<span style="color:rgba(255,255,255,.4);font-size:10px;margin-left:10px;">{nome}</span>'
-            f'</div>'
-        )
-        return html
-
-    except Exception as e:
-        import traceback
-        return f"Erro ao gerar PPTX: {e}\n{traceback.format_exc()}"
-
-def gerar_pdf(historico_msgs: list) -> str:
-    """Gera PDF executivo profissional com layout Frinense."""
-    try:
-        from reportlab.lib.pagesizes import A4
-        from reportlab.lib.styles import ParagraphStyle
-        from reportlab.lib.units import cm
-        from reportlab.lib import colors
-        from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
-                                        Table, TableStyle, HRFlowable, KeepTogether)
-        from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT, TA_JUSTIFY
-        from reportlab.pdfgen import canvas as rl_canvas
-        import re as _re
-
-        ultima_resposta = ""
-        for msg in reversed(historico_msgs):
-            if msg.role == "assistant":
-                ultima_resposta = msg.content
-                break
-        if not ultima_resposta:
-            return None
-
-        C_RED      = colors.HexColor('#c0392b')
-        C_RED_DRK  = colors.HexColor('#7b241c')
-        C_YELLOW   = colors.HexColor('#f5c800')
-        C_BLACK    = colors.HexColor('#1a1a1a')
-        C_DARK     = colors.HexColor('#2c3e50')
-        C_GRAY_D   = colors.HexColor('#555555')
-        C_GRAY_M   = colors.HexColor('#888888')
-        C_GRAY_L   = colors.HexColor('#f4f4f4')
-        C_GRAY_LN  = colors.HexColor('#e0e0e0')
-        C_WHITE    = colors.white
-        C_GREEN    = colors.HexColor('#1a6b3a')
-        C_BLUE_DRK = colors.HexColor('#1a3a5c')
-
-        PAGE_W, PAGE_H = A4
-        ML = 1.8*cm
-        CONTENT_W = PAGE_W - 2*ML
-
-        def P(name, **kw):
-            d = dict(fontName='Helvetica', fontSize=9, leading=13,
-                     textColor=C_DARK, spaceAfter=2)
-            d.update(kw)
-            return ParagraphStyle(name, **d)
-
-        sH1    = P('h1', fontSize=15, fontName='Helvetica-Bold', textColor=C_RED,
-                   spaceBefore=10, spaceAfter=6, leading=19)
-        sH2    = P('h2', fontSize=11, fontName='Helvetica-Bold', textColor=C_WHITE,
-                   leading=14)
-        sH3    = P('h3', fontSize=10, fontName='Helvetica-Bold', textColor=C_DARK,
-                   spaceBefore=6, spaceAfter=2, leading=13)
-        sBody  = P('bd', fontSize=9, leading=14, spaceAfter=3, alignment=TA_JUSTIFY)
-        sBul   = P('bl', fontSize=9, leading=13, leftIndent=14, spaceAfter=3)
-        sSmall = P('sm', fontSize=7.5, textColor=C_GRAY_M, leading=10)
-        sKpiV  = P('kv', fontSize=16, fontName='Helvetica-Bold', textColor=C_RED,
-                   leading=20, alignment=TA_CENTER)
-        sKpiL  = P('kl', fontSize=7, textColor=C_GRAY_M, leading=9, alignment=TA_CENTER)
-        sKpiS  = P('ks', fontSize=8, textColor=C_GRAY_D, leading=10, alignment=TA_CENTER)
-        sTblH  = P('th', fontSize=8, fontName='Helvetica-Bold', textColor=C_WHITE,
-                   alignment=TA_CENTER, leading=11)
-        sTblD  = P('td', fontSize=8, textColor=C_DARK, alignment=TA_LEFT, leading=11)
-        sTblDR = P('tr', fontSize=8, textColor=C_DARK, alignment=TA_RIGHT, leading=11)
-
-        class FrinesseCanvas(rl_canvas.Canvas):
-            def __init__(self, *args, **kwargs):
-                super().__init__(*args, **kwargs)
-                self._saved_page_states = []
-            def showPage(self):
-                self._saved_page_states.append(dict(self.__dict__))
-                self._startPage()
-            def save(self):
-                total = len(self._saved_page_states)
-                for state in self._saved_page_states:
-                    self.__dict__.update(state)
-                    self._draw_page(total)
-                    super().showPage()
-                super().save()
-            def _draw_page(self, total):
-                self.saveState()
-                pg = self._pageNumber
-                # Header faixa vermelha
-                self.setFillColor(C_RED)
-                self.rect(0, PAGE_H - 1.7*cm, PAGE_W, 1.7*cm, fill=1, stroke=0)
-                # Accent top amarelo
-                self.setFillColor(C_YELLOW)
-                self.rect(0, PAGE_H - 0.2*cm, PAGE_W, 0.2*cm, fill=1, stroke=0)
-                # Coluna preta
-                self.setFillColor(C_BLACK)
-                self.rect(0, PAGE_H - 1.7*cm, 0.5*cm, 1.7*cm, fill=1, stroke=0)
-                # Textos
-                self.setFillColor(C_WHITE)
-                self.setFont('Helvetica-Bold', 11)
-                self.drawString(ML, PAGE_H - 1.05*cm, 'IAF  ANALISTA COMERCIAL')
-                self.setFont('Helvetica', 8)
-                self.setFillColor(colors.HexColor('#ffcccc'))
-                self.drawString(ML, PAGE_H - 1.42*cm, 'Frinense Alimentos - Relatorio de Vendas')
-                self.setFont('Helvetica', 7.5)
-                self.setFillColor(colors.HexColor('#ffdddd'))
-                data_str = datetime.now().strftime('%d/%m/%Y %H:%M')
-                self.drawRightString(PAGE_W - ML, PAGE_H - 1.05*cm, data_str)
-                self.setFillColor(C_YELLOW)
-                self.setFont('Helvetica-Bold', 7.5)
-                self.drawRightString(PAGE_W - ML, PAGE_H - 1.40*cm, f'Pagina {pg} de {total}')
-                # Footer
-                self.setFillColor(C_GRAY_L)
-                self.rect(0, 0, PAGE_W, 0.85*cm, fill=1, stroke=0)
-                self.setStrokeColor(C_GRAY_LN)
-                self.setLineWidth(0.5)
-                self.line(0, 0.85*cm, PAGE_W, 0.85*cm)
-                self.setStrokeColor(C_RED)
-                self.setLineWidth(2)
-                self.line(0, 0.85*cm, 2.5*cm, 0.85*cm)
-                self.setFont('Helvetica', 7)
-                self.setFillColor(C_GRAY_M)
-                self.drawCentredString(PAGE_W/2, 0.3*cm,
-                    'IAF  Frinense Alimentos  Documento gerado automaticamente  Uso interno')
-                self.restoreState()
-
-        buf = io.BytesIO()
-        doc = SimpleDocTemplate(buf, pagesize=A4,
-            leftMargin=ML, rightMargin=ML,
-            topMargin=2.0*cm, bottomMargin=1.1*cm,
-            title="IAF - Relatorio de Vendas Frinense")
-
-        story = []
-        kpi_buffer = []
-
-        def flush_kpis():
-            if not kpi_buffer: return
-            n = len(kpi_buffer)
-            col_w = CONTENT_W / n
-            rows = [
-                [Paragraph(k[0], sKpiL) for k in kpi_buffer],
-                [Paragraph(k[1], sKpiV) for k in kpi_buffer],
-                [Paragraph(k[2], sKpiS) for k in kpi_buffer],
-            ]
-            t = Table(rows, colWidths=[col_w]*n)
-            t.setStyle(TableStyle([
-                ('BACKGROUND',    (0,0), (-1,0), C_GRAY_L),
-                ('BACKGROUND',    (0,1), (-1,1), C_WHITE),
-                ('BACKGROUND',    (0,2), (-1,2), C_GRAY_L),
-                ('BOX',           (0,0), (-1,-1), 0.5, C_GRAY_LN),
-                ('LINEBEFORE',    (1,0), (-1,-1), 0.5, C_GRAY_LN),
-                ('LINEBELOW',     (0,0), (-1,0), 0.5, C_GRAY_LN),
-                ('LINEBELOW',     (0,1), (-1,1), 0.5, C_GRAY_LN),
-                ('ALIGN',         (0,0), (-1,-1), 'CENTER'),
-                ('VALIGN',        (0,0), (-1,-1), 'MIDDLE'),
-                ('TOPPADDING',    (0,0), (-1,0), 5),
-                ('BOTTOMPADDING', (0,0), (-1,0), 4),
-                ('TOPPADDING',    (0,1), (-1,1), 8),
-                ('BOTTOMPADDING', (0,1), (-1,1), 8),
-                ('TOPPADDING',    (0,2), (-1,2), 4),
-                ('BOTTOMPADDING', (0,2), (-1,2), 5),
-            ]))
-            story.append(KeepTogether([t, Spacer(1, 10)]))
-            kpi_buffer.clear()
-
-        def section_bar(txt, bg=None):
-            bg = bg or C_RED
-            bar = Table([[Paragraph(txt, sH2)]], colWidths=[CONTENT_W])
-            bar.setStyle(TableStyle([
-                ('BACKGROUND',    (0,0), (-1,-1), bg),
-                ('LEFTPADDING',   (0,0), (-1,-1), 10),
-                ('RIGHTPADDING',  (0,0), (-1,-1), 6),
-                ('TOPPADDING',    (0,0), (-1,-1), 7),
-                ('BOTTOMPADDING', (0,0), (-1,-1), 7),
-            ]))
-            story.append(Spacer(1, 9))
-            story.append(bar)
-            story.append(Spacer(1, 5))
-
-        def sub_bar(txt):
-            bar = Table([[Paragraph(txt, sH3)]], colWidths=[CONTENT_W])
-            bar.setStyle(TableStyle([
-                ('LINEBELOW',     (0,0), (-1,-1), 1, C_RED),
-                ('LEFTPADDING',   (0,0), (-1,-1), 2),
-                ('TOPPADDING',    (0,0), (-1,-1), 4),
-                ('BOTTOMPADDING', (0,0), (-1,-1), 4),
-            ]))
-            story.append(Spacer(1, 5))
-            story.append(bar)
-            story.append(Spacer(1, 3))
-
-        EMOJI_MAP = {
-            '\U0001f4ca':'[Graf]','\U0001f4c8':'[Alta]','\U0001f4c9':'[Baixa]',
-            '\u2705':'[OK]','\u274c':'[X]','\u26a0\ufe0f':'[!]','\u26a0':'[!]',
-            '\U0001f4a1':'[Insight]','\U0001f534':'[*]','\U0001f7e1':'[*]',
-            '\U0001f7e2':'[*]','\u2b50':'[*]','\U0001f3c6':'[Top]',
-            '\U0001f4e6':'[Prod]','\U0001f464':'[Vend]','\U0001f4b0':'[R$]',
-            '\U0001f3af':'[Alvo]','\U0001f4c5':'[Data]','\U0001f3ed':'[Fil]',
-            '\u25a0':'[+]','\u25a0\u25a0':'[-]',
-        }
-
-        def fmt_md(txt):
-            for e, s in EMOJI_MAP.items():
-                txt = txt.replace(e, s)
-            txt = txt.encode('latin-1', 'replace').decode('latin-1')
-            txt = _re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', txt)
-            txt = _re.sub(r'\*(.+?)\*', r'<i>\1</i>', txt)
-            return txt
-
-        # Capa
-        linhas = ultima_resposta.split('\n')
-        titulo_doc = "Relatorio de Vendas"
-        idx_start = 0
-        for ii, ll in enumerate(linhas[:6]):
-            ll2 = ll.strip()
-            if ll2.startswith('# ') and not ll2.startswith('## '):
-                titulo_doc = fmt_md(ll2[2:].strip())
-                idx_start = ii + 1; break
-            elif ll2.startswith('## '):
-                titulo_doc = fmt_md(ll2[3:].strip())
-                idx_start = ii + 1; break
-
-        capa = Table([[Paragraph(titulo_doc,
-                        P('cap', fontSize=17, fontName='Helvetica-Bold', textColor=C_WHITE,
-                          leading=21, alignment=TA_LEFT))]],
-                     colWidths=[CONTENT_W])
-        capa.setStyle(TableStyle([
-            ('BACKGROUND',    (0,0), (-1,-1), C_RED_DRK),
-            ('LEFTPADDING',   (0,0), (-1,-1), 14),
-            ('RIGHTPADDING',  (0,0), (-1,-1), 14),
-            ('TOPPADDING',    (0,0), (-1,-1), 14),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 14),
-            ('LINEBELOW',     (0,0), (-1,-1), 3, C_YELLOW),
-        ]))
-        story.append(capa)
-        story.append(Spacer(1, 10))
-
-        i = idx_start
-        while i < len(linhas):
-            linha = linhas[i].strip()
-
-            if '<img ' in linha or linha.startswith('<div') or linha.startswith('<a '):
-                i += 1; continue
-
-            if linha.startswith('# ') and not linha.startswith('## '):
-                flush_kpis()
-                story.append(Paragraph(fmt_md(linha[2:]), sH1))
-
-            elif linha.startswith('## '):
-                flush_kpis()
-                txt = linha[3:].strip()
-                kw_neg = ['fraco','oportunidade','risco','critico','falha','dependencia','queda','baixo']
-                kw_pos = ['forte','destaque','top','melhor','sucesso','alto','crescimento']
-                if any(x in txt.lower() for x in kw_neg):
-                    section_bar(fmt_md(txt), bg=C_BLUE_DRK)
-                elif any(x in txt.lower() for x in kw_pos):
-                    section_bar(fmt_md(txt), bg=C_GREEN)
-                else:
-                    section_bar(fmt_md(txt), bg=C_RED)
-
-            elif linha.startswith('### '):
-                flush_kpis()
-                sub_bar(fmt_md(linha[4:]))
-
-            elif _re.match(r'^-{3,}$', linha):
-                flush_kpis()
-                story.append(Spacer(1, 6))
-                story.append(HRFlowable(width="100%", thickness=1, color=C_GRAY_LN, spaceAfter=6))
-
-            elif linha.startswith('|') and '|' in linha[1:]:
-                flush_kpis()
-                tab_linhas = []
-                while i < len(linhas) and linhas[i].strip().startswith('|'):
-                    l = linhas[i].strip()
-                    if not _re.match(r'^\|[\s\-\|:]+\|$', l):
-                        cols = [fmt_md(c.strip()) for c in l.strip('|').split('|')]
-                        tab_linhas.append(cols)
-                    i += 1
-                if tab_linhas:
-                    nc = max(len(r) for r in tab_linhas)
-                    tab_linhas = [r + ['']*(nc - len(r)) for r in tab_linhas]
-                    if nc == 2:
-                        cws = [CONTENT_W*0.55, CONTENT_W*0.45]
-                    elif nc == 3:
-                        cws = [CONTENT_W*0.44, CONTENT_W*0.29, CONTENT_W*0.27]
-                    elif nc == 4:
-                        cws = [CONTENT_W*0.37, CONTENT_W*0.22, CONTENT_W*0.22, CONTENT_W*0.19]
-                    else:
-                        cws = [CONTENT_W/nc]*nc
-                    rows_p = []
-                    for ri, row in enumerate(tab_linhas):
-                        if ri == 0:
-                            rows_p.append([Paragraph(c, sTblH) for c in row])
-                        else:
-                            fmted = []
-                            for ci, c in enumerate(row):
-                                is_num = bool(_re.match(r'^[\d\-R\$%\+]', c.strip()))
-                                fmted.append(Paragraph(c, sTblDR if (is_num and ci > 0) else sTblD))
-                            rows_p.append(fmted)
-                    t = Table(rows_p, colWidths=cws, repeatRows=1)
-                    t.setStyle(TableStyle([
-                        ('BACKGROUND',    (0,0), (-1,0), C_RED),
-                        ('ROWBACKGROUNDS',(0,1), (-1,-1), [C_WHITE, C_GRAY_L]),
-                        ('GRID',          (0,0), (-1,-1), 0.3, C_GRAY_LN),
-                        ('LINEBELOW',     (0,0), (-1,0), 2, C_YELLOW),
-                        ('VALIGN',        (0,0), (-1,-1), 'MIDDLE'),
-                        ('TOPPADDING',    (0,0), (-1,-1), 5),
-                        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
-                        ('LEFTPADDING',   (0,0), (-1,-1), 7),
-                        ('RIGHTPADDING',  (0,0), (-1,-1), 7),
-                    ]))
-                    story.append(KeepTogether([t, Spacer(1, 8)]))
-                continue
-
-            elif linha.startswith('- ') or linha.startswith('* ') or linha.startswith('- '):
-                flush_kpis()
-                txt = fmt_md(linha[2:].strip())
-                icon = '<font color="#c0392b">&#9658;</font>' if txt.startswith('<b>') else '<font color="#aaaaaa">&#8226;</font>'
-                story.append(Paragraph(f'{icon}  {txt}', sBul))
-
-            elif linha == '':
-                story.append(Spacer(1, 4))
-
-            elif linha:
-                flush_kpis()
-                story.append(Paragraph(fmt_md(linha), sBody))
-
-            i += 1
-
-        flush_kpis()
-
-        story.append(Spacer(1, 16))
-        story.append(HRFlowable(width="100%", thickness=0.5, color=C_GRAY_LN))
-        story.append(Spacer(1, 4))
-        story.append(Paragraph(
-            f'Documento gerado pelo IAF em {datetime.now().strftime("%d/%m/%Y as %H:%M")}  |  Frinense Alimentos',
-            sSmall))
-
-        doc.build(story, canvasmaker=FrinesseCanvas)
-        buf.seek(0)
-        pdf_b64 = base64.b64encode(buf.read()).decode('utf-8')
-
-        nome = f"IAF_Relatorio_{datetime.now().strftime('%d%m%Y_%H%M')}.pdf"
-        html = (
-            f'<div style="margin-top:8px;">'
-            f'<a href="data:application/pdf;base64,{pdf_b64}" download="{nome}" '
-            f'style="display:inline-flex;align-items:center;gap:6px;background:#c0392b;'
-            f'color:#fff;padding:9px 18px;border-radius:6px;text-decoration:none;'
-            f'font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;'
-            f'letter-spacing:.5px;border:1px solid rgba(245,200,0,.4);">'
-            f'&#8595; BAIXAR PDF</a>'
-            f'<span style="color:rgba(255,255,255,.4);font-size:10px;margin-left:10px;">{nome}</span>'
-            f'</div>'
-        )
-        return html
-
-    except Exception as e:
-        import traceback
-        return f"Erro ao gerar PDF: {e}\n{traceback.format_exc()}"
-
-
-def gerar_grafico(dff: pd.DataFrame, pergunta: str) -> str:
-    """
-    Gera o gráfico mais adequado para a pergunta e retorna HTML com img base64.
-    Retorna None se não conseguir gerar.
-    """
-    pl = pergunta.lower()
-    if dff.empty:
-        return None
-
-    dff = dff.copy()
-    dff['DATA_MOVTO'] = pd.to_datetime(dff['DATA_MOVTO'], errors='coerce')
-
-    # ── Detecta dimensões pedidas ──
-    por_tipo   = any(x in pl for x in ['tipo','carne','divisao','divisão','categoria'])
-    por_filial = any(x in pl for x in ['filial','itap','bjesus','porc','trindade','unidade'])
-    por_prod   = any(x in pl for x in ['produto','products'])
-    por_vend   = any(x in pl for x in ['vendedor','representante'])
-    por_cliente= any(x in pl for x in ['cliente'])
-    usa_fat    = any(x in pl for x in ['faturamento','receita','valor','r$','financeiro'])
-    metrica    = 'VALOR_LIQUIDO' if usa_fat else 'QTDE_PRI'
-    label_met  = 'Faturamento (R$)' if usa_fat else 'Volume (kg)'
-
-    # ── Detecta granularidade temporal ──
-    span_dias = (dff['DATA_MOVTO'].max() - dff['DATA_MOVTO'].min()).days if len(dff) > 1 else 0
-    agrupar_por_mes = span_dias > 45  # mais de 45 dias → agrupa por mês
-
-    fig_title_extra = ""
-
-    try:
-        # === GRÁFICO 1: Evolução temporal por tipo de carne ===
-        if por_tipo or (not por_filial and not por_prod and not por_vend and not por_cliente):
-            col_dim = 'DESC_DIVISAO2' if 'DESC_DIVISAO2' in dff.columns else None
-
-            if agrupar_por_mes:
-                dff['periodo'] = dff['DATA_MOVTO'].dt.to_period('M').astype(str)
-                label_x = 'Mês'
-            else:
-                dff['periodo'] = dff['DATA_MOVTO'].dt.strftime('%d/%m')
-                label_x = 'Data'
-
-            if col_dim and por_tipo:
-                pivot = dff.groupby(['periodo', col_dim])[metrica].sum().unstack(fill_value=0)
-                # Mantém só top 6 tipos por volume total
-                top_cols = pivot.sum().nlargest(6).index
-                pivot = pivot[top_cols]
-                fig, ax = plt.subplots(figsize=(10, 5), facecolor=COR_BG)
-                for i, col in enumerate(pivot.columns):
-                    ax.plot(pivot.index, pivot[col], marker='o', markersize=4,
-                            color=CORES_SERIES[i % len(CORES_SERIES)], linewidth=2, label=col)
-                _setup_ax(ax, f"Evolução por Tipo de Carne — {label_met}")
-                ax.set_xlabel(label_x, color=COR_TEXTO)
-                ax.set_ylabel(label_met, color=COR_TEXTO)
-                ax.legend(fontsize=7, facecolor=COR_BG, labelcolor=COR_TEXTO, loc='upper left')
-                ax.yaxis.set_major_formatter(mticker.FuncFormatter(
-                    lambda v,_: f'R${v/1e6:.1f}M' if usa_fat else f'{v/1e3:.0f}t'))
-                plt.xticks(rotation=35, ha='right')
-            else:
-                # Sem dimensão extra — total por período
-                serie = dff.groupby('periodo')[metrica].sum()
-                fig, ax = plt.subplots(figsize=(10, 4), facecolor=COR_BG)
-                bars = ax.bar(serie.index, serie.values, color=COR_PRIMARIA, width=0.6)
-                # Destaca maior
-                max_idx = serie.values.argmax()
-                bars[max_idx].set_color(COR_SECUNDARIA)
-                _setup_ax(ax, f"Evolução de {label_met}")
-                ax.set_xlabel(label_x, color=COR_TEXTO)
-                ax.set_ylabel(label_met, color=COR_TEXTO)
-                ax.yaxis.set_major_formatter(mticker.FuncFormatter(
-                    lambda v,_: f'R${v/1e6:.1f}M' if usa_fat else f'{v/1e3:.0f}t'))
-                plt.xticks(rotation=35, ha='right')
-
-        # === GRÁFICO 2: Ranking por filial ===
-        elif por_filial:
-            grupo = dff.groupby('NOME_FILIAL')[metrica].sum().sort_values(ascending=True)
-            fig, ax = plt.subplots(figsize=(8, 4), facecolor=COR_BG)
-            bars = ax.barh(grupo.index, grupo.values, color=CORES_SERIES[:len(grupo)])
-            for bar, val in zip(bars, grupo.values):
-                ax.text(val * 1.01, bar.get_y() + bar.get_height()/2,
-                        f'R${val/1e6:.2f}M' if usa_fat else f'{val/1e3:.0f}t',
-                        va='center', color=COR_TEXTO, fontsize=8)
-            _setup_ax(ax, f"{label_met} por Filial")
-            ax.set_xlabel(label_met, color=COR_TEXTO)
-
-        # === GRÁFICO 3: Top produtos ===
-        elif por_prod:
-            top = dff.groupby('DESC_PRODUTO')[metrica].sum().nlargest(10).sort_values(ascending=True)
-            fig, ax = plt.subplots(figsize=(9, 6), facecolor=COR_BG)
-            ax.barh(top.index, top.values, color=COR_PRIMARIA)
-            ax.barh(top.index[-1:], top.values[-1:], color=COR_SECUNDARIA)  # destaca top 1
-            _setup_ax(ax, f"Top 10 Produtos — {label_met}")
-            ax.set_xlabel(label_met, color=COR_TEXTO)
-            ax.tick_params(axis='y', labelsize=7)
-            ax.xaxis.set_major_formatter(mticker.FuncFormatter(
-                lambda v,_: f'R${v/1e6:.1f}M' if usa_fat else f'{v/1e3:.0f}t'))
-
-        # === GRÁFICO 4: Top vendedores ===
-        elif por_vend:
-            top = dff.groupby('NOM_VENDEDOR')[metrica].sum().nlargest(10).sort_values(ascending=True)
-            fig, ax = plt.subplots(figsize=(9, 6), facecolor=COR_BG)
-            ax.barh(top.index, top.values, color=COR_PRIMARIA)
-            ax.barh(top.index[-1:], top.values[-1:], color=COR_SECUNDARIA)
-            _setup_ax(ax, f"Top 10 Vendedores — {label_met}")
-            ax.set_xlabel(label_met, color=COR_TEXTO)
-            ax.tick_params(axis='y', labelsize=7)
-            ax.xaxis.set_major_formatter(mticker.FuncFormatter(
-                lambda v,_: f'R${v/1e6:.1f}M' if usa_fat else f'{v/1e3:.0f}t'))
-
-        # === GRÁFICO 5: Top clientes ===
-        elif por_cliente:
-            top = dff.groupby('NOME_CLIENTE')[metrica].sum().nlargest(10).sort_values(ascending=True)
-            fig, ax = plt.subplots(figsize=(10, 6), facecolor=COR_BG)
-            ax.barh(top.index, top.values, color=COR_PRIMARIA)
-            ax.barh(top.index[-1:], top.values[-1:], color=COR_SECUNDARIA)
-            _setup_ax(ax, f"Top 10 Clientes — {label_met}")
-            ax.set_xlabel(label_met, color=COR_TEXTO)
-            ax.tick_params(axis='y', labelsize=7)
-            ax.xaxis.set_major_formatter(mticker.FuncFormatter(
-                lambda v,_: f'R${v/1e6:.1f}M' if usa_fat else f'{v/1e3:.0f}t'))
-
-        else:
-            return None
-
-        img_b64 = _fig_to_base64(fig)
-        return f'<img src="data:image/png;base64,{img_b64}" style="max-width:100%;border-radius:8px;margin-top:8px;" />'
-
-    except Exception as e:
-        return f"⚠️ Erro ao gerar gráfico: {e}"
-
-
-class Message(BaseModel):
-    role: str
-    content: str
-
-class ChatRequest(BaseModel):
-    messages: List[Message]
-    modo: str = "normal"  # normal | mengo | vasco
-
+# ─────────────────────────────────────────────
+#  ROUTE — /chat (nova arquitetura)
+# ─────────────────────────────────────────────
 @app.post("/chat")
 async def chat(req: ChatRequest):
     if not CLAUDE_KEY:
         raise HTTPException(status_code=500, detail="CLAUDE_API_KEY não configurada.")
 
     ultima = next((m.content for m in reversed(req.messages) if m.role == "user"), "")
+    historico = [{"role": m.role, "content": m.content} for m in req.messages]
 
-    # ── Handler especial: Quem Sou Eu ──
-    if ultima.startswith('__QUEM_SOU_EU__'):
+    # ── Saudação / Quem sou eu ──
+    if ultima.startswith('__QUEM_SOU_EU__') or any(x in ultima.lower() for x in ['quem é você','quem e voce','o que você faz','o que voce faz']):
         try:
             df = load_df()
-            csv_mod = ultima.split('csv_modificado=')[-1].strip() if 'csv_modificado=' in ultima else '-'
-            d_min = df['DATA_MOVTO'].dropna().min()
-            d_max = df['DATA_MOVTO'].dropna().max()
-            d_min_str = d_min.strftime('%d/%m/%Y') if pd.notna(d_min) else '-'
-            d_max_str = d_max.strftime('%d/%m/%Y') if pd.notna(d_max) else '-'
-            total = len(df)
-            resp_lines = [
-                "## Ola! Sou o IAF - Analista Comercial Frinense",
+            csv_mod = ultima.split('csv_modificado=')[-1].strip() if 'csv_modificado=' in ultima else '—'
+            d_min = df['DATA_MOVTO'].dropna().min().strftime('%d/%m/%Y')
+            d_max = df['DATA_MOVTO'].dropna().max().strftime('%d/%m/%Y')
+            resposta = "\n".join([
+                "## Olá! Sou o IAF — Analista Comercial Frinense",
                 "",
                 "Fui desenvolvido para analisar os dados comerciais da **Frinense Alimentos**.",
                 "",
                 "**O que posso fazer:**",
-                "- Analisar faturamento e volume por periodo, filial, vendedor ou cliente",
-                "- Identificar top clientes, produtos e regioes",
+                "- Analisar faturamento e volume por período, filial, vendedor ou cliente",
+                "- Identificar top clientes, produtos e regiões",
                 "- Detalhar notas fiscais e gerar DANFE em PDF",
-                "- Comparar desempenho entre filiais e periodos",
-                "- Criar rankings e relatorios comerciais",
+                "- Comparar desempenho entre filiais e períodos",
+                "- Criar rankings e relatórios comerciais",
                 "",
-                "---",
-                "",
-                "**Periodo de dados disponivel:**",
-                "- Primeiro registro: **" + d_min_str + "**",
-                "- Ultimo registro: **" + d_max_str + "**",
-                "- Total de registros: **" + f"{total:,}" + "**",
-                "",
-                "**Minha ultima atualizacao foi:** " + csv_mod,
-            ]
-            resposta = "\n".join(resp_lines)
+                f"**Período de dados disponível:** {d_min} até {d_max}",
+                f"**Total de registros:** {len(df):,}",
+                f"**Última atualização:** {csv_mod}",
+            ])
         except Exception as e:
-            resposta = "Erro ao carregar informacoes: " + str(e)
-        return JSONResponse(content={"content": [{"type": "text", "text": resposta}]})
+            resposta = f"Erro ao carregar informações: {e}"
+        return JSONResponse({"content": [{"type": "text", "text": resposta}]})
 
+    # ── Pergunta precisa de cliente? ──
+    df = load_df()
 
-    # Se a última mensagem não tem contexto temporal (ex: "1", "2", "sim", "ok", "resumo executivo"),
-    # busca no histórico recente (últimas 6 mensagens) para encontrar o período da conversa
-    def tem_contexto_temporal(texto: str) -> bool:
-        pl = texto.lower()
-        indicadores = ['janeiro','fevereiro','março','marco','abril','maio','junho','julho',
-                       'agosto','setembro','outubro','novembro','dezembro','mês passado','mes passado',
-                       'mês anterior','mes anterior','este mês','esse mês','este mes','esse mes',
-                       'semana passada','semana anterior','esta semana','essa semana',
-                       'ontem','hoje','trimestre','semestre','último mês','ultimo mes',
-                       r'\d{1,2}/\d{2}/\d{2,4}']
-        return (any(i in pl for i in indicadores[:-1])
-                or bool(re.search(indicadores[-1], pl))
-                or bool(re.search(r'[uú]ltimos?\s+\d+\s+(m[eê]s|dia|semana)', pl))
-                or bool(re.search(r'\b202[0-9]\b', pl)))  # ano explícito: 2025, 2026...
+    # ETAPA 1 — Interpretar
+    try:
+        filtro = await interpretar_pergunta(ultima, historico[:-1], df)
+    except Exception as e:
+        logging.error(f"[INTERPRETAR] erro: {e}")
+        filtro = {"tipo": "indefinido"}
 
-    pergunta_para_filtro = ultima
-    if not tem_contexto_temporal(ultima):
-        # Varre histórico do mais recente para o mais antigo
-        msgs_usuario = [m.content for m in reversed(req.messages) if m.role == "user"]
-        for msg_anterior in msgs_usuario[1:4]:  # pula a atual, olha até 3 anteriores
-            if tem_contexto_temporal(msg_anterior):
-                # Combina: período da mensagem anterior + filtros específicos da atual (CNPJ, cliente, etc.)
-                pergunta_para_filtro = msg_anterior + " " + ultima
-                break
+    logging.info(f"[FILTRO] {json.dumps(filtro, ensure_ascii=False)}")
 
-    # ── Se a pergunta atual menciona "dessa nota" sem número, tenta extrair NR NOTA do histórico ──
-    pl_ult = ultima.lower()
-    tem_ref_nota = any(x in pl_ult for x in ['dessa nota','desta nota','detalhe da nota','detalhes da nota',
-                                               'detalhes dessa','detalhe dessa','itens da nota','itens dessa'])
-    nr_nota_historico = None
-    if tem_ref_nota and not re.search(r'\d{4,8}', ultima):
-        # Procura número de nota em todas as mensagens (usuário e assistente)
-        for m in reversed(req.messages[:-1]):
-            match = re.search(r'\b(?:nr\.?\s*(?:nota\s*)?|nota\s*(?:fiscal\s*)?|num\.?\s*docto\s*)(\d{4,8})\b', m.content, re.IGNORECASE)
-            if not match:
-                # Tenta pegar qualquer número de 5-6 dígitos que pareça NR NOTA
-                match = re.search(r'\b(1[0-9]{4,5}|[2-9][0-9]{4,5})\b', m.content)
-            if match:
-                nr_nota_historico = match.group(1)
-                break
-    if nr_nota_historico:
-        pergunta_para_filtro = f"nota {nr_nota_historico} {pergunta_para_filtro}"
+    # Se precisa de cliente e não foi informado
+    if filtro.get("precisa_cliente") and not filtro.get("cliente") and not filtro.get("cnpj_raiz"):
+        return JSONResponse({"content": [{"type": "text", "text":
+            "Para qual cliente? Pode informar o nome ou CNPJ raiz (8 dígitos)."}]})
 
-    # ── Se usuário respondeu só com número de 8 dígitos e contexto anterior menciona "cnpj" ──
-    if re.match(r'^\s*\d{8,14}\s*$', ultima):
-        # Verifica se mensagem anterior (assistente ou usuário) menciona cnpj
-        msgs_recentes = [m.content for m in reversed(req.messages[:-1])][:3]
-        if any('cnpj' in m.lower() for m in msgs_recentes):
-            pergunta_para_filtro = f"cnpj {ultima.strip()}"
+    # Se período indefinido para resumo
+    if filtro.get("precisa_periodo") and not filtro.get("data_inicio"):
+        return JSONResponse({"content": [{"type": "text", "text":
+            "Qual período você quer analisar? Ex: março 2026, esta semana, últimos 30 dias..."}]})
 
+    # Nota não encontrada
+    if filtro.get("nr_nota"):
+        if 'NUM_DOCTO' in df.columns:
+            encontrou = (df['NUM_DOCTO'].astype(str).str.strip() == str(filtro["nr_nota"]).strip()).sum()
+            if encontrou == 0:
+                return JSONResponse({"content": [{"type": "text", "text":
+                    f"❌ Nota **{filtro['nr_nota']}** não encontrada nos dados disponíveis."}]})
+
+    # ETAPA 2 — Calcular
+    try:
+        resultado = calcular(df, filtro)
+    except Exception as e:
+        logging.error(f"[CALCULAR] erro: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro ao calcular dados: {e}")
+
+    # Se sem dados
+    if resultado.get("sem_dados"):
+        return JSONResponse({"content": [{"type": "text", "text":
+            "⚠️ Sem dados disponíveis para o período/filtro solicitado. Verifique o período ou tente outro filtro."}]})
+
+    # ETAPA 3 — Narrar
+    try:
+        resposta_texto = await narrar(ultima, resultado, historico[:-1], req.modo)
+    except Exception as e:
+        logging.error(f"[NARRAR] erro: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro ao narrar: {e}")
+
+    return JSONResponse({
+        "id": "iaf-response",
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "text", "text": resposta_texto}],
+        "model": "iaf-v2",
+        "stop_reason": "end_turn"
+    })
+
+# ─────────────────────────────────────────────
+#  ROUTES — DEBUG
+# ─────────────────────────────────────────────
+@app.get("/debug-csv")
+def debug_csv():
     try:
         df = load_df()
-        import logging
-        anos_no_df = sorted(df['DATA_MOVTO'].dt.year.dropna().unique().tolist()) if 'DATA_MOVTO' in df.columns else []
-        logging.warning(f"[IAF DEBUG] ultima={ultima!r} | pergunta_para_filtro={pergunta_para_filtro!r} | df total={len(df)} | anos_no_df={anos_no_df}")
-        # Log vendedores disponíveis em 2025
-        if '2025' in pergunta_para_filtro:
-            df2025 = df[df['DATA_MOVTO'].dt.year == 2025]
-            vends = sorted(df2025['NOM_VENDEDOR'].dropna().unique().tolist()) if 'NOM_VENDEDOR' in df2025.columns else []
-            logging.warning(f"[IAF DEBUG] vendedores em 2025 ({len(df2025)} regs): {vends[:20]}")
-        ctx_filtro = {}
-        dff = filter_for_chat(df, pergunta_para_filtro, ctx_filtro)
-        import re as _re2
-        anos_debug = _re2.findall(r'\b(202[0-9])\b', pergunta_para_filtro)
-        logging.warning(f"[IAF DEBUG] dff apos filter_for_chat={len(dff)} | anos_detectados={anos_debug}")
-        # Log CPF_CGC para diagnóstico de busca por CNPJ
-        if 'cnpj' in pergunta_para_filtro.lower() and 'CPF_CGC' in df.columns:
-            amostras = df['CPF_CGC'].dropna().astype(str).unique()[:5].tolist()
-            logging.warning(f"[IAF DEBUG] CPF_CGC amostras={amostras}")
-            # Busca específica pela raiz mencionada
-            m_raiz_log = re.search(r'cnpj\s*(?:raiz\s*)?[:\s]*(\d{8,14})', pergunta_para_filtro.lower())
-            if m_raiz_log:
-                raiz_log = re.sub(r'\D','',m_raiz_log.group(1))[:8]
-                col_limpa = df['CPF_CGC'].astype(str).str.replace(r'\D','',regex=True)
-                encontrados = df[col_limpa.str.startswith(raiz_log)]['NOME_CLIENTE'].unique()[:3].tolist()
-                logging.warning(f"[IAF DEBUG] raiz={raiz_log} → clientes encontrados no df TOTAL: {encontrados}")
-            # Mostra CPF_CGC real do Atakarejo para diagnóstico
-            mask_atak = df['NOME_CLIENTE'].str.lower().str.contains('atakarejo', na=False)
-            if mask_atak.sum() > 0:
-                cnpjs_atak = df[mask_atak]['CPF_CGC'].dropna().astype(str).unique()[:5].tolist()
-                logging.warning(f"[IAF DEBUG] CPF_CGC do ATAKAREJO no CSV: {cnpjs_atak}")
-        n = len(dff)
-
-        # ── PDF / PPTX: flags para processar após Claude gerar o conteúdo ──
-        gerar_pdf_apos_claude  = is_pdf_query(ultima)
-        gerar_pptx_apos_claude = is_pptx_query(ultima) and not gerar_pdf_apos_claude
-
-        # ── CONSULTA DE CNPJ: intercepta antes de chamar Claude — zero tokens ──
-        m_cnpj_query = re.search(
-            r'(?:qual|me\s+(?:diz|fala|passa|mostra?)|cnpj|cpf.?cgc)\b.{0,30}'
-            r'(?:cnpj|cpf.?cgc|raiz).{0,20}(?:cliente[:\s]+|do\s+|da\s+|de\s+)?'
-            r'([a-záéíóúâêîôûãõç0-9\s]{3,40})',
-            ultima.lower()
-        )
-        # Também detecta padrão simples: "qual cnpj raiz do atakarejo"
-        m_cnpj_simple = re.search(
-            r'cnpj\s*(?:raiz\s*)?(?:do?|da)?\s*([a-záéíóúâêîôûãõç][a-záéíóúâêîôûãõç0-9\s]{2,30})',
-            ultima.lower()
-        )
-        nome_para_cnpj = None
-        if m_cnpj_simple:
-            nome_para_cnpj = m_cnpj_simple.group(1).strip()
-        elif m_cnpj_query:
-            nome_para_cnpj = m_cnpj_query.group(1).strip()
-
-        if nome_para_cnpj and 'CPF_CGC' in dff.columns and 'NOME_CLIENTE' in dff.columns:
-            # Busca o cliente pelo nome
-            mask_cli = df['NOME_CLIENTE'].str.lower().str.contains(nome_para_cnpj[:8], na=False)
-            if mask_cli.sum() > 0:
-                rows = df[mask_cli][['NOME_CLIENTE','CPF_CGC']].dropna()
-                rows['raiz'] = rows['CPF_CGC'].astype(str).str.replace(r'\D','',regex=True).str[:8]
-                raizes = rows.groupby('raiz')['NOME_CLIENTE'].first().reset_index()
-                linhas = []
-                for _, r in raizes.iterrows():
-                    linhas.append(f"**{r['NOME_CLIENTE']}** — CNPJ raiz: `{r['raiz']}`")
-                resposta_md = "\n".join(linhas) if linhas else f"Nenhum cliente encontrado com '{nome_para_cnpj}'."
-                return JSONResponse({
-                    "id": "cnpj_query",
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": resposta_md}],
-                    "model": "local-lookup",
-                    "stop_reason": "end_turn"
-                })
-
-        # ── GRÁFICO: intercepta antes de chamar Claude — zero tokens ──
-        if is_chart_query(ultima):
-            html_grafico = gerar_grafico(dff, ultima)
-            if html_grafico:
-                # Monta resposta simulando formato Claude
-                d_min = dff['DATA_MOVTO'].min()
-                d_max = dff['DATA_MOVTO'].max()
-                periodo_str = ""
-                if pd.notna(d_min) and pd.notna(d_max):
-                    if d_min.date() == d_max.date():
-                        periodo_str = d_min.strftime('%d/%m/%y')
-                    else:
-                        periodo_str = f"{d_min.strftime('%d/%m/%y')} a {d_max.strftime('%d/%m/%y')}"
-                resposta_md = f"📊 **Gráfico gerado** — {periodo_str} ({n:,} registros)\n\n{html_grafico}"
-                return JSONResponse({
-                    "id": "grafico",
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": resposta_md}],
-                    "model": "local-matplotlib",
-                    "stop_reason": "end_turn"
-                })
-
-
-
-        # Período real dos dados filtrados
-        periodo_label = ""
-        if n > 0 and 'DATA_MOVTO' in dff.columns:
-            d_min = dff['DATA_MOVTO'].min()
-            d_max = dff['DATA_MOVTO'].max()
-            if pd.notna(d_min) and pd.notna(d_max):
-                if d_min.date() == d_max.date():
-                    periodo_label = f"Período: {d_min.strftime('%d/%m/%y')}"
-                else:
-                    periodo_label = f"Período disponível: {d_min.strftime('%d/%m/%y')} a {d_max.strftime('%d/%m/%y')}"
-
-        # Para resumos com muitos dados, usa agregação em vez de CSV bruto
-        # Verifica se vendedor não foi encontrado
-        vendedor_nao_encontrado = getattr(dff, '_iaf_vendedor_nao_encontrado', None)
-        aviso_extra = ""
-        if vendedor_nao_encontrado or (n == 0 and re.search(r'vendedor', pergunta_para_filtro.lower())):
-            nome_buscado = vendedor_nao_encontrado or "informado"
-            try:
-                df_periodo = filter_for_chat(df, pergunta_para_filtro.lower().replace('vendedor','').strip())
-                vends_disp = df_periodo['NOM_VENDEDOR'].dropna().value_counts().head(5).index.tolist() if 'NOM_VENDEDOR' in df_periodo.columns else []
-                vends_str = " | ".join(vends_disp) if vends_disp else "nenhum"
-            except:
-                vends_str = "indisponível"
-            aviso_extra = f" | ⚠️ VENDEDOR '{nome_buscado.upper()}' NÃO LOCALIZADO — sugerir busca por código (ex: 'vendedor cod XXXX') | Vendedores disponíveis no período: {vends_str}"
-
-        # Verifica se cliente não foi encontrado (flag escrita no ctx pelo filter_for_chat)
-        cli_nao_encontrado = ctx_filtro.get('cliente_nao_encontrado')
-        if cli_nao_encontrado:
-            nome_cli_buscado = cli_nao_encontrado[0] if isinstance(cli_nao_encontrado, (list, tuple)) else cli_nao_encontrado
-            aviso_extra += f" | ⚠️ CLIENTE '{str(nome_cli_buscado).upper()}' NÃO ENCONTRADO — pergunte o nome completo ou CNPJ"
-
-        # Aviso genérico do ctx (ex: CNPJ sem coluna)
-        if ctx_filtro.get('aviso'):
-            aviso_extra += f" | {ctx_filtro['aviso']}"
-
-        is_nota_query = any(x in pergunta_para_filtro.lower() for x in [
-            'última nota','ultima nota','último pedido','ultimo pedido',
-            'nota ','nr nota','nr_nota','numero da nota','número da nota',
-            'dessa nota','desta nota','detalhe da nota','detalhes da nota',
-            'detalhes dessa','detalhe dessa','itens da nota','itens dessa nota'
-        ]) or bool(re.search(r'\bnr?\s*(?:nota|docto|doc)?\s*[:\s#]?\s*\d{3,8}\b', pergunta_para_filtro.lower()))
-
-        if is_nota_query:
-            # Verifica se a nota foi encontrada no CSV ANTES de chamar o Claude
-            m_nr = re.search(r'\b(\d{4,8})\b', pergunta_para_filtro)
-            if m_nr and 'NUM_DOCTO' in dff.columns:
-                nr_buscado = m_nr.group(1)
-                encontrou = (dff['NUM_DOCTO'].astype(str).str.strip() == nr_buscado).sum()
-                if encontrou == 0:
-                    # Nota não existe no CSV — retorna mensagem direta sem gastar tokens
-                    from fastapi.responses import JSONResponse as _JR
-                    return _JR(content={"content": [{"type": "text", "text":
-                        f"❌ Nota **{nr_buscado}** não encontrada nos dados disponíveis.\n\n"
-                        f"Verifique o número e tente novamente, ou informe um período diferente."
-                    }]})
-            # Agrega itens da nota — evita estouro de tokens
-            sales_data = aggregate_nota(dff)
-            data_label = f"NOTA FISCAL{' | ' + periodo_label if periodo_label else ''}{aviso_extra}"
-        elif (n > 1500 or is_summary_query(pergunta_para_filtro) or is_summary_query(ultima)):
-            sales_data = aggregate_for_summary(dff)
-            data_label = f"DADOS AGREGADOS ({n} registros originais){' | ' + periodo_label if periodo_label else ''}{aviso_extra}"
-        else:
-            dff = dff.copy()
-            dff['DATA_MOVTO'] = dff['DATA_MOVTO'].dt.strftime('%d/%m/%y')
-            sales_data = dff.to_csv(sep=';', index=False)
-            data_label = f"{n} registros{' | ' + periodo_label if periodo_label else ''}{aviso_extra}"
+        filiais = df['NOME_FILIAL'].unique().tolist() if 'NOME_FILIAL' in df.columns else []
+        meses = sorted(df['DATA_MOVTO'].dt.to_period('M').dropna().unique().astype(str).tolist())
+        cache_age = round(time.time() - _cache["ts"], 0) if _cache["ts"] else None
+        return JSONResponse({"file_id": FILE_ID, "total_linhas": len(df),
+                             "filiais": filiais, "meses": meses,
+                             "cache_age_segundos": cache_age})
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao carregar dados: {e}")
+        return JSONResponse({"erro": str(e)})
 
-    # Personalidade extra por modo
-    if req.modo == "mengo":
-        personalidade = """
-- MODO NAÇÃO ATIVADO 🔴⚫: Você é torcedor fanático do Flamengo! As análises são corretas e profissionais, MAS você tempera com referências rubro-negras
-- Compare desempenhos com craques do Mengão: volumes altos = "digno de Gabigol", crescimento = "aceleração de Bruno Henrique", consistência = "solidez de Arrascaeta"
-- Momentos históricos: título da Libertadores 2019, Maracanã lotado, "É campeão!"
-- Use expressões da torcida: "Que Dia!", "Urubu voou!", "A Nação agradece!"
-- Emojis: 🔴⚫🦅 ocasionalmente
-- Mas NUNCA sacrifique a precisão dos dados pela empolgação"""
-    elif req.modo == "vasco":
-        personalidade = """
-- MODO GIGANTE DA COLINA ATIVADO ⬛⬜: Você é torcedor apaixonado do Vasco da Gama! As análises são corretas e profissionais, MAS você tempera com referências vascaínas
-- Compare desempenhos com ídolos do Vasco: volumes expressivos = "na força de Romário", precisão = "fineza de Juninho Pernambucano", volume crescente = "na raça de Edmundo"
-- Momentos históricos: tetracampeão brasileiro, Maracanã, "São Januário é uma festa!"
-- Use expressões da torcida: "Gigante!", "Colina Sagrada!", "Vasco é Vasco!"
-- Emojis: ⬛⬜⚔️ ocasionalmente
-- Mas NUNCA sacrifique a precisão dos dados pela empolgação"""
-    else:
-        personalidade = ""
-
-    system = f"""Você é o IAF, Analista Comercial Sênior da Frinense Alimentos.
-
-## IDENTIDADE E POSTURA
-- Especialista em indicadores comerciais, foco em volume de vendas (kg)
-- Tom executivo e direto — sem rodeios, sem introduções longas, sem enrolação
-- Prioriza volume (kg) antes de valor financeiro
-- Nunca inventa dados. Se não tiver dados suficientes, diz claramente
-- Raciocínio de gerência comercial: sempre conecta dados com decisão de negócio
-
-## FORMATO PADRÃO DE RESPOSTAS
-- Perguntas simples (1 dado, 1 métrica) → resposta CURTA, máximo 3-4 linhas
-- Análises (período, produto, cliente) → estrutura: Resumo 2 linhas → Tabela/Ranking → Insight
-- Análises completas (solicitadas explicitamente) → estrutura completa com seções ## 
-- NUNCA comece com "Olá", "Claro!", "Com prazer" — vá direto ao dado
-- Use Markdown: ## títulos, **negrito**, tabelas com | Col |
-- Valores: R$ X.XXX,XX | Quantidades: X.XXX,XX kg | Datas: DD/MM/AA
-
-## COMPARATIVO AUTOMÁTICO
-- Sempre que apresentar dados de um período, calcule e exiba a variação vs. período anterior equivalente
-- Ex: hoje vs ontem, semana atual vs semana anterior, mês atual vs mês anterior
-- Formato: "29.324 kg (+12% vs ontem)" ou "R$ 1,06M (-8% vs semana passada)"
-- Se não houver dados do período anterior, omita a variação silenciosamente
-
-## ALERTAS PROATIVOS
-- Se detectar anomalia nos dados (queda/alta acima de 20%, cliente sem compra há mais de 7 dias, produto zerado, filial abaixo da média), mencione no insight mesmo sem ser perguntado
-- Formato: "⚠️ Atenção: [anomalia detectada]"
-
-## MÉTRICAS OBRIGATÓRIAS
-- PREÇO MÉDIO (R$/kg): calcule como VALOR_LIQUIDO / QTDE_PRI em toda análise de produto, cliente ou vendedor
-- CAIXAS (CX30): sempre exiba cx30 = kg/30 junto com kg. Ex: '29.324 kg | 977 cx30'
-- Filiais: ITAP (Itaperuna), BJESUS (Bom Jesus), PORC (Porciúncula), TRINDADE (Trindade)
-- TOTAIS OBRIGATÓRIOS: toda tabela DEVE ter linha final "| **TOTAIS** |" com somas de todas colunas numéricas — NUNCA omita
-- PREVISÃO DE FECHAMENTO: quando os dados contiverem seção "## PREVISÃO DE FECHAMENTO DO MÊS", SEMPRE reproduza essa seção COMPLETA na resposta — é obrigatória, nunca omita. Mostre a tabela com Realizado e Previsão Fechamento
-
-## INSIGHT FINAL
-- Finalize SEMPRE com 1 insight executivo precedido de "💡 Insight:" em linha separada
-- Seja específico: cite dia (DD/MM/AA), NR NOTA, produto ou cliente quando relevante
-- O insight deve sugerir uma AÇÃO ou destacar uma OPORTUNIDADE, não apenas repetir dados
-
-## PAINEL DE ANÁLISE (após cada resposta com tabelas)
-- Após qualquer resposta com tabelas, adicione uma seção "📊 ANÁLISE RÁPIDA:" com 3 a 5 bullets concisos
-- Formato obrigatório — cada bullet em linha separada:
-  - 🔝 Destaque: [melhor dia/cliente/produto com valor]
-  - 📉 Atenção: [pior resultado ou queda relevante]
-  - 📈 Tendência: [padrão observado nos dados]
-  - 💰 Ticket médio: [R$/kg médio e comparativo]
-  - ⚠️ Alerta: [só se houver anomalia real, caso contrário omita]
-
-## COMPORTAMENTOS ESPECÍFICOS
-- "Últimas vendas de [cliente]": tabela DATA | NR NOTA | COD PRODUTO | DESCRIÇÃO | QTDE kg | CX | R$/kg — últimos 15 registros, data decrescente
-- Período sem detalhe especificado (mensal/trimestral/anual): ofereça 4 opções antes de processar: "1) Resumo executivo 2) Análise por dia 3) Ranking produtos/vendedores 4) Comparativo filiais"
-- EXCEÇÃO: se o usuário já especificou o que quer ("resumo", "ranking", "análise detalhada"), processe direto
-- Filtro UF: reconhece siglas (ES, RJ...) e nomes por extenso. Destaque: volume, faturamento, clientes, produtos, cidades
-- Busca por CNPJ: o CSV TEM coluna CNPJ (campo CPF_CGC). Aceita "cnpj 73849952" (raiz 8 dígitos) ou completo. NUNCA diga que o CSV não tem CNPJ. Se os dados retornados já estiverem filtrados por CNPJ, analise normalmente sem comentar sobre a coluna.
-- Vendedor não encontrado: sugira busca por código e liste até 5 disponíveis no período
-- Apresente dados disponíveis SEM mencionar o que não existe. Nunca diga "não tenho dados de X"
-- "Análise de [cliente] em [período]": se os dados já vierem filtrados por cliente (1 único NOME_CLIENTE), exiba tabela completa de todas as compras (DATA | NR NOTA | PRODUTO | KG | CX | R$ | R$/kg), depois totais e comparativo. Não resuma — mostre tudo.
-- "Ontem" / períodos sem movimento: se os dados recebidos forem de uma data diferente do dia literal pedido, processe normalmente e informe apenas UMA linha no início: "_(Dados de DD/MM/AA — dia útil anterior disponível)_". Não peça confirmação, não ofereça opções, vá direto à análise.
-
-## DETALHE DE NOTA FISCAL
-- Quando o usuário pedir detalhes de uma nota: exiba APENAS os dados exatos que estão nos dados fornecidos. NUNCA adicione, invente ou misture dados de outros clientes ou notas. O CLIENTE correto é o que aparece no campo NOME_CLIENTE dos dados. Formato OBRIGATÓRIO — siga exatamente este modelo com cada linha separada:
-
-## NOTA FISCAL [NR] · [DATA]
-**Filial:** [FILIAL] | **Cliente:** [CLIENTE] | **Vendedor:** [VENDEDOR]
-
-| # | PRODUTO | COD | DIVISÃO | QTDE kg | CX | VALOR | R$/kg |
-|---|---------|-----|---------|---------|----|----|-------|
-| 1 | [produto] | [cod] | [div] | [kg] | [cx] | [valor] | [pm] |
-| **TOTAIS** | | | | [soma kg] | [soma cx] | [soma valor] | [pm] |
-
-ATENÇÃO: A linha separadora |---|---| é OBRIGATÓRIA. Cada linha da tabela deve ter sua própria quebra de linha. NUNCA junte múltiplas linhas em uma só. NUNCA escreva a tabela como texto corrido.
-Se houver CHAVE_ACESSO_NFE nos dados, adicione após a tabela com linha em branco antes: "DANFE:[chave 44 dígitos sem espaços]"
-- Quando o usuário pedir "detalhes dessa nota" ou "detalhe da nota X" mas os dados contiverem MÚLTIPLOS NUM_DOCTO: pergunte "Qual o número da nota? (ex: nr 184828)" — NÃO diga que não tem acesso aos dados
-- NUNCA diga que não tem acesso a detalhes transacionais — você tem acesso completo ao CSV com todos os itens
-
-{personalidade}
-DADOS ({data_label}):
-{sales_data}"""
-
-    # Instrução extra por tipo de output
-    if gerar_pdf_apos_claude:
-        system += "\n\nIMPORTANTE: O usuário quer um PDF executivo. Gere análise COMPLETA e DETALHADA em Markdown puro (sem HTML, sem base64). Estrutura: # Título principal → ## Seções → ### Subseções → tabelas com | → bullets com -. Seja extenso, analítico e com linguagem de relatório executivo para diretoria. Inclua: resumo executivo, KPIs principais (**Label**: Valor), análise por filial, top clientes, top produtos, análise temporal, pontos de atenção e recomendações."
-        max_tok = 4000
-    elif gerar_pptx_apos_claude:
-        system += "\n\nIMPORTANTE: O usuário quer uma APRESENTAÇÃO POWERPOINT para diretoria. Estruture o conteúdo em slides usando Markdown:\n- Use # para título de cada slide (será 1 slide)\n- Use ## para slides de seção\n- Use **KPI**: Valor para métricas que virão como cards visuais (máx 4 por slide)\n- Use - bullets para listas (máx 6 itens por slide — seja conciso)\n- Use tabelas | Col | para dados tabulares (máx 15 linhas)\n- Estrutura recomendada: 1) Capa (# Título), 2) Resumo Executivo com KPIs, 3) Análise por Filial, 4) Top Clientes, 5) Top Produtos, 6) Análise Temporal, 7) Pontos de Atenção, 8) Conclusão/Recomendações\n- Linguagem executiva, focada em DECISÃO. Cada slide deve ter 1 mensagem clara.\n- Máximo 10-12 slides. Qualidade acima de quantidade."
-        max_tok = 4000
-    elif is_nota_query:
-        max_tok = 2500  # notas precisam de mais espaço para formatar tabela
-    else:
-        max_tok = 1500
-
-    async with httpx.AsyncClient(timeout=90) as client:
-        r = await client.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={"Content-Type":"application/json",
-                     "x-api-key":CLAUDE_KEY,
-                     "anthropic-version":"2023-06-01"},
-            json={"model":"claude-haiku-4-5-20251001",
-                  "max_tokens":max_tok,
-                  "system":system,
-                  "messages":[m.dict() for m in req.messages]}
-        )
-    if r.status_code != 200:
-        raise HTTPException(status_code=r.status_code, detail=r.text)
-
-    resposta_json = r.json()
-
-    # ── PDF: pega conteúdo gerado pelo Claude e converte ──
-    if gerar_pdf_apos_claude:
-        try:
-            texto_claude = ""
-            for bloco in resposta_json.get("content", []):
-                if bloco.get("type") == "text":
-                    texto_claude += bloco["text"]
-
-            if texto_claude:
-                class _FakeMsg:
-                    def __init__(self, role, content):
-                        self.role = role
-                        self.content = content
-
-                msgs_com_resposta = list(req.messages) + [_FakeMsg("assistant", texto_claude)]
-                html_pdf = gerar_pdf(msgs_com_resposta)
-
-                if html_pdf:
-                    resposta_com_pdf = f"📄 **Relatório PDF gerado!**\n\n{html_pdf}\n\n---\n\n{texto_claude}"
-                    return JSONResponse({
-                        "id": resposta_json.get("id", "pdf"),
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [{"type": "text", "text": resposta_com_pdf}],
-                        "model": resposta_json.get("model", "local-reportlab"),
-                        "stop_reason": "end_turn"
-                    })
-        except Exception as e_pdf:
-            import logging
-            logging.warning(f"[IAF PDF] Erro ao gerar PDF após Claude: {e_pdf}")
-
-    # ── PPTX: pega conteúdo gerado pelo Claude e converte ──
-    if gerar_pptx_apos_claude:
-        try:
-            texto_claude = ""
-            for bloco in resposta_json.get("content", []):
-                if bloco.get("type") == "text":
-                    texto_claude += bloco["text"]
-
-            if texto_claude:
-                html_pptx = gerar_pptx(texto_claude)
-                if html_pptx:
-                    n_slides = texto_claude.count('\n# ') + texto_claude.count('\n## ') + 1
-                    resposta_com_pptx = f"📊 **Apresentação gerada!** ({n_slides} slides)\n\n{html_pptx}\n\n---\n\n{texto_claude}"
-                    return JSONResponse({
-                        "id": resposta_json.get("id", "pptx"),
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [{"type": "text", "text": resposta_com_pptx}],
-                        "model": resposta_json.get("model", "local-pptxgenjs"),
-                        "stop_reason": "end_turn"
-                    })
-        except Exception as e_pptx:
-            import logging
-            logging.warning(f"[IAF PPTX] Erro ao gerar PPTX após Claude: {e_pptx}")
-
-    return resposta_json
+@app.post("/cache/invalidar")
+def invalidar():
+    invalidar_cache()
+    return JSONResponse({"status": "cache invalidado"})
 
 @app.get("/health")
 def health():
-    return {"status":"ok","cache":"disabled"}
+    return {"status": "ok", "sistema": "IAF-v2"}
 
-@app.get("/vendas")
-def reload_vendas():
-    """Confirma que Drive está acessível."""
-    try:
-        load_df()
-        return {"status":"ok","message":"CSV carregado com sucesso"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# ============================================================
-#  IA3 — Analista Comercial 3F (Power BI)
-# ============================================================
-
-import io as _io
-
-FILE_ID_IA3 = os.environ.get("DRIVE_FILE_ID_IA3", "19BeRqI6iDqvW2RqF3Nk2qPEN5Sl3blrH")
+# ─────────────────────────────────────────────
+#  IA3 — preservado integralmente
+# ─────────────────────────────────────────────
+FILE_ID_IA3 = os.environ.get("DRIVE_FILE_ID_IA3", "")
 
 def load_df_ia3() -> pd.DataFrame:
-    """Carrega vendas3f.csv do Google Drive — sem cache."""
+    if not FILE_ID_IA3:
+        raise HTTPException(status_code=500, detail="DRIVE_FILE_ID_IA3 não configurado.")
     service = get_drive_service()
     req = service.files().get_media(fileId=FILE_ID_IA3)
-    buf = _io.BytesIO()
+    buf = io.BytesIO()
     dl = MediaIoBaseDownload(buf, req)
     done = False
     while not done:
         _, done = dl.next_chunk()
     buf.seek(0)
-    df = pd.read_csv(buf, encoding='utf-8-sig', low_memory=False)
-    df['DATASAIDA']     = pd.to_datetime(df['DATASAIDA'], errors='coerce')
-    df['TOTVEND']       = pd.to_numeric(df['TOTVEND'],       errors='coerce').fillna(0)
-    df['TOTCUSTO']      = pd.to_numeric(df['TOTCUSTO'],      errors='coerce').fillna(0)
-    df['QTDE']          = pd.to_numeric(df['QTDE'],          errors='coerce').fillna(0)
-    df['QTDEKG']        = pd.to_numeric(df['QTDEKG'],        errors='coerce').fillna(0)
-    df['VALORDESCONTO'] = pd.to_numeric(df['VALORDESCONTO'], errors='coerce').fillna(0)
+    df = pd.read_csv(buf, sep=';', encoding='utf-8-sig', low_memory=False)
+    sample = str(df['DATASAIDA'].dropna().iloc[0]) if len(df) > 0 else ''
+    use_dayfirst = bool(re.match(r'\d{1,2}/\d{1,2}/\d{2,4}', sample))
+    df['DATASAIDA'] = pd.to_datetime(df['DATASAIDA'], errors='coerce', dayfirst=use_dayfirst)
+    for col in ['TOTVEND','TOTCUSTO','QTDEKG','VALORDESCONTO']:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     return df
-
-def filter_ia3(df: pd.DataFrame, pergunta: str) -> pd.DataFrame:
-    pl = pergunta.lower()
-    dff = df.copy()
-    hoje = datetime.now()
-
-    anos = re.findall(r'\b(202[0-9])\b', pergunta)
-    ano_ref = int(anos[0]) if anos else hoje.year
-
-    MESES_IA3 = {
-        'janeiro':1,'fevereiro':2,'março':3,'marco':3,'abril':4,'maio':5,
-        'junho':6,'julho':7,'agosto':8,'setembro':9,'outubro':10,'novembro':11,'dezembro':12,
-        'jan':1,'fev':2,'mar':3,'abr':4,'mai':5,'jun':6,
-        'jul':7,'ago':8,'set':9,'out':10,'nov':11,'dez':12
-    }
-    DIAS_IA3 = {
-        'segunda':0,'segunda-feira':0,'seg':0,'terça':1,'terca':1,'terça-feira':1,'ter':1,
-        'quarta':2,'quarta-feira':2,'qua':2,'quinta':3,'quinta-feira':3,'qui':3,
-        'sexta':4,'sexta-feira':4,'sex':4,'sábado':5,'sabado':5,'sab':5,'domingo':6,'dom':6
-    }
-
-    # Data ISO
-    m_iso = re.search(r'(202[0-9])[\-/](\d{1,2})[\-/](\d{1,2})', pl)
-    if m_iso:
-        try:
-            d = datetime(int(m_iso.group(1)), int(m_iso.group(2)), int(m_iso.group(3)))
-            return _finalize_ia3(dff[dff['DATASAIDA'].dt.date == d.date()], pl, df)
-        except: pass
-
-    # Intervalo explícito
-    m_range = re.search(r'(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})\s+a[té]?\s+(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})', pl)
-    if m_range:
-        try:
-            d1 = datetime(int(m_range.group(3)) if len(m_range.group(3))==4 else 2000+int(m_range.group(3)), int(m_range.group(2)), int(m_range.group(1)))
-            d2 = datetime(int(m_range.group(6)) if len(m_range.group(6))==4 else 2000+int(m_range.group(6)), int(m_range.group(5)), int(m_range.group(4)))
-            return _finalize_ia3(dff[(dff['DATASAIDA'] >= d1) & (dff['DATASAIDA'] <= d2 + timedelta(days=1))], pl, df)
-        except: pass
-
-    # Abreviações: jan/26
-    m_abrev = re.search(r'\b(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[/\s]+(20\d{2}|\d{2})\b', pl)
-    if m_abrev:
-        ma = MESES_IA3.get(m_abrev.group(1), 0)
-        aa = int(m_abrev.group(2)) if len(m_abrev.group(2))==4 else 2000+int(m_abrev.group(2))
-        if ma:
-            return _finalize_ia3(dff[(dff['DATASAIDA'].dt.month==ma)&(dff['DATASAIDA'].dt.year==aa)], pl, df)
-
-    # Meses por extenso
-    meses_enc = []
-    for nome, num in MESES_IA3.items():
-        for m in re.finditer(r'\b'+nome+r'\b', pl):
-            trecho = pl[m.start():m.start()+30]
-            al = re.search(r'202[0-9]', trecho)
-            meses_enc.append((m.start(), num, int(al.group()) if al else None))
-    seen = set(); mu = []
-    for pos, num, ano in sorted(meses_enc, key=lambda x: x[0]):
-        if num not in seen: seen.add(num); mu.append((pos, num, ano))
-
-    if len(mu) >= 2:
-        _, mi, ai = mu[0]; _, mf, af = mu[-1]
-        ai = ai or ano_ref; af = af or ano_ref
-        d1 = pd.Timestamp(ai, mi, 1)
-        d2 = pd.Timestamp(af, mf+1, 1)-timedelta(days=1) if mf<12 else pd.Timestamp(af+1,1,1)-timedelta(days=1)
-        return _finalize_ia3(dff[(dff['DATASAIDA']>=d1)&(dff['DATASAIDA']<=d2)], pl, df)
-    elif len(mu) == 1:
-        _, mes, ames = mu[0]
-        return _finalize_ia3(dff[(dff['DATASAIDA'].dt.month==mes)&(dff['DATASAIDA'].dt.year==(ames or ano_ref))], pl, df)
-
-    # Trimestre / Q1-Q4
-    m_qtri = re.search(r'\bq([1-4])\b', pl)
-    if m_qtri or 'trimestre' in pl:
-        tri = int(m_qtri.group(1)) if m_qtri else (2 if '2º tri' in pl or 'segundo' in pl else 3 if '3º tri' in pl or 'terceiro' in pl else 4 if '4º tri' in pl or 'quarto' in pl else 1)
-        mi = (tri-1)*3+1
-        return _finalize_ia3(dff[(dff['DATASAIDA'].dt.month>=mi)&(dff['DATASAIDA'].dt.month<=mi+2)&(dff['DATASAIDA'].dt.year==ano_ref)], pl, df)
-
-    # Semestre
-    if 'semestre' in pl:
-        if '1º sem' in pl or 'primeiro semestre' in pl:
-            return _finalize_ia3(dff[(dff['DATASAIDA'].dt.month<=6)&(dff['DATASAIDA'].dt.year==ano_ref)], pl, df)
-        return _finalize_ia3(dff[(dff['DATASAIDA'].dt.month>=7)&(dff['DATASAIDA'].dt.year==ano_ref)], pl, df)
-
-    # Quinzena
-    if 'quinzena' in pl:
-        mq = hoje.month; aq = int(anos[0]) if anos else hoje.year
-        for nome, num in MESES_IA3.items():
-            if nome in pl: mq = num; break
-        if 'segunda quinzena' in pl or '2ª quinzena' in pl:
-            d1 = pd.Timestamp(aq,mq,16); d2 = pd.Timestamp(aq,mq+1,1)-timedelta(days=1) if mq<12 else pd.Timestamp(aq+1,1,1)-timedelta(days=1)
-        else:
-            d1 = pd.Timestamp(aq,mq,1); d2 = pd.Timestamp(aq,mq,15)
-        return _finalize_ia3(dff[(dff['DATASAIDA']>=d1)&(dff['DATASAIDA']<=d2)], pl, df)
-
-    # Ano passado / atual
-    if any(x in pl for x in ['ano passado','ano anterior']):
-        return _finalize_ia3(dff[dff['DATASAIDA'].dt.year==hoje.year-1], pl, df)
-    if any(x in pl for x in ['ano atual','este ano','esse ano']):
-        return _finalize_ia3(dff[dff['DATASAIDA'].dt.year==hoje.year], pl, df)
-    if re.search(r'\bano\b', pl) and anos:
-        return _finalize_ia3(dff[dff['DATASAIDA'].dt.year==ano_ref], pl, df)
-
-    # Âncora "desde X"
-    m_desde = re.search(r'(?:desde|a partir d[eo])\s+(?:(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})|(\w+)(?:\s+de\s+(202[0-9]))?)', pl)
-    if m_desde:
-        try:
-            if m_desde.group(1):
-                d_ini = datetime(int(m_desde.group(3)) if len(m_desde.group(3))==4 else 2000+int(m_desde.group(3)), int(m_desde.group(2)), int(m_desde.group(1)))
-            else:
-                md = MESES_IA3.get(m_desde.group(4),0); ad = int(m_desde.group(5)) if m_desde.group(5) else ano_ref
-                d_ini = datetime(ad, md, 1) if md else datetime(hoje.year, 1, 1)
-            return _finalize_ia3(dff[dff['DATASAIDA']>=pd.Timestamp(d_ini)], pl, df)
-        except: pass
-
-    # Início do ano
-    if any(x in pl for x in ['início do ano','inicio do ano','começo do ano']):
-        return _finalize_ia3(dff[dff['DATASAIDA']>=pd.Timestamp(hoje.year,1,1)], pl, df)
-
-    # Dia específico
-    m_dia = re.search(r'\bdia\s+(\d{1,2})\b', pl)
-    if m_dia:
-        try:
-            d = datetime(hoje.year, hoje.month, int(m_dia.group(1)))
-            return _finalize_ia3(dff[dff['DATASAIDA'].dt.date==d.date()], pl, df)
-        except: pass
-
-    # Dia da semana
-    for dn, dnum in DIAS_IA3.items():
-        if re.search(r'\b'+dn+r'\b', pl):
-            dff2 = dff[dff['DATASAIDA'].dt.dayofweek==dnum]
-            if anos: dff2 = dff2[dff2['DATASAIDA'].dt.year==ano_ref]
-            return _finalize_ia3(dff2, pl, df)
-
-    # Dias úteis / fim de semana
-    if any(x in pl for x in ['dias úteis','dias uteis']):
-        dff2 = dff[dff['DATASAIDA'].dt.dayofweek<5]
-        if anos: dff2 = dff2[dff2['DATASAIDA'].dt.year==ano_ref]
-        return _finalize_ia3(dff2, pl, df)
-    if any(x in pl for x in ['fim de semana','fds','fins de semana']):
-        dff2 = dff[dff['DATASAIDA'].dt.dayofweek>=5]
-        if anos: dff2 = dff2[dff2['DATASAIDA'].dt.year==ano_ref]
-        return _finalize_ia3(dff2, pl, df)
-
-    # Relativos
-    if any(x in pl for x in ['mês passado','mes passado','mês anterior','mes anterior']):
-        p = hoje.replace(day=1); ump = p-timedelta(days=1); pmp = ump.replace(day=1)
-        dff = dff[(dff['DATASAIDA']>=pd.Timestamp(pmp))&(dff['DATASAIDA']<=pd.Timestamp(ump))]
-    elif any(x in pl for x in ['este mês','esse mês','este mes','esse mes','mês atual','mes atual']):
-        dff = dff[dff['DATASAIDA']>=pd.Timestamp(hoje.replace(day=1))]
-    elif any(x in pl for x in ['semana passada','semana anterior']):
-        ds=hoje.weekday(); ul_seg=hoje-timedelta(days=ds+7); ul_dom=ul_seg+timedelta(days=6)
-        dff = dff[(dff['DATASAIDA']>=pd.Timestamp(ul_seg))&(dff['DATASAIDA']<=pd.Timestamp(ul_dom)+timedelta(days=1))]
-    elif any(x in pl for x in ['esta semana','essa semana','semana atual']):
-        dff = dff[dff['DATASAIDA']>=pd.Timestamp(hoje-timedelta(days=hoje.weekday()))]
-    elif any(x in pl for x in ['última semana','ultima semana','ultimos 7 dias']):
-        dff = dff[dff['DATASAIDA']>=hoje-timedelta(days=7)]
-    elif 'ontem' in pl:
-        dia = hoje-timedelta(days=1)
-        d_on = dff[(dff['DATASAIDA']>=pd.Timestamp(dia.date()))&(dff['DATASAIDA']<pd.Timestamp(hoje.date()))]
-        dff = d_on if len(d_on)>0 else dff[dff['DATASAIDA'].dt.date==dff['DATASAIDA'].dropna().dt.date.max()]
-    elif 'hoje' in pl:
-        d_hj = dff[dff['DATASAIDA']>=pd.Timestamp(hoje.date())]
-        dff = d_hj if len(d_hj)>0 else dff[dff['DATASAIDA'].dt.date==dff['DATASAIDA'].dropna().dt.date.max()]
-    elif any(x in pl for x in ['último mês','ultimo mes','ultimos 30','últimos 30']):
-        dff = dff[dff['DATASAIDA']>=hoje-timedelta(days=30)]
-    else:
-        m_rel = re.search(r'[uú]ltimos?\s+(\d+)\s+(m[eê]s(?:es)?|dia[s]?|semana[s]?|ano[s]?)', pl)
-        if m_rel:
-            n=int(m_rel.group(1)); u=m_rel.group(2)
-            if 'ano' in u: dff=dff[dff['DATASAIDA']>=hoje-timedelta(days=365*n)]
-            elif 'm' in u:
-                p=hoje.replace(day=1); mes=p.month-n; ano=p.year+(mes-1)//12; mes=((mes-1)%12)+1
-                dff=dff[dff['DATASAIDA']>=pd.Timestamp(ano,mes,1)]
-            elif 'semana' in u: dff=dff[dff['DATASAIDA']>=hoje-timedelta(weeks=n)]
-            else: dff=dff[dff['DATASAIDA']>=hoje-timedelta(days=n)]
-        elif anos:
-            dff=dff[dff['DATASAIDA'].dt.year==int(anos[0])]
-
-    return _finalize_ia3(dff, pl, df)
-
-def _finalize_ia3(dff, pl, df_orig):
-    if 'NOMEFILIAL' in dff.columns:
-        for f in dff['NOMEFILIAL'].dropna().unique():
-            if str(f).lower() in pl:
-                dff = dff[dff['NOMEFILIAL'].str.lower() == f.lower()]; break
-    estados = {r'\bes\b':'ES',r'\brj\b':'RJ',r'\bsp\b':'SP',r'\bmg\b':'MG',r'\bba\b':'BA',r'\bpr\b':'PR'}
-    if 'UF' in dff.columns:
-        for p, uf in estados.items():
-            if re.search(p, pl): dff = dff[dff['UF'].str.upper() == uf]; break
-    m_c = re.search(r'(?:cliente[:\s]+|para\s+(?:o|a)\s+|do\s+cliente\s+)([a-záéíóúâêîôûãõç0-9\s]+)', pl)
-    if m_c and 'NOMECLIENTE' in dff.columns:
-        nc = re.split(r'\s+(?:em|de|no|na|\d{4})\b', m_c.group(1))[0].strip()
-        if len(nc) > 2:
-            mk = dff['NOMECLIENTE'].str.lower().str.contains(nc[:15], na=False)
-            if mk.sum() > 0: dff = dff[mk]
-    m_v = re.search(r'vendedor[:\s]+([a-záéíóúâêîôûãõç\s]+)', pl)
-    if m_v and 'NOMEVENDEDOR' in dff.columns:
-        nv = m_v.group(1).strip()[:20]
-        mk = dff['NOMEVENDEDOR'].str.lower().str.contains(nv, na=False)
-        if mk.sum() > 0: dff = dff[mk]
-    m_p = re.search(r'produto[:\s]+([a-záéíóúâêîôûãõç0-9\s]+)', pl)
-    if m_p and 'DESCRICAOPRODUTO' in dff.columns:
-        np_ = m_p.group(1).strip()[:20]
-        mk = dff['DESCRICAOPRODUTO'].str.lower().str.contains(np_, na=False)
-        if mk.sum() > 0: dff = dff[mk]
-    if len(dff) > 1200: dff = dff.sample(n=1200, random_state=42)
-    return dff
-
-@app.get("/menu", response_class=HTMLResponse)
-def menu():
-    try:
-        with open("menu.html", "r", encoding="utf-8") as f:
-            return f.read()
-    except:
-        return "<h1>Menu</h1><a href='/'>IAF</a> | <a href='/ia3'>IA3</a>"
 
 @app.get("/ia3", response_class=HTMLResponse)
 def ia3():
+    for p in ["ia3.html", "/app/ia3.html"]:
+        if os.path.exists(p):
+            with open(p, "r", encoding="utf-8") as f:
+                return HTMLResponse(content=f.read())
+    return HTMLResponse("<h1>IA3</h1>")
+
+@app.get("/dashboard-ia3")
+def dashboard_ia3():
     try:
-        with open("index_ia3.html", "r", encoding="utf-8") as f:
-            return f.read()
-    except:
-        return "<h1>IA3 online</h1>"
+        df = load_df_ia3()
+        ultimo_mes = df['DATASAIDA'].dt.to_period('M').max()
+        df_mes = df[df['DATASAIDA'].dt.to_period('M') == ultimo_mes]
+        fat      = float(df_mes['TOTVEND'].sum())
+        kg       = float(df_mes['QTDEKG'].sum())   if 'QTDEKG'       in df_mes.columns else 0
+        custo    = float(df_mes['TOTCUSTO'].sum())  if 'TOTCUSTO'     in df_mes.columns else 0
+        desconto = float(df_mes['VALORDESCONTO'].sum()) if 'VALORDESCONTO' in df_mes.columns else 0
+        margem_pct = round((fat - custo) / fat * 100, 1) if fat > 0 else 0
+        mes_label  = df_mes['DATASAIDA'].dt.strftime('%m/%Y').iloc[0] if len(df_mes) > 0 else '—'
+        top = (df_mes.groupby('NOMECLIENTE').agg(fat=('TOTVEND','sum'), kg=('QTDEKG','sum'))
+               .sort_values('fat', ascending=False).head(5).reset_index())
+        top5 = [{"nome": r.NOMECLIENTE, "fat": round(r.fat,2), "kg": round(r.kg,2)} for r in top.itertuples()]
+        return JSONResponse({"total_registros": len(df), "mes_label": mes_label,
+                             "fat": round(fat,2), "kg": round(kg,2),
+                             "margem_pct": margem_pct, "desconto": round(desconto,2), "top5": top5})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/cliente-ia3/{nome}")
+def cliente_ia3(nome: str, mes: str = None):
+    try:
+        df = load_df_ia3()
+        periodo = pd.Period(mes, freq='M') if mes else df['DATASAIDA'].dt.to_period('M').max()
+        df = df[df['DATASAIDA'].dt.to_period('M') == periodo]
+        dfc = pd.DataFrame()
+        for tam in [25, 15, 8, 5]:
+            mask = df['NOMECLIENTE'].str.lower().str.contains(nome.lower()[:tam], na=False)
+            dfc = df[mask]
+            if len(dfc) > 0: break
+        if len(dfc) == 0:
+            return JSONResponse({"erro": "Cliente não encontrado"})
+        fat_total   = float(dfc['TOTVEND'].sum())
+        kg_total    = float(dfc['QTDEKG'].sum())    if 'QTDEKG'        in dfc.columns else 0
+        custo_total = float(dfc['TOTCUSTO'].sum())  if 'TOTCUSTO'      in dfc.columns else 0
+        desc_total  = float(dfc['VALORDESCONTO'].sum()) if 'VALORDESCONTO' in dfc.columns else 0
+        margem_pct  = round((fat_total - custo_total) / fat_total * 100, 1) if fat_total > 0 else 0
+        pm          = round(fat_total / kg_total, 2) if kg_total > 0 else 0
+        deptos = []
+        if 'NOMEDEPARTAMENTO' in dfc.columns:
+            por_depto = dfc.groupby('NOMEDEPARTAMENTO').agg(fat=('TOTVEND','sum'), kg=('QTDEKG','sum')).sort_values('fat', ascending=False)
+            deptos = [{"nome": idx, "fat": round(float(r.fat),2), "kg": round(float(r.kg),2)} for idx, r in por_depto.iterrows()]
+        produtos = []
+        if 'DESCRICAOPRODUTO' in dfc.columns:
+            por_prod = dfc.groupby('DESCRICAOPRODUTO').agg(fat=('TOTVEND','sum'), kg=('QTDEKG','sum')).sort_values('fat', ascending=False).head(15)
+            produtos = [{"nome": idx, "fat": round(float(r.fat),2), "kg": round(float(r.kg),2)} for idx, r in por_prod.iterrows()]
+        return JSONResponse({"nome": dfc['NOMECLIENTE'].iloc[0], "fat_total": round(fat_total,2),
+                             "kg_total": round(kg_total,2), "margem_pct": margem_pct,
+                             "pm": pm, "desc_total": round(desc_total,2),
+                             "deptos": deptos, "produtos": produtos})
+    except Exception as e:
+        return JSONResponse({"erro": str(e)})
 
 @app.post("/chat-ia3")
 async def chat_ia3(req: ChatRequest):
-    df = load_df_ia3()
-    pergunta = next((m.content for m in reversed(req.messages) if m.role == "user"), "")
-    dff = filter_ia3(df, pergunta)
-
-    dia_ref = df['DATASAIDA'].dropna().dt.date.max()
-    data_label = f"Referência: {dia_ref.strftime('%d/%m/%Y') if hasattr(dia_ref, 'strftime') else dia_ref}"
-
-    cols_display = [c for c in [
-        'DATASAIDA','Ano','Mês','Nome do Mês','Trimestre','Dia da Semana',
-        'NRNOTAFISCAL','NOMEFILIAL','NOME_FILIAL',
-        'NOMEVENDEDOR','NOMEROTA','NOMECLIENTE','CIDADE','UF',
-        'DESCRICAOPRODUTO','NOMECURTO','NOMEGRUPO','NOMESUBGRUPO','NOMEDEPARTAMENTO',
-        'UND','ATIVO','QTDE','QTDEKG','TOTVEND','TOTCUSTO','VALORDESCONTO',
-        'DESCRICAOCONDPGVENDA'
-    ] if c in dff.columns]
-
-    sales_data = dff[cols_display].to_string(index=False, max_rows=400) if len(dff) > 0 else "Nenhum dado encontrado para o período/filtro solicitado."
+    if not CLAUDE_KEY:
+        raise HTTPException(status_code=500, detail="CLAUDE_API_KEY não configurada.")
+    ultima = next((m.content for m in reversed(req.messages) if m.role == "user"), "")
+    try:
+        df = load_df_ia3()
+        hoje = datetime.now().date()
+        ultimo_mes = df['DATASAIDA'].dt.to_period('M').max()
+        df_mes = df[df['DATASAIDA'].dt.to_period('M') == ultimo_mes]
+        d_max = df['DATASAIDA'].dropna().max()
+        data_label = f"Referência: {d_max.strftime('%d/%m/%Y') if hasattr(d_max,'strftime') else d_max}"
+        cols_display = [c for c in ['DATASAIDA','NOMEFILIAL','NOMEVENDEDOR','NOMEROTA','NOMECLIENTE',
+                                     'CIDADE','UF','DESCRICAOPRODUTO','NOMECURTO','NOMEGRUPO',
+                                     'NOMESUBGRUPO','NOMEDEPARTAMENTO','UND','QTDE','QTDEKG',
+                                     'TOTVEND','TOTCUSTO','VALORDESCONTO','DESCRICAOCONDPGVENDA'] if c in df_mes.columns]
+        sales_data = df_mes[cols_display].to_string(index=False, max_rows=400) if len(df_mes) > 0 else "Sem dados."
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
     system = f"""Você é o IA3 — Analista Comercial da empresa 3F.
-Analisa dados de vendas extraídos do Power BI da 3F.
-
-## COLUNAS DISPONÍVEIS
-- DATASAIDA: data da venda | Ano, Mês, Trimestre, Dia da Semana: calendário
-- NOMEFILIAL / NOME_FILIAL: filial | NOMEVENDEDOR: vendedor | NOMEROTA: rota
-- NOMECLIENTE: cliente | CIDADE, UF: localização
-- DESCRICAOPRODUTO / NOMECURTO: produto
-- NOMEGRUPO, NOMESUBGRUPO, NOMEDEPARTAMENTO: hierarquia de produto
-- QTDE: quantidade | QTDEKG: peso em kg
-- TOTVEND: faturamento | TOTCUSTO: custo | VALORDESCONTO: desconto
-- DESCRICAOCONDPGVENDA: condição de pagamento
-
-## COMPORTAMENTO
-- Responda sempre em português brasileiro
-- Vá direto ao dado — sem "Olá", "Claro!", "Com prazer"
-- Use Markdown: ## títulos, **negrito**, tabelas com | Col |
-- Valores: R$ X.XXX,XX | Quantidades: X.XXX | Datas: DD/MM/AA
-- MARGEM BRUTA = TOTVEND - TOTCUSTO | MARGEM % = (TOTVEND-TOTCUSTO)/TOTVEND*100
-- PREÇO MÉDIO R$/kg = TOTVEND / QTDEKG
-- Sempre calcule variação vs período anterior quando possível
-- Finalize com 💡 Insight: [ação ou oportunidade]
-- Anomalias > 20%: ⚠️ Atenção:
-
-⛔ REGRA ABSOLUTA — NUNCA INVENTAR DADOS:
-- Mostre APENAS o que está nos dados fornecidos. Zero exceções.
-- Se os dados têm X itens, mostre X itens — nem mais, nem menos
-- O cliente, vendedor, filial e valores são EXATAMENTE os que estão nos dados — nunca substitua por outros
-- Se não há dados suficientes para responder: diga "⚠️ Sem dados disponíveis." e pare
-- Nunca use informações de mensagens anteriores para preencher lacunas dos dados atuais
-
-## COMPORTAMENTOS ESPECÍFICOS
-- "Últimas vendas de [cliente]": SEMPRE inicie com "📦 Cliente: **[NOMECLIENTE exato]**" na primeira linha. Se os dados contiverem MÚLTIPLOS clientes distintos, diga apenas "Encontrei X clientes com esse nome. Qual você quer analisar? Informe o nome completo." — SEM listar os nomes. Se for 1 único cliente, mostre tabela compacta DATASAIDA | NR NOTA | COD PRODUTO | DESCRIÇÃO | QTDE kg | R$ TOTAL — últimos 15 registros, data decrescente, SEM totais no final
-- Nota fiscal: exiba APENAS os dados exatos recebidos. Formato obrigatório:
-1ª linha: "## NOTA FISCAL [NR] · [DATA]"
-2ª linha: "**Filial:** [FILIAL] | **Cliente:** [CLIENTE] | **Vendedor:** [VENDEDOR]"
-Linha em branco
-Tabela: # | PRODUTO | COD | QTDE KG | CX | VALOR | R$/KG — uma linha por item
-Última linha da tabela: **TOTAIS** com somas nas colunas numéricas
-SEM nenhum texto após a tabela
-- Cliente não especificado: pergunte "Para qual cliente?" SEM listar nomes
-- Vendedor não encontrado: pergunte o nome completo ou código, SEM listar sugestões
+⛔ NUNCA INVENTAR DADOS — use apenas os dados fornecidos abaixo.
+- Responda em português brasileiro, tom executivo
+- Use Markdown com tabelas e negrito
+- Valores: R$ X.XXX,XX | Kg: X.XXX kg | Datas: DD/MM/AA
+- Finalize com 💡 Insight:
 
 DADOS ({data_label}):
 {sales_data}"""
@@ -2690,178 +961,52 @@ DADOS ({data_label}):
         r = await client.post(
             "https://api.anthropic.com/v1/messages",
             headers={"Content-Type":"application/json","x-api-key":CLAUDE_KEY,"anthropic-version":"2023-06-01"},
-            json={"model":"claude-haiku-4-5-20251001","max_tokens":1500,"system":system,"messages":[m.dict() for m in req.messages]}
+            json={"model":"claude-haiku-4-5-20251001","max_tokens":1500,"system":system,
+                  "messages":[m.dict() for m in req.messages]}
         )
     if r.status_code != 200:
         raise HTTPException(status_code=r.status_code, detail=r.text)
     return r.json()
 
-@app.get("/dashboard-ia3")
-def dashboard_ia3():
-    """Retorna KPIs + top5 clientes do IA3 — JSON direto, sem Claude."""
-    try:
-        df = load_df_ia3()
-
-        # Último mês disponível
-        ultimo_mes = df['DATASAIDA'].dt.to_period('M').max()
-        df_mes = df[df['DATASAIDA'].dt.to_period('M') == ultimo_mes]
-
-        fat        = float(df_mes['TOTVEND'].sum())
-        kg         = float(df_mes['QTDEKG'].sum())   if 'QTDEKG'       in df_mes.columns else 0
-        custo      = float(df_mes['TOTCUSTO'].sum())  if 'TOTCUSTO'     in df_mes.columns else 0
-        desconto   = float(df_mes['VALORDESCONTO'].sum()) if 'VALORDESCONTO' in df_mes.columns else 0
-        margem_pct = round((fat - custo) / fat * 100, 1) if fat > 0 else 0
-        total      = int(df.shape[0])
-        mes_label  = df_mes['DATASAIDA'].dt.strftime('%m/%Y').iloc[0] if len(df_mes) > 0 else '—'
-
-        # Top 5 clientes por faturamento
-        top = (df_mes.groupby('NOMECLIENTE')
-               .agg(fat=('TOTVEND','sum'), kg=('QTDEKG','sum'))
-               .sort_values('fat', ascending=False)
-               .head(5)
-               .reset_index())
-        top5 = [{"nome": r.NOMECLIENTE, "fat": round(r.fat, 2), "kg": round(r.kg, 2)}
-                for r in top.itertuples()]
-
-        return JSONResponse({
-            "total_registros": total,
-            "mes_label":  mes_label,
-            "fat":        round(fat, 2),
-            "kg":         round(kg, 2),
-            "margem_pct": margem_pct,
-            "desconto":   round(desconto, 2),
-            "top5":       top5
-        })
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/cliente-ia3/{nome}")
-def cliente_ia3(nome: str, mes: str = None):
-    """Retorna resumo do cliente para o painel lateral do IA3.
-    mes: formato YYYY-MM (ex: 2026-03). Se não informado, usa o último mês disponível."""
-    try:
-        df = load_df_ia3()
-
-        # Define período — mesmo mês do dashboard
-        if mes:
-            periodo = pd.Period(mes, freq='M')
-        else:
-            periodo = df['DATASAIDA'].dt.to_period('M').max()
-
-        df = df[df['DATASAIDA'].dt.to_period('M') == periodo]
-
-        # Match progressivo
-        dfc = pd.DataFrame()
-        for tam in [25, 15, 8, 5]:
-            mask = df['NOMECLIENTE'].str.lower().str.contains(nome.lower()[:tam], na=False)
-            dfc = df[mask]
-            if len(dfc) > 0:
-                break
-        if len(dfc) == 0:
-            return JSONResponse({"erro": "Cliente não encontrado"})
-
-        fat_total   = float(dfc['TOTVEND'].sum())
-        kg_total    = float(dfc['QTDEKG'].sum())    if 'QTDEKG'       in dfc.columns else 0
-        custo_total = float(dfc['TOTCUSTO'].sum())  if 'TOTCUSTO'     in dfc.columns else 0
-        desc_total  = float(dfc['VALORDESCONTO'].sum()) if 'VALORDESCONTO' in dfc.columns else 0
-        margem_pct  = round((fat_total - custo_total) / fat_total * 100, 1) if fat_total > 0 else 0
-        pm          = round(fat_total / kg_total, 2) if kg_total > 0 else 0
-
-        # Agrupamento por NOMEDEPARTAMENTO
-        deptos = []
-        if 'NOMEDEPARTAMENTO' in dfc.columns:
-            por_depto = (dfc.groupby('NOMEDEPARTAMENTO')
-                         .agg(fat=('TOTVEND','sum'), kg=('QTDEKG','sum'))
-                         .sort_values('fat', ascending=False))
-            deptos = [{"nome": idx, "fat": round(float(r.fat),2), "kg": round(float(r.kg),2)}
-                      for idx, r in por_depto.iterrows()]
-
-        # Top 15 produtos
-        produtos = []
-        if 'DESCRICAOPRODUTO' in dfc.columns:
-            por_prod = (dfc.groupby('DESCRICAOPRODUTO')
-                        .agg(fat=('TOTVEND','sum'), kg=('QTDEKG','sum'))
-                        .sort_values('fat', ascending=False)
-                        .head(15))
-            produtos = [{"nome": idx, "fat": round(float(r.fat),2), "kg": round(float(r.kg),2)}
-                        for idx, r in por_prod.iterrows()]
-
-        return JSONResponse({
-            "nome":       dfc['NOMECLIENTE'].iloc[0],
-            "fat_total":  round(fat_total, 2),
-            "kg_total":   round(kg_total, 2),
-            "margem_pct": margem_pct,
-            "pm":         pm,
-            "desc_total": round(desc_total, 2),
-            "deptos":     deptos,
-            "produtos":   produtos
-        })
-    except Exception as e:
-        return JSONResponse({"erro": str(e)})
-
 @app.get("/health-ia3")
 def health_ia3():
-    return {"status":"ok","sistema":"IA3"}
+    return {"status": "ok", "sistema": "IA3"}
 
-
-# ── DANFE via MeuDanfe API v2 ───────────────────────────────────────────────
+# ─────────────────────────────────────────────
+#  DANFE
+# ─────────────────────────────────────────────
 @app.get("/danfe/{chave}")
 async def get_danfe(chave: str):
-    from fastapi.responses import Response
     import asyncio
-
     if not re.match(r'^\d{44}$', chave):
         raise HTTPException(status_code=400, detail="Chave de acesso inválida.")
-
-    MEUDANFE_KEY = "0c1588f4-f90e-4711-8b39-87be9a1581da"
     BASE = "https://api.meudanfe.com.br/v2"
     headers = {"Api-Key": MEUDANFE_KEY}
-
     try:
         async with httpx.AsyncClient(timeout=60) as client:
-
-            # Tenta baixar DANFE direto primeiro
             r = await client.get(f"{BASE}/fd/get/da/{chave}", headers=headers)
-
             if r.status_code == 404 or len(r.content) == 0:
-                # Busca na Receita Federal via MeuDanfe
                 r2 = await client.put(f"{BASE}/fd/add/{chave}", headers=headers)
                 if r2.status_code not in (200, 201, 202):
-                    raise HTTPException(status_code=502,
-                        detail=f"MeuDanfe erro: {r2.status_code} {r2.text[:300]}")
-
-                # Aguarda processamento com retries
+                    raise HTTPException(status_code=502, detail=f"MeuDanfe erro: {r2.status_code}")
                 for _ in range(10):
                     await asyncio.sleep(2)
                     r = await client.get(f"{BASE}/fd/get/da/{chave}", headers=headers)
                     if r.status_code == 200 and len(r.content) > 100:
                         break
                 else:
-                    raise HTTPException(status_code=504,
-                        detail="MeuDanfe: tempo esgotado aguardando PDF.")
-
+                    raise HTTPException(status_code=504, detail="MeuDanfe: timeout.")
             if r.status_code != 200 or len(r.content) == 0:
-                raise HTTPException(status_code=502,
-                    detail=f"PDF não disponível ({r.status_code}, {len(r.content)} bytes)")
-
-            # MeuDanfe retorna JSON com PDF em BASE64
+                raise HTTPException(status_code=502, detail=f"PDF indisponível ({r.status_code})")
             import base64 as _b64
             try:
                 data = r.json()
-                if isinstance(data, dict) and data.get("format") == "BASE64":
-                    pdf_bytes = _b64.b64decode(data["data"])
-                else:
-                    pdf_bytes = r.content
-            except Exception:
+                pdf_bytes = _b64.b64decode(data["data"]) if isinstance(data, dict) and data.get("format") == "BASE64" else r.content
+            except:
                 pdf_bytes = r.content
-
-            return Response(
-                content=pdf_bytes,
-                media_type="application/pdf",
-                headers={"Content-Disposition": f"inline; filename=DANFE_{chave}.pdf"}
-            )
-
+            return Response(content=pdf_bytes, media_type="application/pdf",
+                            headers={"Content-Disposition": f"inline; filename=DANFE_{chave}.pdf"})
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro MeuDanfe: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erro DANFE: {e}")
