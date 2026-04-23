@@ -830,7 +830,7 @@ def debug_csv():
     except Exception as e:
         return JSONResponse({"erro": str(e)})
 
-@app.post("/cache/invalidar")
+@app.get("/cache/invalidar")
 def invalidar():
     invalidar_cache()
     return JSONResponse({"status": "cache invalidado"})
