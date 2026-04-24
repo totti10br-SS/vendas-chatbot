@@ -186,6 +186,7 @@ REGRAS:
 - "esta semana" = segunda-feira até hoje
 - Se período não especificado e tipo for resumo: use o último mês disponível
 - Se cliente não especificado e tipo for ultimas_vendas: precisa_cliente=true
+- IMPORTANTE: Se a última mensagem do assistente no histórico for "Para qual cliente?" (ou similar pedindo nome de cliente), e a pergunta atual for apenas um nome/CNPJ, então herde o tipo da penúltima mensagem do usuário e preencha o cliente com o valor informado agora. NÃO mude o tipo.
 - Se nr_nota mencionado: tipo="detalhe_nota"
 - Se usuário perguntar sobre PDF, DANFE, nota fiscal, NF, ou detalhe de nota SEM informar número: tipo="detalhe_nota", nr_nota=null
 - Se tipo="detalhe_nota" e nr_nota=null: o sistema vai pedir o número automaticamente
@@ -1355,13 +1356,28 @@ async def chat(req: ChatRequest):
 
     logging.info(f"[FILTRO] {json.dumps(filtro, ensure_ascii=False)}")
 
+    # Se o assistente acabou de pedir o cliente e o tipo voltou errado, corrigir pelo histórico
+    ultimas_msgs = historico[-4:] if len(historico) >= 4 else historico
+    assist_pediu_cliente = any(
+        m.get("role") == "assistant" and "Para qual cliente" in str(m.get("content",""))
+        for m in ultimas_msgs
+    )
+    if assist_pediu_cliente and filtro.get("tipo") in ("indefinido", "ultimas_vendas", None):
+        # Buscar tipo na penúltima mensagem do usuário
+        msgs_usuario = [m for m in historico if m.get("role") == "user"]
+        if len(msgs_usuario) >= 2:
+            penultima = msgs_usuario[-2].get("content", "")
+            if any(p in penultima.lower() for p in ["preço", "preco", "tabela de preço", "quanto paga"]):
+                filtro["tipo"] = "ultimos_precos"
+                logging.info("[FILTRO] tipo corrigido para ultimos_precos via histórico")
+
     # Se precisa de cliente e não foi informado
     if filtro.get("precisa_cliente") and not filtro.get("cliente") and not filtro.get("cnpj_raiz"):
         return JSONResponse({"content": [{"type": "text", "text":
             "Para qual cliente? Pode informar o nome ou CNPJ raiz (8 dígitos)."}]})
 
-    # ultimos_precos → SEMPRE 90 dias, ignora qualquer período que o LLM tenha inferido
-    if filtro.get("tipo") == "ultimos_precos":
+    # ultimos_precos sem período → assume últimos 90 dias automaticamente
+    if filtro.get("tipo") == "ultimos_precos" and not filtro.get("data_inicio"):
         from datetime import date, timedelta
         hoje = date.today()
         filtro["data_inicio"] = (hoje - timedelta(days=90)).strftime("%Y-%m-%d")
