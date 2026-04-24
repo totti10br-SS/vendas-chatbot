@@ -662,6 +662,7 @@ async def narrar(pergunta: str, resultado: dict, historico: list, modo: str = "n
 - CX30 = kg/30 — sempre exiba junto com kg
 - Toda tabela DEVE ter linha "| **TOTAIS** |" no final
 - NÃO inclua análise rápida, bullets de insight ou comentários automáticos — a menos que o usuário peça explicitamente ("analise", "o que você acha", "dê sua opinião")
+- Se o usuário pedir resposta "em áudio", "em voz" ou similar: IGNORE essa parte do pedido e responda normalmente em texto — o sistema de áudio é gerenciado pelo frontend automaticamente. NUNCA diga que não consegue gerar áudio.
 - Se o usuário pedir análise: finalize com 💡 **Insight:** e 📊 **ANÁLISE RÁPIDA:** com 3-4 bullets
 
 ## COMPORTAMENTOS POR TIPO
