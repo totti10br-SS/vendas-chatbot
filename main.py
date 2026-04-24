@@ -1414,43 +1414,40 @@ async def chat(req: ChatRequest):
         return JSONResponse({"content": [{"type": "text", "text":
             "⚠️ Sem dados disponíveis para o período/filtro solicitado. Verifique o período ou tente outro filtro."}]})
 
-    # ETAPA 2.5 — Se formato PDF, gera e retorna direto
-    # Se tipo vago, herdar contexto varrendo TODO o histórico do usuário
-    if filtro.get("formato") == "pdf" and filtro.get("tipo") in ("indefinido", "periodo_livre", None, "saudacao"):
-        tipo_encontrado = None
-        cliente_encontrado = None
-        palavras_tipo = {
-            "ultimos_precos":    ["preço","preco","quanto paga","tabela de preço","últimos preços","ultimos precos"],
-            "ultimas_vendas":    ["últimas vendas","ultimas vendas","últimas notas","ultimas notas","histórico de compra"],
-            "ranking_clientes":  ["ranking cliente","top cliente","ranking de cliente"],
-            "ranking_vendedores":["ranking vendedor","top vendedor","ranking de vendedor"],
-            "ranking_produtos":  ["ranking produto","top produto","ranking de produto"],
-        }
+    # ETAPA 2.5 — Se formato PDF, SEMPRE detectar tipo pela última resposta do assistente
+    if filtro.get("formato") == "pdf":
+        ultima_resp_assist = ""
         for msg in reversed(historico[:-1]):
-            if msg.get("role") != "user":
-                continue
-            txt = msg.get("content", "").lower().strip()
-            if not txt:
-                continue
-            # Tentar identificar tipo
-            if tipo_encontrado is None:
-                for tipo_key, palavras in palavras_tipo.items():
-                    if any(p in txt for p in palavras):
-                        tipo_encontrado = tipo_key
-                        break
-            # Tentar identificar cliente (mensagem curta sem palavras de comando)
-            if cliente_encontrado is None:
-                palavras_cmd = ["pdf","preço","preco","venda","ranking","último","ultim","relatorio","relatório","quanto","tabela","histórico","historico","notas"]
-                if len(txt) < 60 and not any(p in txt for p in palavras_cmd):
-                    cliente_encontrado = txt
+            if msg.get("role") == "assistant":
+                ultima_resp_assist = str(msg.get("content", "")).lower()
+                break
 
-        if tipo_encontrado:
-            filtro["tipo"] = tipo_encontrado
-        if cliente_encontrado and not filtro.get("cliente") and not filtro.get("cnpj_raiz"):
-            filtro["cliente"] = cliente_encontrado
+        # Detectar tipo pelo que estava sendo exibido na tela
+        tipo_detectado = None
+        if any(p in ultima_resp_assist for p in ["últimos preços", "ultimos precos", "r$/kg médio", "última compra", "nº compras"]):
+            tipo_detectado = "ultimos_precos"
+        elif any(p in ultima_resp_assist for p in ["últimas vendas", "ultimas vendas"]):
+            tipo_detectado = "ultimas_vendas"
+        elif "ranking de clientes" in ultima_resp_assist or "ranking clientes" in ultima_resp_assist:
+            tipo_detectado = "ranking_clientes"
+        elif "ranking de vendedores" in ultima_resp_assist or "ranking vendedores" in ultima_resp_assist:
+            tipo_detectado = "ranking_vendedores"
+        elif "ranking de produtos" in ultima_resp_assist or "ranking produtos" in ultima_resp_assist:
+            tipo_detectado = "ranking_produtos"
 
-        logging.info(f"[PDF] filtro herdado: tipo={filtro.get('tipo')} cliente={filtro.get('cliente')}")
-        resultado = calcular(df, filtro)
+        if tipo_detectado:
+            filtro["tipo"] = tipo_detectado
+            # Herdar cliente se não veio
+            if not filtro.get("cliente") and not filtro.get("cnpj_raiz"):
+                palavras_cmd = ["pdf","preço","preco","venda","ranking","último","ultim","relatorio","relatório","quanto","tabela","histórico","historico","notas","manda","gera","exporta"]
+                for msg in reversed(historico[:-1]):
+                    if msg.get("role") == "user":
+                        txt = msg.get("content", "").strip()
+                        if txt and len(txt) < 60 and not any(p in txt.lower() for p in palavras_cmd):
+                            filtro["cliente"] = txt
+                            break
+            logging.info(f"[PDF] tipo detectado={tipo_detectado} cliente={filtro.get('cliente')}")
+            resultado = calcular(df, filtro)
 
     if filtro.get("formato") == "pdf":
         try:
