@@ -827,26 +827,24 @@ def detalhe_tipo(tipo: str):
 #  ROUTE — /chat (nova arquitetura)
 # ─────────────────────────────────────────────
 def gerar_relatorio_pdf(df: pd.DataFrame, filtro: dict, resultado: dict) -> bytes:
-    """Gera PDF de faturamento agrupado por tipo de movimento usando WeasyPrint."""
+    """Gera PDF para qualquer tipo de relatório."""
     import html as _h
 
-    dados = resultado.get("dados", {})
-    d1 = filtro.get("data_inicio", "")
-    d2 = filtro.get("data_fim", "")
-    filial_filtro = filtro.get("filial") or "Todas as Filiais"
+    tipo_rel = filtro.get("tipo", "resumo_mensal")
+    dados    = resultado.get("dados", {})
+    d1       = filtro.get("data_inicio") or ""
+    d2       = filtro.get("data_fim") or ""
     hoje_str = datetime.now().strftime("%d/%m/%Y %H:%M")
 
+    # Período label
     try:
         p1 = datetime.strptime(d1, "%Y-%m-%d").strftime("%d/%m/%Y") if d1 else None
         p2 = datetime.strptime(d2, "%Y-%m-%d").strftime("%d/%m/%Y") if d2 else None
-        if p1 and p2:
-            periodo_label = p1 if p1 == p2 else f"{p1} a {p2}"
-        elif p1:
-            periodo_label = f"a partir de {p1}"
-        else:
-            periodo_label = "Período não especificado"
+        if p1 and p2:   periodo_label = p1 if p1 == p2 else f"{p1} a {p2}"
+        elif p1:        periodo_label = f"a partir de {p1}"
+        else:           periodo_label = "Todos os períodos"
     except:
-        periodo_label = f"{d1 or ''} a {d2 or ''}"
+        periodo_label = f"{d1} a {d2}"
 
     def fmt_brl(v):
         try:
@@ -859,100 +857,162 @@ def gerar_relatorio_pdf(df: pd.DataFrame, filtro: dict, resultado: dict) -> byte
             return f"{float(v):,.2f} kg".replace(",","X").replace(".",",").replace("X",".")
         except: return "0,00 kg"
 
-    fat   = dados.get("faturamento", 0)
-    kg    = dados.get("kg", 0)
-    cx    = dados.get("cx30", 0)
-    notas = dados.get("notas", 0)
-    pm    = dados.get("preco_medio", 0)
-
-    # Dados brutos filtrados
+    # ── Aplicar filtros no DataFrame ──
     dff = df.copy()
-    if filtro.get("data_inicio"):
-        try: dff = dff[dff["DATA_MOVTO"] >= pd.to_datetime(filtro["data_inicio"])]
+    if d1:
+        try: dff = dff[dff["DATA_MOVTO"] >= pd.to_datetime(d1)]
         except: pass
-    if filtro.get("data_fim"):
-        try: dff = dff[dff["DATA_MOVTO"] < pd.to_datetime(filtro["data_fim"]) + timedelta(days=1)]
+    if d2:
+        try: dff = dff[dff["DATA_MOVTO"] < pd.to_datetime(d2) + timedelta(days=1)]
         except: pass
     if filtro.get("filial") and "NOME_FILIAL" in dff.columns:
         dff = dff[dff["NOME_FILIAL"].str.upper() == filtro["filial"].upper()]
-    # Label de filial para cabeçalho
-    filial_label = filtro.get("filial") or "Todas as Filiais"
 
-    # Filtro de cliente
+    # Filtro cliente
     cliente_label = None
     if filtro.get("cliente") and "NOME_CLIENTE" in dff.columns:
-        nome_cli = filtro["cliente"]
         for tam in [25, 15, 8, 5]:
-            mask = dff["NOME_CLIENTE"].str.lower().str.contains(nome_cli.lower()[:tam], na=False)
+            mask = dff["NOME_CLIENTE"].str.lower().str.contains(filtro["cliente"].lower()[:tam], na=False)
             if mask.sum() > 0:
                 dff = dff[mask]
                 cliente_label = dff["NOME_CLIENTE"].iloc[0]
                 break
     elif filtro.get("cnpj_raiz") and "CPF_CGC" in dff.columns:
-        raiz = re.sub(r'\D', '', filtro["cnpj_raiz"])[:8]
-        mask = dff["CPF_CGC"].astype(str).str.replace(r'\D','',regex=True).str.startswith(raiz)
+        raiz = re.sub(r"\D","",filtro["cnpj_raiz"])[:8]
+        mask = dff["CPF_CGC"].astype(str).str.replace(r"\D","",regex=True).str.startswith(raiz)
         if mask.sum() > 0:
             dff = dff[mask]
             cliente_label = dff["NOME_CLIENTE"].iloc[0] if "NOME_CLIENTE" in dff.columns else raiz
 
-    # Recalcula KPIs com dados filtrados (pode ter mudado por cliente)
+    # Filtro vendedor
+    vendedor_label = None
+    if filtro.get("vendedor") and "NOM_VENDEDOR" in dff.columns:
+        for tam in [20, 10, 5]:
+            mask = dff["NOM_VENDEDOR"].str.lower().str.contains(filtro["vendedor"].lower()[:tam], na=False)
+            if mask.sum() > 0:
+                dff = dff[mask]
+                vendedor_label = dff["NOM_VENDEDOR"].iloc[0]
+                break
+
+    if len(dff) == 0:
+        raise Exception("Sem dados para o filtro solicitado.")
+
+    # ── KPIs recalculados ──
     fat   = round(float(dff["VALOR_LIQUIDO"].sum()), 2)
     kg    = round(float(dff["QTDE_PRI"].sum()), 2) if "QTDE_PRI" in dff.columns else 0
     cx    = int(round(kg / 30, 0))
     notas = int(dff["NUM_DOCTO"].nunique()) if "NUM_DOCTO" in dff.columns else 0
     pm    = round(fat / kg, 2) if kg > 0 else 0
 
-    # Grupos por tipo de movimento
-    grupos_html = ""
-    tipos = sorted(dff["DESC_TIPO_MV"].fillna("SEM TIPO").unique()) if "DESC_TIPO_MV" in dff.columns else ["SEM TIPO"]
+    # ── Labels do cabeçalho ──
+    filial_label = filtro.get("filial") or "Todas as Filiais"
+    subtitulo_parts = [filial_label]
+    if cliente_label: subtitulo_parts.append(f"Cliente: {str(cliente_label)[:40]}")
+    if vendedor_label: subtitulo_parts.append(f"Vendedor: {str(vendedor_label)[:30]}")
+    subtitulo = " · ".join(subtitulo_parts)
 
-    for tipo in tipos:
-        df_tipo = dff[dff["DESC_TIPO_MV"].fillna("SEM TIPO") == tipo] if "DESC_TIPO_MV" in dff.columns else dff
-        if len(df_tipo) == 0: continue
+    # ── Título do relatório por tipo ──
+    titulos = {
+        "resumo_mensal":    "RESUMO MENSAL DE VENDAS",
+        "resumo_diario":    "RESUMO DIÁRIO DE VENDAS",
+        "ultimas_vendas":   "ÚLTIMAS VENDAS POR NOTA",
+        "ranking_clientes": "RANKING DE CLIENTES",
+        "ranking_vendedores": "RANKING DE VENDEDORES",
+        "ranking_produtos":  "RANKING DE PRODUTOS",
+        "comparativo":       "RELATÓRIO COMPARATIVO",
+        "periodo_livre":     "RELATÓRIO DE VENDAS",
+    }
+    titulo_rel = titulos.get(tipo_rel, "RELATÓRIO DE VENDAS")
 
-        fat_tipo = df_tipo["VALOR_LIQUIDO"].sum()
-        n_notas  = df_tipo["NUM_DOCTO"].nunique() if "NUM_DOCTO" in df_tipo.columns else 0
+    # ── CORPO HTML por tipo ──
 
-        grp_cols = [col for col in ["DATA_MOVTO","NOME_FILIAL","NUM_DOCTO","NOME_CLIENTE","CIDADE","UF","NOM_VENDEDOR"] if col in df_tipo.columns]
-        df_notas = df_tipo.groupby(grp_cols).agg(valor=("VALOR_LIQUIDO","sum")).reset_index().sort_values("DATA_MOVTO")
-
-        linhas = ""
-        total_valor = 0
-        for _, row in df_notas.iterrows():
-            data_str = row["DATA_MOVTO"].strftime("%d/%m/%Y") if hasattr(row.get("DATA_MOVTO",None),"strftime") else str(row.get("DATA_MOVTO",""))
-            valor = float(row.get("valor", 0))
-            total_valor += valor
-            linhas += f"""<tr>
-                <td>{_h.escape(data_str)}</td>
-                <td>{_h.escape(str(row.get("NOME_FILIAL",""))[:8])}</td>
-                <td>{_h.escape(str(row.get("NUM_DOCTO","")))}</td>
-                <td class="nome">{_h.escape(str(row.get("NOME_CLIENTE",""))[:45])}</td>
-                <td>{_h.escape(str(row.get("CIDADE",""))[:18])}</td>
-                <td>{_h.escape(str(row.get("UF","")))}</td>
-                <td class="valor">{fmt_brl(valor)}</td>
-                <td>{_h.escape(str(row.get("NOM_VENDEDOR",""))[:22])}</td>
-            </tr>"""
-
-        grupos_html += f"""
-        <div class="grupo-header">
-          <span class="grupo-tipo">{_h.escape(str(tipo))}</span>
-          <span class="grupo-stats">{n_notas} notas &middot; {fmt_brl(fat_tipo)}</span>
-        </div>
-        <table>
-          <thead><tr><th>DATA</th><th>FILIAL</th><th>NF</th><th>CLIENTE</th><th>CIDADE</th><th>UF</th><th>VALOR</th><th>VENDEDOR</th></tr></thead>
-          <tbody>
-            {linhas}
-            <tr class="total-row"><td colspan="6"><strong>TOTAL</strong></td><td class="valor">{fmt_brl(total_valor)}</td><td></td></tr>
-          </tbody>
+    def _tabela(headers, rows, totais=None):
+        """Gera HTML de tabela com cabeçalho e opção de linha de totais."""
+        ths = "".join(f"<th>{h}</th>" for h in headers)
+        trs = ""
+        for row in rows:
+            tds = "".join(f'<td class="{"valor" if i >= len(headers)-3 else ""}">{_h.escape(str(v))}</td>' for i, v in enumerate(row))
+            trs += f"<tr>{tds}</tr>"
+        tot_html = ""
+        if totais:
+            tds_tot = "".join(f'<td class="valor"><strong>{_h.escape(str(v))}</strong></td>' for v in totais)
+            tot_html = f'<tr class="total-row">{tds_tot}</tr>'
+        return f"""<table>
+          <thead><tr>{ths}</tr></thead>
+          <tbody>{trs}{tot_html}</tbody>
         </table>"""
 
-    # Gera resumo sintético por tipo de movimento
+    corpo_html = ""
     resumo_tmv_html = ""
+
+    if tipo_rel in ("resumo_mensal","resumo_diario","periodo_livre","comparativo","ultimas_vendas") or True:
+        # Para TODOS os tipos: agrupa notas por tipo de movimento
+        if "DESC_TIPO_MV" in dff.columns:
+            tipos = sorted(dff["DESC_TIPO_MV"].fillna("SEM TIPO").unique())
+            for tipo in tipos:
+                df_tipo = dff[dff["DESC_TIPO_MV"].fillna("SEM TIPO") == tipo]
+                if len(df_tipo) == 0: continue
+                fat_tipo = df_tipo["VALOR_LIQUIDO"].sum()
+                n_notas  = df_tipo["NUM_DOCTO"].nunique() if "NUM_DOCTO" in df_tipo.columns else 0
+                grp_cols = [col for col in ["DATA_MOVTO","NOME_FILIAL","NUM_DOCTO","NOME_CLIENTE","CIDADE","UF","NOM_VENDEDOR"] if col in df_tipo.columns]
+                df_notas = df_tipo.groupby(grp_cols).agg(valor=("VALOR_LIQUIDO","sum")).reset_index().sort_values("DATA_MOVTO", ascending=False)
+                linhas = ""
+                total_valor = 0
+                for _, row in df_notas.iterrows():
+                    data_str = row["DATA_MOVTO"].strftime("%d/%m/%Y") if hasattr(row.get("DATA_MOVTO",None),"strftime") else ""
+                    valor = float(row.get("valor",0))
+                    total_valor += valor
+                    linhas += f"""<tr>
+                        <td>{_h.escape(data_str)}</td>
+                        <td>{_h.escape(str(row.get("NOME_FILIAL",""))[:8])}</td>
+                        <td>{_h.escape(str(row.get("NUM_DOCTO","")))}</td>
+                        <td class="nome">{_h.escape(str(row.get("NOME_CLIENTE",""))[:45])}</td>
+                        <td>{_h.escape(str(row.get("CIDADE",""))[:18])}</td>
+                        <td>{_h.escape(str(row.get("UF","")))}</td>
+                        <td class="valor">{fmt_brl(valor)}</td>
+                        <td>{_h.escape(str(row.get("NOM_VENDEDOR",""))[:22])}</td>
+                    </tr>"""
+                corpo_html += f"""
+                <div class="grupo-header">
+                  <span class="grupo-tipo">{_h.escape(str(tipo))}</span>
+                  <span class="grupo-stats">{n_notas} notas &middot; {fmt_brl(fat_tipo)}</span>
+                </div>
+                <table>
+                  <thead><tr><th>DATA</th><th>FILIAL</th><th>NF</th><th>CLIENTE</th><th>CIDADE</th><th>UF</th><th>VALOR</th><th>VENDEDOR</th></tr></thead>
+                  <tbody>{linhas}
+                    <tr class="total-row"><td colspan="6"><strong>TOTAL</strong></td><td class="valor">{fmt_brl(total_valor)}</td><td></td></tr>
+                  </tbody>
+                </table>"""
+        else:
+            # Sem coluna de tipo: lista direto
+            grp_cols = [col for col in ["DATA_MOVTO","NOME_FILIAL","NUM_DOCTO","NOME_CLIENTE","CIDADE","UF","NOM_VENDEDOR"] if col in dff.columns]
+            df_notas = dff.groupby(grp_cols).agg(valor=("VALOR_LIQUIDO","sum")).reset_index().sort_values("DATA_MOVTO", ascending=False)
+            linhas = ""
+            total_valor = 0
+            for _, row in df_notas.iterrows():
+                data_str = row["DATA_MOVTO"].strftime("%d/%m/%Y") if hasattr(row.get("DATA_MOVTO",None),"strftime") else ""
+                valor = float(row.get("valor",0))
+                total_valor += valor
+                linhas += f"""<tr>
+                    <td>{_h.escape(data_str)}</td>
+                    <td>{_h.escape(str(row.get("NOME_FILIAL",""))[:8])}</td>
+                    <td>{_h.escape(str(row.get("NUM_DOCTO","")))}</td>
+                    <td class="nome">{_h.escape(str(row.get("NOME_CLIENTE",""))[:45])}</td>
+                    <td>{_h.escape(str(row.get("CIDADE",""))[:18])}</td>
+                    <td>{_h.escape(str(row.get("UF","")))}</td>
+                    <td class="valor">{fmt_brl(valor)}</td>
+                    <td>{_h.escape(str(row.get("NOM_VENDEDOR",""))[:22])}</td>
+                </tr>"""
+            corpo_html = f"""<table>
+              <thead><tr><th>DATA</th><th>FILIAL</th><th>NF</th><th>CLIENTE</th><th>CIDADE</th><th>UF</th><th>VALOR</th><th>VENDEDOR</th></tr></thead>
+              <tbody>{linhas}
+                <tr class="total-row"><td colspan="6"><strong>TOTAL</strong></td><td class="valor">{fmt_brl(total_valor)}</td><td></td></tr>
+              </tbody>
+            </table>"""
+
+    # ── Resumo sintético por tipo de movimento ──
     if "DESC_TIPO_MV" in dff.columns:
-        tmv_grp = dff.groupby("DESC_TIPO_MV").agg(
-            fat=("VALOR_LIQUIDO","sum"),
-            notas=("NUM_DOCTO","nunique")
-        ).sort_values("fat", ascending=False)
+        tmv_grp = dff.groupby("DESC_TIPO_MV").agg(fat=("VALOR_LIQUIDO","sum"), notas=("NUM_DOCTO","nunique")).sort_values("fat", ascending=False)
         for tmv_idx, tmv_row in tmv_grp.iterrows():
             pct = round(float(tmv_row["fat"]) / fat * 100, 1) if fat > 0 else 0
             resumo_tmv_html += f"""<tr>
@@ -970,16 +1030,17 @@ def gerar_relatorio_pdf(df: pd.DataFrame, filtro: dict, resultado: dict) -> byte
 @page {{ margin: 1.5cm 1.2cm; size: A4 landscape; }}
 body {{ font-family: Arial, sans-serif; font-size: 9px; color: #222; margin: 0; }}
 .header {{ background: #C8102E; color: #fff; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }}
-.header-left h1 {{ margin: 0; font-size: 18px; letter-spacing: 2px; }}
-.header-left p {{ margin: 3px 0 0; font-size: 10px; opacity: .8; }}
+.header-left h1 {{ margin: 0; font-size: 16px; letter-spacing: 2px; }}
+.header-left p {{ margin: 3px 0 0; font-size: 9px; opacity: .85; }}
 .header-right {{ text-align: right; font-size: 9px; line-height: 1.6; }}
 .kpis {{ display: flex; gap: 10px; margin-bottom: 16px; }}
 .kpi {{ flex: 1; border: 1px solid #ddd; border-top: 3px solid #C8102E; border-radius: 5px; padding: 8px 12px; background: #fafafa; }}
 .kpi-label {{ font-size: 8px; color: #999; text-transform: uppercase; letter-spacing: .8px; }}
-.kpi-value {{ font-size: 15px; font-weight: bold; color: #111; margin-top: 3px; }}
+.kpi-value {{ font-size: 14px; font-weight: bold; color: #111; margin-top: 3px; }}
 .grupo-header {{ background: #1A1A1A; color: #fff; padding: 6px 12px; display: flex; justify-content: space-between; border-radius: 4px 4px 0 0; margin-top: 10px; }}
 .grupo-tipo {{ font-size: 10px; font-weight: bold; letter-spacing: .5px; }}
 .grupo-stats {{ font-size: 9px; color: #F5C800; }}
+.resumo-header {{ background: #C8102E; color: #fff; padding: 6px 12px; display: flex; justify-content: space-between; border-radius: 4px 4px 0 0; margin-top: 20px; page-break-before: auto; }}
 table {{ width: 100%; border-collapse: collapse; margin-bottom: 0; }}
 thead tr {{ background: #f0f0f0; }}
 th {{ padding: 5px 6px; text-align: left; font-size: 8px; color: #666; text-transform: uppercase; border-bottom: 2px solid #ddd; white-space: nowrap; }}
@@ -994,8 +1055,8 @@ tr:nth-child(even) td {{ background: #f9f9f9; }}
 <body>
 <div class="header">
   <div class="header-left">
-    <h1>IAF &middot; RELATÓRIO DE FATURAMENTO</h1>
-    <p>Frinense Alimentos &middot; {_h.escape(filial_label)}{(' &middot; Cliente: ' + _h.escape(str(cliente_label))) if cliente_label else ''}</p>
+    <h1>IAF &middot; {_h.escape(titulo_rel)}</h1>
+    <p>Frinense Alimentos &middot; {_h.escape(subtitulo)}</p>
   </div>
   <div class="header-right">
     <div><strong>Período:</strong> {periodo_label}</div>
@@ -1005,35 +1066,22 @@ tr:nth-child(even) td {{ background: #f9f9f9; }}
 <div class="kpis">
   <div class="kpi"><div class="kpi-label">Faturamento</div><div class="kpi-value">{fmt_brl(fat)}</div></div>
   <div class="kpi"><div class="kpi-label">Volume</div><div class="kpi-value">{fmt_kg(kg)}</div></div>
-  <div class="kpi"><div class="kpi-label">CX30</div><div class="kpi-value">{int(cx):,}</div></div>
-  <div class="kpi"><div class="kpi-label">Notas</div><div class="kpi-value">{int(notas):,}</div></div>
+  <div class="kpi"><div class="kpi-label">CX30</div><div class="kpi-value">{cx:,}</div></div>
+  <div class="kpi"><div class="kpi-label">Notas</div><div class="kpi-value">{notas:,}</div></div>
   <div class="kpi"><div class="kpi-label">R$/kg</div><div class="kpi-value">{fmt_brl(pm)}</div></div>
 </div>
-{grupos_html}
-
-<!-- RESUMO SINTÉTICO -->
-<div style="margin-top:20px;page-break-inside:avoid;">
-  <div class="grupo-header" style="border-radius:4px;margin-bottom:0;">
-    <span class="grupo-tipo">📊 RESUMO SINTÉTICO — POR TIPO DE MOVIMENTO</span>
-    <span class="grupo-stats">Total Geral: {fmt_brl(fat)}</span>
-  </div>
-  <table>
-    <thead><tr>
-      <th>TIPO DE MOVIMENTO</th><th style="text-align:right">NOTAS</th>
-      <th style="text-align:right">FATURAMENTO</th><th style="text-align:right">% DO TOTAL</th>
-    </tr></thead>
-    <tbody>
-      {resumo_tmv_html}
-      <tr class="total-row">
-        <td><strong>TOTAL GERAL</strong></td>
-        <td class="valor">{int(notas):,}</td>
-        <td class="valor">{fmt_brl(fat)}</td>
-        <td class="valor">100,00%</td>
-      </tr>
-    </tbody>
-  </table>
+{corpo_html}
+<div class="resumo-header">
+  <span class="grupo-tipo">📊 RESUMO POR TIPO DE MOVIMENTO</span>
+  <span class="grupo-stats">Total: {fmt_brl(fat)}</span>
 </div>
-
+<table>
+  <thead><tr><th>TIPO DE MOVIMENTO</th><th style="text-align:right">NOTAS</th><th style="text-align:right">FATURAMENTO</th><th style="text-align:right">% DO TOTAL</th></tr></thead>
+  <tbody>
+    {resumo_tmv_html if resumo_tmv_html else f'<tr><td colspan="4">Sem agrupamento por tipo disponível</td></tr>'}
+    <tr class="total-row"><td><strong>TOTAL GERAL</strong></td><td class="valor">{notas:,}</td><td class="valor">{fmt_brl(fat)}</td><td class="valor">100,0%</td></tr>
+  </tbody>
+</table>
 <div class="footer">
   <span>IAF &middot; Analista Comercial &middot; Frinense Alimentos</span>
   <span>Gerado automaticamente em {hoje_str}</span>
@@ -1049,18 +1097,18 @@ tr:nth-child(even) td {{ background: #f9f9f9; }}
     PRET = colors.HexColor("#1A1A1A"); CINZ = colors.HexColor("#F5F5F5"); CINZ2 = colors.HexColor("#DDDDDD")
     buf2 = io.BytesIO()
     doc = SimpleDocTemplate(buf2, pagesize=landscape(A4), leftMargin=1.2*cm, rightMargin=1.2*cm, topMargin=1.2*cm, bottomMargin=1.2*cm)
-    s_t = ParagraphStyle("t", fontName="Helvetica-Bold", fontSize=13, textColor=colors.white)
-    s_s = ParagraphStyle("s", fontName="Helvetica", fontSize=8, textColor=colors.white, alignment=TA_RIGHT)
-    s_g = ParagraphStyle("g", fontName="Helvetica-Bold", fontSize=9, textColor=colors.white)
-    s_gs= ParagraphStyle("gs",fontName="Helvetica", fontSize=8, textColor=AMAR, alignment=TA_RIGHT)
-    s_kl= ParagraphStyle("kl",fontName="Helvetica", fontSize=7, textColor=colors.grey, alignment=TA_CENTER)
-    s_kv= ParagraphStyle("kv",fontName="Helvetica-Bold", fontSize=11, textColor=PRET, alignment=TA_CENTER)
-    s_r = ParagraphStyle("r", fontName="Helvetica", fontSize=7, textColor=colors.grey)
+    s_t  = ParagraphStyle("t",  fontName="Helvetica-Bold", fontSize=12, textColor=colors.white)
+    s_s  = ParagraphStyle("s",  fontName="Helvetica",      fontSize=8,  textColor=colors.white, alignment=TA_RIGHT)
+    s_g  = ParagraphStyle("g",  fontName="Helvetica-Bold", fontSize=9,  textColor=colors.white)
+    s_gs = ParagraphStyle("gs", fontName="Helvetica",      fontSize=8,  textColor=AMAR, alignment=TA_RIGHT)
+    s_kl = ParagraphStyle("kl", fontName="Helvetica",      fontSize=7,  textColor=colors.grey, alignment=TA_CENTER)
+    s_kv = ParagraphStyle("kv", fontName="Helvetica-Bold", fontSize=11, textColor=PRET, alignment=TA_CENTER)
+    s_r  = ParagraphStyle("r",  fontName="Helvetica",      fontSize=7,  textColor=colors.grey)
     story2 = []
-    ht = Table([[Paragraph("IAF · RELATÓRIO DE FATURAMENTO", s_t), Paragraph(f"Período: {periodo_label}<br/>{filial_filtro}<br/>Gerado em {hoje_str}", s_s)]], colWidths=["60%","40%"])
+    ht = Table([[Paragraph(f"IAF · {titulo_rel}", s_t), Paragraph(f"Período: {periodo_label}<br/>{subtitulo}<br/>Gerado em {hoje_str}", s_s)]], colWidths=["60%","40%"])
     ht.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,-1),VERM),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("TOPPADDING",(0,0),(-1,-1),8),("BOTTOMPADDING",(0,0),(-1,-1),8),("LEFTPADDING",(0,0),(-1,-1),10)]))
     story2.append(ht); story2.append(Spacer(1,0.3*cm))
-    kpi = Table([[Paragraph("FATURAMENTO",s_kl),Paragraph("VOLUME",s_kl),Paragraph("CX30",s_kl),Paragraph("NOTAS",s_kl),Paragraph("R$/KG",s_kl)],[Paragraph(fmt_brl(fat),s_kv),Paragraph(fmt_kg(kg),s_kv),Paragraph(f"{int(cx):,}",s_kv),Paragraph(f"{int(notas):,}",s_kv),Paragraph(fmt_brl(pm),s_kv)]], colWidths=["20%"]*5)
+    kpi = Table([[Paragraph("FATURAMENTO",s_kl),Paragraph("VOLUME",s_kl),Paragraph("CX30",s_kl),Paragraph("NOTAS",s_kl),Paragraph("R$/KG",s_kl)],[Paragraph(fmt_brl(fat),s_kv),Paragraph(fmt_kg(kg),s_kv),Paragraph(f"{cx:,}",s_kv),Paragraph(f"{notas:,}",s_kv),Paragraph(fmt_brl(pm),s_kv)]], colWidths=["20%"]*5)
     kpi.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.5,CINZ2),("INNERGRID",(0,0),(-1,-1),0.5,CINZ2),("BACKGROUND",(0,0),(-1,-1),CINZ),("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5),("LINEABOVE",(0,0),(-1,0),2,VERM)]))
     story2.append(kpi); story2.append(Spacer(1,0.4*cm))
     cw = [1.8*cm,1.5*cm,1.8*cm,7*cm,3*cm,1*cm,3*cm,4*cm]
@@ -1073,7 +1121,7 @@ tr:nth-child(even) td {{ background: #f9f9f9; }}
         gt.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,-1),PRET),("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),("LEFTPADDING",(0,0),(0,0),8)]))
         story2.append(gt)
         gc2 = [col for col in ["DATA_MOVTO","NOME_FILIAL","NUM_DOCTO","NOME_CLIENTE","CIDADE","UF","NOM_VENDEDOR"] if col in df_t2.columns]
-        dn2 = df_t2.groupby(gc2).agg(valor=("VALOR_LIQUIDO","sum")).reset_index().sort_values("DATA_MOVTO")
+        dn2 = df_t2.groupby(gc2).agg(valor=("VALOR_LIQUIDO","sum")).reset_index().sort_values("DATA_MOVTO",ascending=False)
         td2 = [["DATA","FILIAL","NF","CLIENTE","CIDADE","UF","VALOR","VENDEDOR"]]; tot2 = 0
         for _, row in dn2.iterrows():
             ds = row["DATA_MOVTO"].strftime("%d/%m/%Y") if hasattr(row.get("DATA_MOVTO",None),"strftime") else ""
@@ -1083,6 +1131,21 @@ tr:nth-child(even) td {{ background: #f9f9f9; }}
         t2 = Table(td2,colWidths=cw,repeatRows=1)
         t2.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),CINZ),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),7.5),("FONTNAME",(0,1),(-1,-2),"Helvetica"),("BACKGROUND",(0,-1),(-1,-1),colors.HexColor("#FFF8DC")),("FONTNAME",(0,-1),(-1,-1),"Helvetica-Bold"),("GRID",(0,0),(-1,-1),0.3,CINZ2),("ROWBACKGROUNDS",(0,1),(-1,-2),[colors.white,CINZ]),("ALIGN",(6,0),(6,-1),"RIGHT"),("TOPPADDING",(0,0),(-1,-1),2),("BOTTOMPADDING",(0,0),(-1,-1),2)]))
         story2.append(t2); story2.append(Spacer(1,0.3*cm))
+    # Resumo sintético ReportLab
+    if "DESC_TIPO_MV" in dff.columns:
+        gt_res = Table([[Paragraph("RESUMO POR TIPO DE MOVIMENTO",s_g),Paragraph(f"Total: {fmt_brl(fat)}",s_gs)]],colWidths=["60%","40%"])
+        gt_res.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,-1),VERM),("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),("LEFTPADDING",(0,0),(0,0),8)]))
+        story2.append(gt_res)
+        tmv_grp2 = dff.groupby("DESC_TIPO_MV").agg(fat=("VALOR_LIQUIDO","sum"),notas=("NUM_DOCTO","nunique")).sort_values("fat",ascending=False)
+        td_res = [["TIPO DE MOVIMENTO","NOTAS","FATURAMENTO","% TOTAL"]]
+        for ti, tr in tmv_grp2.iterrows():
+            pct2 = round(float(tr["fat"])/fat*100,1) if fat>0 else 0
+            td_res.append([str(ti),f"{int(tr['notas']):,}",fmt_brl(tr["fat"]),f"{pct2:.1f}%"])
+        td_res.append(["TOTAL GERAL",f"{notas:,}",fmt_brl(fat),"100,0%"])
+        t_res = Table(td_res,colWidths=["55%","10%","20%","15%"],repeatRows=1)
+        t_res.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),CINZ),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),8),("FONTNAME",(0,1),(-1,-2),"Helvetica"),("BACKGROUND",(0,-1),(-1,-1),colors.HexColor("#FFF8DC")),("FONTNAME",(0,-1),(-1,-1),"Helvetica-Bold"),("GRID",(0,0),(-1,-1),0.3,CINZ2),("ALIGN",(1,0),(-1,-1),"RIGHT"),("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3)]))
+        story2.append(t_res)
+    story2.append(Spacer(1,0.2*cm))
     story2.append(HRFlowable(width="100%",thickness=0.5,color=CINZ2))
     story2.append(Paragraph(f"IAF · Analista Comercial Frinense Alimentos · Gerado em {hoje_str}", s_r))
     doc.build(story2); buf2.seek(0)
