@@ -551,7 +551,7 @@ def calcular(df: pd.DataFrame, filtro: dict) -> dict:
     if tipo == "ultimos_precos" and "DESC_PRODUTO" in dff.columns:
         cliente_nome = dff['NOME_CLIENTE'].iloc[0] if 'NOME_CLIENTE' in dff.columns and len(dff) > 0 else None
         if cliente_nome:
-            d["cliente_encontrado"] = cliente_nome
+            d["cliente_encontrado"] = str(cliente_nome)
         # Para cada produto, pega a última nota e o preço praticado
         prod_grp = dff.sort_values('DATA_MOVTO', ascending=False).groupby(['COD_PRODUTO','DESC_PRODUTO']).agg(
             ultima_data=('DATA_MOVTO','first'),
@@ -1041,7 +1041,30 @@ def gerar_relatorio_pdf(df: pd.DataFrame, filtro: dict, resultado: dict) -> byte
 
     # ── ÚLTIMOS PREÇOS por produto ──
     elif tipo_rel == "ultimos_precos":
+        # Tenta pegar do resultado pré-calculado
         dados_preco = resultado.get("dados", {}).get("ultimos_precos", [])
+        # Se não tiver, calcula direto do dff
+        if not dados_preco and "DESC_PRODUTO" in dff.columns:
+            prod_grp = dff.sort_values("DATA_MOVTO", ascending=False).groupby(["COD_PRODUTO","DESC_PRODUTO"] if "COD_PRODUTO" in dff.columns else ["DESC_PRODUTO"]).agg(
+                ultima_data=("DATA_MOVTO","first"),
+                ultima_nota=("NUM_DOCTO","first") if "NUM_DOCTO" in dff.columns else ("VALOR_LIQUIDO","count"),
+                kg_total=("QTDE_PRI","sum"),
+                fat_total=("VALOR_LIQUIDO","sum"),
+                ultimo_vl_unit=("VALOR_UNITARIO","first") if "VALOR_UNITARIO" in dff.columns else ("VALOR_LIQUIDO","first"),
+                n_compras=("NUM_DOCTO","nunique") if "NUM_DOCTO" in dff.columns else ("VALOR_LIQUIDO","count"),
+            ).reset_index().sort_values("ultima_data", ascending=False)
+            dados_preco = []
+            for _, r in prod_grp.iterrows():
+                kg_t = float(r["kg_total"]); fat_t = float(r["fat_total"])
+                pm = round(fat_t/kg_t,2) if kg_t>0 else 0
+                cod = str(r["COD_PRODUTO"]) if "COD_PRODUTO" in r.index else ""
+                dados_preco.append({
+                    "cod": cod, "produto": str(r["DESC_PRODUTO"]),
+                    "ultima_data": r["ultima_data"].strftime("%d/%m/%Y") if hasattr(r["ultima_data"],"strftime") else str(r["ultima_data"]),
+                    "ultima_nota": str(r["ultima_nota"]),
+                    "ultimo_vl_unit": round(float(r["ultimo_vl_unit"]),2),
+                    "pm_historico": pm, "kg_total": round(kg_t,2), "n_compras": int(r["n_compras"])
+                })
         if dados_preco:
             linhas_p = ""
             for r in dados_preco:
