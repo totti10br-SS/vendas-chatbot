@@ -1013,7 +1013,20 @@ function addMessage(role,content){
   const av=role==='assistant'?'IAF':'👤';
   const rendered=role==='assistant'?processDanfe(renderMarkdown(content)):content;
   if(role==='assistant'){
-    div.innerHTML=`<div class="msg-avatar">${av}</div><div class="bubble">${rendered}<div class="speak-btn" onclick="speakThis(this)" title="Ouvir resposta">🔊</div></div>`;
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    bubble.innerHTML = rendered;
+    const speakBtn = document.createElement('div');
+    speakBtn.className = 'speak-btn';
+    speakBtn.title = 'Ouvir resposta';
+    speakBtn.textContent = '🔊';
+    speakBtn.onclick = function(){ speakThis(this); };
+    bubble.appendChild(speakBtn);
+    const avatar = document.createElement('div');
+    avatar.className = 'msg-avatar';
+    avatar.textContent = av;
+    div.appendChild(avatar);
+    div.appendChild(bubble);
   } else {
     div.innerHTML=`<div class="msg-avatar">${av}</div><div class="bubble">${rendered}</div>`;
   }
