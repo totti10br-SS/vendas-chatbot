@@ -967,7 +967,12 @@ function processDanfe(html) {
           +'</a>';
       } else {
         // Desktop: card clicável que abre modal
-        return '<div class="pdf-card" onclick="abrirDanfeModal(''+chave+'')">'
+        var cardId = 'danfe_'+chave.substring(0,8);
+        setTimeout(function(){
+          var el = document.getElementById(cardId);
+          if(el) el.onclick = function(){ abrirDanfeModal(chave); };
+        }, 100);
+        return '<div class="pdf-card" id="'+cardId+'">'
           +'<span class="pdf-icon">📄</span>'
           +'<div class="pdf-info">'
           +'<div class="pdf-name">'+nomeArq+'</div>'
