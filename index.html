@@ -401,6 +401,23 @@ body.modo-vasco .welcome p strong{color:#fff;}
   .bubble { font-size:13px; padding:9px 12px; }
   .msg-avatar { width:24px; height:24px; font-size:9px; }
   .bubble table { font-size:11px; }
+.mob-cards { display:none; }
+@media (max-width: 768px) {
+  .bubble table { display:none !important; }
+  .mob-cards { display:flex; flex-direction:column; gap:6px; margin:6px 0; }
+  .mob-card { background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:8px 10px; }
+  .mob-card-title { font-size:12px; font-weight:700; color:#fff; margin-bottom:6px; display:flex; align-items:center; gap:6px; }
+  .mob-card-rank { background:var(--red); color:#fff; font-size:10px; font-weight:700; border-radius:3px; padding:1px 5px; flex-shrink:0; }
+  .mob-card-totals { border-top:1px solid rgba(245,200,0,.2); margin-top:4px; padding-top:6px; }
+  .mob-card-totals .mob-card-title { color:var(--yellow); }
+  .mob-card-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:4px; }
+  .mob-card-grid.cols2 { grid-template-columns:repeat(2,1fr); }
+  .mob-card-grid.cols4 { grid-template-columns:repeat(2,1fr); }
+  .mob-cell { background:rgba(255,255,255,.04); border-radius:5px; padding:5px 6px; text-align:center; }
+  .mob-cell-label { font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin-bottom:2px; }
+  .mob-cell-val { font-size:12px; font-weight:700; color:#fff; }
+  .mob-cell-val strong { color:var(--yellow); }
+}
   .bubble th, .bubble td { padding:3px 5px; }
 
   /* SIDE PANEL tela cheia */
@@ -660,13 +677,42 @@ function renderMarkdown(text){
     var ths=parseCells('|'+header+'|');
     var hCount=ths.length;
     var thsHtml=ths.map(function(c){return '<th>'+c+'</th>';}).join('');
-    var trs=rows.trim().split('\n').map(function(row){
+    var rowList=rows.trim().split('\n');
+    var trs=rowList.map(function(row){
       var cells=parseCells(row);
-      // Preenche células faltantes (ex: linha TOTAIS com | | | |)
       while(cells.length<hCount)cells.push('');
       return '<tr>'+cells.map(function(c){return '<td>'+c+'</td>';}).join('')+'</tr>';
     }).join('');
-    return '<table><thead><tr>'+thsHtml+'</tr></thead><tbody>'+trs+'</tbody></table>';
+    // Gera cards mobile
+    var colCount=hCount-1; // sem a primeira coluna (nome/label)
+    var gridClass=colCount<=2?'cols2':colCount>=4?'cols4':'';
+    var cardsHtml='<div class="mob-cards">';
+    rowList.forEach(function(row,idx){
+      var cells=parseCells(row);
+      while(cells.length<hCount)cells.push('');
+      var isTotals=cells[0]&&cells[0].replace(/<[^>]+>/g,'').toUpperCase().indexOf('TOTAL')>=0;
+      var cardClass='mob-card'+(isTotals?' mob-card-totals':'');
+      var rankHtml='';
+      // Se primeira célula for número ou tiver rank
+      var firstClean=cells[0].replace(/<[^>]+>/g,'').trim();
+      var isNum=firstClean&&!isNaN(firstClean.replace(/[#.]/g,''));
+      if(isNum) rankHtml='<span class="mob-card-rank">'+firstClean+'</span>';
+      // Label principal: se houver segunda coluna com nome longo, usa ela
+      var labelIdx=isNum?1:0;
+      var titleText=cells[labelIdx]||'';
+      var dataStart=isNum?2:1;
+      cardsHtml+='<div class="'+cardClass+'">';
+      cardsHtml+='<div class="mob-card-title">'+rankHtml+titleText+'</div>';
+      cardsHtml+='<div class="mob-card-grid '+gridClass+'">';
+      for(var i=dataStart;i<cells.length;i++){
+        var lbl=ths[i]||'';
+        var val=cells[i]||'—';
+        cardsHtml+='<div class="mob-cell"><div class="mob-cell-label">'+lbl+'</div><div class="mob-cell-val">'+val+'</div></div>';
+      }
+      cardsHtml+='</div></div>';
+    });
+    cardsHtml+='</div>';
+    return '<table><thead><tr>'+thsHtml+'</tr></thead><tbody>'+trs+'</tbody></table>'+cardsHtml;
   });
   text=text.replace(/^### (.+)$/gm,'<h3>$1</h3>');
   text=text.replace(/^## (.+)$/gm,'<h2>$1</h2>');
