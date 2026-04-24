@@ -819,16 +819,15 @@ def detalhe_tipo(tipo: str):
 #  ROUTE — /chat (nova arquitetura)
 # ─────────────────────────────────────────────
 def gerar_relatorio_pdf(df: pd.DataFrame, filtro: dict, resultado: dict) -> bytes:
-    """Gera PDF de relatório de faturamento agrupado por tipo de movimento."""
-    import html as html_escape
+    """Gera PDF de faturamento agrupado por tipo de movimento usando WeasyPrint."""
+    import html as _h
 
     dados = resultado.get("dados", {})
     d1 = filtro.get("data_inicio", "")
     d2 = filtro.get("data_fim", "")
-    filial_filtro = filtro.get("filial", "Todas as Filiais")
+    filial_filtro = filtro.get("filial") or "Todas as Filiais"
     hoje_str = datetime.now().strftime("%d/%m/%Y %H:%M")
 
-    # Período label
     try:
         p1 = datetime.strptime(d1, "%Y-%m-%d").strftime("%d/%m/%Y")
         p2 = datetime.strptime(d2, "%Y-%m-%d").strftime("%d/%m/%Y")
@@ -836,19 +835,20 @@ def gerar_relatorio_pdf(df: pd.DataFrame, filtro: dict, resultado: dict) -> byte
     except:
         periodo_label = f"{d1} a {d2}"
 
-    # KPIs
+    def fmt_brl(v):
+        try: return f"R$ {float(v):,.2f}".replace(",","X").replace(".",",").replace("X",".")
+        except: return "R$ 0,00"
+    def fmt_kg(v):
+        try: return f"{float(v):,.2f} kg".replace(",","X").replace(".",",").replace("X",".")
+        except: return "0,00 kg"
+
     fat   = dados.get("faturamento", 0)
     kg    = dados.get("kg", 0)
     cx    = dados.get("cx30", 0)
     notas = dados.get("notas", 0)
     pm    = dados.get("preco_medio", 0)
 
-    def fmt_brl(v):
-        return f"R$ {v:,.2f}".replace(",","X").replace(".",",").replace("X",".")
-    def fmt_kg(v):
-        return f"{v:,.2f} kg".replace(",","X").replace(".",",").replace("X",".")
-
-    # Busca dados brutos filtrados do DataFrame
+    # Dados brutos filtrados
     dff = df.copy()
     if filtro.get("data_inicio"):
         dff = dff[dff["DATA_MOVTO"] >= pd.to_datetime(filtro["data_inicio"])]
@@ -857,104 +857,100 @@ def gerar_relatorio_pdf(df: pd.DataFrame, filtro: dict, resultado: dict) -> byte
     if filtro.get("filial") and "NOME_FILIAL" in dff.columns:
         dff = dff[dff["NOME_FILIAL"].str.upper() == filtro["filial"].upper()]
 
-    # Agrupa por tipo de movimento → notas
+    # Grupos por tipo de movimento
     grupos_html = ""
-    if "DESC_TIPO_MV" in dff.columns:
-        tipos = dff["DESC_TIPO_MV"].fillna("SEM TIPO").unique()
-        for tipo in sorted(tipos):
-            df_tipo = dff[dff["DESC_TIPO_MV"].fillna("SEM TIPO") == tipo]
-            # Agrupa por nota
-            cols_grp = [c for c in ["DATA_MOVTO","cod_filial","NUM_DOCTO","NOME_CLIENTE","CIDADE","UF","NOM_VENDEDOR"] if c in df_tipo.columns]
-            df_notas = df_tipo.groupby(cols_grp).agg(valor=("VALOR_LIQUIDO","sum")).reset_index()
-            df_notas = df_notas.sort_values("DATA_MOVTO")
+    tipos = sorted(dff["DESC_TIPO_MV"].fillna("SEM TIPO").unique()) if "DESC_TIPO_MV" in dff.columns else ["SEM TIPO"]
 
-            fat_tipo = df_tipo["VALOR_LIQUIDO"].sum()
-            n_notas  = df_tipo["NUM_DOCTO"].nunique() if "NUM_DOCTO" in df_tipo.columns else 0
+    for tipo in tipos:
+        df_tipo = dff[dff["DESC_TIPO_MV"].fillna("SEM TIPO") == tipo] if "DESC_TIPO_MV" in dff.columns else dff
+        if len(df_tipo) == 0: continue
 
-            linhas = ""
-            for _, row in df_notas.iterrows():
-                data_str = row["DATA_MOVTO"].strftime("%d/%m/%Y") if hasattr(row.get("DATA_MOVTO"), "strftime") else str(row.get("DATA_MOVTO",""))
-                filial_str = html_escape.escape(str(row.get("cod_filial","")))
-                nr_nota    = html_escape.escape(str(row.get("NUM_DOCTO","")))
-                cliente    = html_escape.escape(str(row.get("NOME_CLIENTE",""))[:40])
-                cidade     = html_escape.escape(str(row.get("CIDADE",""))[:20])
-                uf         = html_escape.escape(str(row.get("UF","")))
-                valor      = fmt_brl(float(row.get("valor",0)))
-                vendedor   = html_escape.escape(str(row.get("NOM_VENDEDOR",""))[:25])
-                linhas += f"""<tr>
-                    <td>{data_str}</td><td>{filial_str}</td><td>{nr_nota}</td>
-                    <td class="nome">{cliente}</td><td>{cidade}</td><td>{uf}</td>
-                    <td class="valor">{valor}</td><td>{vendedor}</td>
-                </tr>"""
+        fat_tipo = df_tipo["VALOR_LIQUIDO"].sum()
+        n_notas  = df_tipo["NUM_DOCTO"].nunique() if "NUM_DOCTO" in df_tipo.columns else 0
 
-            grupos_html += f"""
-            <div class="grupo">
-              <div class="grupo-header">
-                <span class="grupo-tipo">{html_escape.escape(tipo)}</span>
-                <span class="grupo-stats">{n_notas} notas · {fmt_brl(fat_tipo)}</span>
-              </div>
-              <table>
-                <thead><tr>
-                  <th>DATA</th><th>FILIAL</th><th>NF</th><th>CLIENTE</th>
-                  <th>CIDADE</th><th>UF</th><th>VALOR</th><th>VENDEDOR</th>
-                </tr></thead>
-                <tbody>{linhas}</tbody>
-              </table>
-            </div>"""
+        grp_cols = [col for col in ["DATA_MOVTO","NOME_FILIAL","NUM_DOCTO","NOME_CLIENTE","CIDADE","UF","NOM_VENDEDOR"] if col in df_tipo.columns]
+        df_notas = df_tipo.groupby(grp_cols).agg(valor=("VALOR_LIQUIDO","sum")).reset_index().sort_values("DATA_MOVTO")
+
+        linhas = ""
+        total_valor = 0
+        for _, row in df_notas.iterrows():
+            data_str = row["DATA_MOVTO"].strftime("%d/%m/%Y") if hasattr(row.get("DATA_MOVTO",None),"strftime") else str(row.get("DATA_MOVTO",""))
+            valor = float(row.get("valor", 0))
+            total_valor += valor
+            linhas += f"""<tr>
+                <td>{_h.escape(data_str)}</td>
+                <td>{_h.escape(str(row.get("NOME_FILIAL",""))[:8])}</td>
+                <td>{_h.escape(str(row.get("NUM_DOCTO","")))}</td>
+                <td class="nome">{_h.escape(str(row.get("NOME_CLIENTE",""))[:45])}</td>
+                <td>{_h.escape(str(row.get("CIDADE",""))[:18])}</td>
+                <td>{_h.escape(str(row.get("UF","")))}</td>
+                <td class="valor">{fmt_brl(valor)}</td>
+                <td>{_h.escape(str(row.get("NOM_VENDEDOR",""))[:22])}</td>
+            </tr>"""
+
+        grupos_html += f"""
+        <div class="grupo-header">
+          <span class="grupo-tipo">{_h.escape(str(tipo))}</span>
+          <span class="grupo-stats">{n_notas} notas &middot; {fmt_brl(fat_tipo)}</span>
+        </div>
+        <table>
+          <thead><tr><th>DATA</th><th>FILIAL</th><th>NF</th><th>CLIENTE</th><th>CIDADE</th><th>UF</th><th>VALOR</th><th>VENDEDOR</th></tr></thead>
+          <tbody>
+            {linhas}
+            <tr class="total-row"><td colspan="6"><strong>TOTAL</strong></td><td class="valor">{fmt_brl(total_valor)}</td><td></td></tr>
+          </tbody>
+        </table>"""
 
     html_content = f"""<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8"/>
 <style>
-  @page {{ margin: 1.5cm 1.2cm; size: A4 landscape; }}
-  body {{ font-family: Arial, sans-serif; font-size: 9px; color: #222; margin: 0; }}
-  .header {{ background: #c8102e; color: #fff; padding: 10px 14px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }}
-  .header h1 {{ margin: 0; font-size: 16px; letter-spacing: 1px; }}
-  .header .sub {{ font-size: 10px; opacity: .85; margin-top: 2px; }}
-  .header .right {{ text-align: right; font-size: 9px; }}
-  .kpis {{ display: flex; gap: 10px; margin-bottom: 14px; }}
-  .kpi {{ flex: 1; border: 1px solid #ddd; border-top: 3px solid #c8102e; border-radius: 4px; padding: 6px 10px; }}
-  .kpi-label {{ font-size: 8px; color: #888; text-transform: uppercase; letter-spacing: .5px; }}
-  .kpi-value {{ font-size: 14px; font-weight: bold; color: #111; margin-top: 2px; }}
-  .grupo {{ margin-bottom: 16px; }}
-  .grupo-header {{ background: #1a1a1a; color: #fff; padding: 5px 10px; display: flex; justify-content: space-between; border-radius: 3px 3px 0 0; }}
-  .grupo-tipo {{ font-size: 10px; font-weight: bold; letter-spacing: .5px; }}
-  .grupo-stats {{ font-size: 9px; color: #f5c800; }}
-  table {{ width: 100%; border-collapse: collapse; }}
-  thead tr {{ background: #f5f5f5; }}
-  th {{ padding: 4px 5px; text-align: left; font-size: 8px; color: #555; text-transform: uppercase; border-bottom: 1px solid #ddd; white-space: nowrap; }}
-  td {{ padding: 3px 5px; border-bottom: 1px solid #eee; font-size: 8.5px; }}
-  tr:nth-child(even) {{ background: #fafafa; }}
-  .valor {{ text-align: right; font-weight: bold; }}
-  .nome {{ max-width: 180px; }}
-  .footer {{ margin-top: 20px; border-top: 1px solid #ddd; padding-top: 6px; font-size: 8px; color: #999; display: flex; justify-content: space-between; }}
+@page {{ margin: 1.5cm 1.2cm; size: A4 landscape; }}
+body {{ font-family: Arial, sans-serif; font-size: 9px; color: #222; margin: 0; }}
+.header {{ background: #C8102E; color: #fff; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }}
+.header-left h1 {{ margin: 0; font-size: 18px; letter-spacing: 2px; }}
+.header-left p {{ margin: 3px 0 0; font-size: 10px; opacity: .8; }}
+.header-right {{ text-align: right; font-size: 9px; line-height: 1.6; }}
+.kpis {{ display: flex; gap: 10px; margin-bottom: 16px; }}
+.kpi {{ flex: 1; border: 1px solid #ddd; border-top: 3px solid #C8102E; border-radius: 5px; padding: 8px 12px; background: #fafafa; }}
+.kpi-label {{ font-size: 8px; color: #999; text-transform: uppercase; letter-spacing: .8px; }}
+.kpi-value {{ font-size: 15px; font-weight: bold; color: #111; margin-top: 3px; }}
+.grupo-header {{ background: #1A1A1A; color: #fff; padding: 6px 12px; display: flex; justify-content: space-between; border-radius: 4px 4px 0 0; margin-top: 10px; }}
+.grupo-tipo {{ font-size: 10px; font-weight: bold; letter-spacing: .5px; }}
+.grupo-stats {{ font-size: 9px; color: #F5C800; }}
+table {{ width: 100%; border-collapse: collapse; margin-bottom: 0; }}
+thead tr {{ background: #f0f0f0; }}
+th {{ padding: 5px 6px; text-align: left; font-size: 8px; color: #666; text-transform: uppercase; border-bottom: 2px solid #ddd; white-space: nowrap; }}
+td {{ padding: 4px 6px; border-bottom: 1px solid #eee; font-size: 8.5px; }}
+tr:nth-child(even) td {{ background: #f9f9f9; }}
+.valor {{ text-align: right; font-weight: bold; }}
+.nome {{ max-width: 200px; }}
+.total-row td {{ background: #FFF8DC !important; font-weight: bold; border-top: 2px solid #ddd; }}
+.footer {{ margin-top: 16px; border-top: 1px solid #ddd; padding-top: 6px; display: flex; justify-content: space-between; font-size: 8px; color: #aaa; }}
 </style>
 </head>
 <body>
 <div class="header">
-  <div>
-    <div class="h1" style="font-size:16px;font-weight:bold;letter-spacing:1px;">IAF · RELATÓRIO DE FATURAMENTO</div>
-    <div class="sub">Frinense Alimentos · {html_escape.escape(filial_filtro or "Todas as Filiais")}</div>
+  <div class="header-left">
+    <h1>IAF &middot; RELATÓRIO DE FATURAMENTO</h1>
+    <p>Frinense Alimentos &middot; {_h.escape(filial_filtro)}</p>
   </div>
-  <div class="right">
+  <div class="header-right">
     <div><strong>Período:</strong> {periodo_label}</div>
-    <div>Gerado em {hoje_str}</div>
+    <div><strong>Gerado em:</strong> {hoje_str}</div>
   </div>
 </div>
-
 <div class="kpis">
   <div class="kpi"><div class="kpi-label">Faturamento</div><div class="kpi-value">{fmt_brl(fat)}</div></div>
   <div class="kpi"><div class="kpi-label">Volume</div><div class="kpi-value">{fmt_kg(kg)}</div></div>
-  <div class="kpi"><div class="kpi-label">CX30</div><div class="kpi-value">{cx:,}</div></div>
-  <div class="kpi"><div class="kpi-label">Notas</div><div class="kpi-value">{notas:,}</div></div>
+  <div class="kpi"><div class="kpi-label">CX30</div><div class="kpi-value">{int(cx):,}</div></div>
+  <div class="kpi"><div class="kpi-label">Notas</div><div class="kpi-value">{int(notas):,}</div></div>
   <div class="kpi"><div class="kpi-label">R$/kg</div><div class="kpi-value">{fmt_brl(pm)}</div></div>
 </div>
-
 {grupos_html}
-
 <div class="footer">
-  <span>IAF · Analista Comercial Frinense Alimentos</span>
+  <span>IAF &middot; Analista Comercial &middot; Frinense Alimentos</span>
   <span>Gerado automaticamente em {hoje_str}</span>
 </div>
 </body></html>"""
@@ -964,6 +960,7 @@ def gerar_relatorio_pdf(df: pd.DataFrame, filtro: dict, resultado: dict) -> byte
 
     pdf_bytes = WeasyprintHTML(string=html_content).write_pdf()
     return pdf_bytes
+
 
 
 @app.post("/chat")
