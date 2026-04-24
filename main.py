@@ -979,6 +979,7 @@ def gerar_relatorio_pdf(df: pd.DataFrame, filtro: dict, resultado: dict) -> byte
         "resumo_mensal":    "RESUMO MENSAL DE VENDAS",
         "resumo_diario":    "RESUMO DIÁRIO DE VENDAS",
         "ultimas_vendas":   "ÚLTIMAS VENDAS POR NOTA",
+        "ultimos_precos":   "ÚLTIMOS PREÇOS POR PRODUTO",
         "ranking_clientes": "RANKING DE CLIENTES",
         "ranking_vendedores": "RANKING DE VENDEDORES",
         "ranking_produtos":  "RANKING DE PRODUTOS",
@@ -1270,8 +1271,10 @@ td {{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
     kpi.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.5,CINZ2),("INNERGRID",(0,0),(-1,-1),0.5,CINZ2),("BACKGROUND",(0,0),(-1,-1),CINZ),("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5),("LINEABOVE",(0,0),(-1,0),2,VERM)]))
     story2.append(kpi); story2.append(Spacer(1,0.4*cm))
 
-    # ── ULTIMOS PREÇOS — ReportLab ──
+    # ── ULTIMOS PREÇOS — ReportLab (sem KPI de vendas) ──
     if tipo_rel == "ultimos_precos":
+        # Remover o KPI de vendas que não faz sentido para preços
+        story2 = story2[:-2]  # remove kpi e spacer
         dados_preco = resultado.get("dados", {}).get("ultimos_precos", [])
         s_th = ParagraphStyle("th", fontName="Helvetica-Bold", fontSize=7, textColor=colors.HexColor("#666666"))
         s_td = ParagraphStyle("td", fontName="Helvetica", fontSize=7.5, textColor=PRET)
