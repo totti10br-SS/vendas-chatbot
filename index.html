@@ -686,7 +686,7 @@ function renderMarkdown(text){
     // Gera cards mobile
     var colCount=hCount-1; // sem a primeira coluna (nome/label)
     var gridClass=colCount<=2?'cols2':colCount>=4?'cols4':'';
-    var cardsHtml='<div class="mob-cards">';
+    var cardsHtml='<!--MOBSTART--><div class="mob-cards">';
     rowList.forEach(function(row,idx){
       var cells=parseCells(row);
       while(cells.length<hCount)cells.push('');
@@ -711,7 +711,7 @@ function renderMarkdown(text){
       }
       cardsHtml+='</div></div>';
     });
-    cardsHtml+='</div>';
+    cardsHtml+='</div><!--MOBEND-->';
     return '<table><thead><tr>'+thsHtml+'</tr></thead><tbody>'+trs+'</tbody></table>'+cardsHtml;
   });
   text=text.replace(/^### (.+)$/gm,'<h3>$1</h3>');
@@ -735,17 +735,14 @@ function renderMarkdown(text){
     if(items.length<2) return m;
     return '<div class="semanas-box"><div class="semanas-box-title">📅 Resumo por Semana</div>'+items.join('')+'</div>';
   });
-  // Extrai mob-cards do fluxo antes de envolver em <p>
-  var mobCardsExtracted = [];
-  text = text.replace(/<div class="mob-cards">[\s\S]*?<\/div><\/div><\/div>/g, function(m){
-    mobCardsExtracted.push(m);
-    return '%%%MOBCARD'+(mobCardsExtracted.length-1)+'%%%';
-  });
-  var result = '<p>'+text+'</p>';
-  // Reinsere os mob-cards fora do <p>
-  mobCardsExtracted.forEach(function(card, i){
-    result = result.replace('%%%MOBCARD'+i+'%%%', '</p>'+card+'<p>');
-  });
+  // Extrai mob-cards (marcados com MOBSTART/MOBEND) para fora do <p>
+  var parts = text.split('<!--MOBSTART-->');
+  var result = '<p>' + parts[0] + '</p>';
+  for(var i=1; i<parts.length; i++){
+    var subparts = parts[i].split('<!--MOBEND-->');
+    result += subparts[0]; // card HTML (sem <p>)
+    if(subparts[1]) result += '<p>' + subparts[1] + '</p>';
+  }
   return result;
 }
 async function forceReload(){
