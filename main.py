@@ -413,17 +413,23 @@ def calcular(df: pd.DataFrame, filtro: dict) -> dict:
 
     # ── Top produtos ──
     if 'DESC_PRODUTO' in dff.columns:
-        top_prod = dff.groupby('DESC_PRODUTO').agg(
+        grp_prod_cols = ['DESC_PRODUTO']
+        if 'DESC_DIVISAO2' in dff.columns: grp_prod_cols.append('DESC_DIVISAO2')
+        if 'DESC_DIVISAO3' in dff.columns: grp_prod_cols.append('DESC_DIVISAO3')
+        top_prod = dff.groupby(grp_prod_cols).agg(
             kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum')
-        ).sort_values('kg', ascending=False).head(15)
-        d["top_produtos"] = [
-            {"nome": idx,
-             "kg": round(float(r.kg),2),
-             "cx30": int(round(r.kg/30,0)),
-             "faturamento": round(float(r.fat),2),
-             "pm": round(float(r.fat)/float(r.kg),2) if r.kg > 0 else 0}
-            for idx, r in top_prod.iterrows()
-        ]
+        ).sort_values('kg', ascending=False).head(15).reset_index()
+        d["top_produtos"] = []
+        for _, r in top_prod.iterrows():
+            d["top_produtos"].append({
+                "nome": str(r['DESC_PRODUTO']),
+                "divisao": str(r['DESC_DIVISAO2']) if 'DESC_DIVISAO2' in top_prod.columns else None,
+                "tipo_corte": str(r['DESC_DIVISAO3']) if 'DESC_DIVISAO3' in top_prod.columns else None,
+                "kg": round(float(r.kg),2),
+                "cx30": int(round(r.kg/30,0)),
+                "faturamento": round(float(r.fat),2),
+                "pm": round(float(r.fat)/float(r.kg),2) if r.kg > 0 else 0
+            })
 
     # ── Top vendedores ──
     if 'NOM_VENDEDOR' in dff.columns and 'COD_VENDEDOR' in dff.columns:
@@ -443,17 +449,23 @@ def calcular(df: pd.DataFrame, filtro: dict) -> dict:
 
     # ── Por tipo de corte ──
     if 'DESC_DIVISAO2' in dff.columns:
-        por_tipo = dff.groupby('DESC_DIVISAO2').agg(
+        grp_cols_div = ['DESC_DIVISAO2']
+        if 'DESC_DIVISAO3' in dff.columns:
+            grp_cols_div = ['DESC_DIVISAO2','DESC_DIVISAO3']
+        por_tipo = dff.groupby(grp_cols_div).agg(
             kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum')
-        ).sort_values('kg', ascending=False)
-        d["por_tipo_corte"] = [
-            {"tipo": idx,
-             "kg": round(float(r.kg),2),
-             "cx30": int(round(r.kg/30,0)),
-             "faturamento": round(float(r.fat),2),
-             "pm": round(float(r.fat)/float(r.kg),2) if r.kg > 0 else 0}
-            for idx, r in por_tipo.iterrows()
-        ]
+        ).sort_values('kg', ascending=False).reset_index()
+        d["por_tipo_corte"] = []
+        for _, r in por_tipo.iterrows():
+            item = {
+                "tipo": str(r['DESC_DIVISAO2']),
+                "tipo_corte": str(r['DESC_DIVISAO3']) if 'DESC_DIVISAO3' in por_tipo.columns else None,
+                "kg": round(float(r.kg),2),
+                "cx30": int(round(r.kg/30,0)),
+                "faturamento": round(float(r.fat),2),
+                "pm": round(float(r.fat)/float(r.kg),2) if r.kg > 0 else 0
+            }
+            d["por_tipo_corte"].append(item)
 
     # ── Por tipo de movimento (COD_TIPO_MV / DESC_TIPO_MV) ──
     if 'DESC_TIPO_MV' in dff.columns:
@@ -477,7 +489,7 @@ def calcular(df: pd.DataFrame, filtro: dict) -> dict:
     # ── Detalhe de nota fiscal ──
     if tipo == "detalhe_nota" and 'NUM_DOCTO' in dff.columns:
         cols_nota = [c for c in ['NUM_DOCTO','DATA_MOVTO','NOME_CLIENTE','NOME_FILIAL',
-                                  'NOM_VENDEDOR','COD_PRODUTO','DESC_PRODUTO','DESC_DIVISAO2',
+                                  'NOM_VENDEDOR','COD_PRODUTO','DESC_PRODUTO','DESC_DIVISAO2','DESC_DIVISAO3',
                                   'QTDE_PRI','QTDE_AUX','VALOR_UNITARIO','VALOR_LIQUIDO',
                                   'CHAVE_ACESSO'] if c in dff.columns]
         itens = []
@@ -530,7 +542,7 @@ def calcular(df: pd.DataFrame, filtro: dict) -> dict:
 
         # Itens detalhados — max 100 linhas
         cols_item = [col for col in ['DATA_MOVTO','NUM_DOCTO','NOME_FILIAL','NOM_VENDEDOR',
-                                     'COD_PRODUTO','DESC_PRODUTO','DESC_DIVISAO2',
+                                     'COD_PRODUTO','DESC_PRODUTO','DESC_DIVISAO2','DESC_DIVISAO3',
                                      'QTDE_PRI','QTDE_AUX','VALOR_UNITARIO','VALOR_LIQUIDO',
                                      'CHAVE_ACESSO'] if col in dff.columns]
         ultimas = dff[cols_item].sort_values('DATA_MOVTO', ascending=False).head(100)
