@@ -1188,7 +1188,7 @@ async def chat(req: ChatRequest):
                 cli_label = "_" + re.sub(r'[^A-Za-z0-9]','',filtro["cliente"])[:15].upper()
             fil_label = ("_" + filtro["filial"]) if filtro.get("filial") else ""
             filename = f"IAF_{mes_label}{fil_label}{cli_label}.pdf"
-            logging.info(f"[PDF] Gerando: {filename} | linhas dff: {len(dff)}")
+            logging.info(f"[PDF] Gerando: {filename}")
             import base64 as _b64
             pdf_b64 = _b64.b64encode(pdf_bytes).decode()
             return JSONResponse({
