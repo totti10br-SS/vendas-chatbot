@@ -1422,6 +1422,13 @@ async def chat(req: ChatRequest):
                 ultima_resp_assist = str(msg.get("content", "")).lower()
                 break
 
+        # LOG: ver exatamente o que chega como última resposta do assistente
+        logging.info(f"[PDF-DEBUG] ultima_resp_assist (primeiros 500 chars): {ultima_resp_assist[:500]!r}")
+        logging.info(f"[PDF-DEBUG] filtro antes da detecção: tipo={filtro.get('tipo')} cliente={filtro.get('cliente')}")
+        logging.info(f"[PDF-DEBUG] total msgs no histórico: {len(historico)}")
+        for i, msg in enumerate(historico[-6:]):
+            logging.info(f"[PDF-DEBUG] hist[-{6-i}] role={msg.get('role')} content={str(msg.get('content',''))[:100]!r}")
+
         # Detectar tipo pelo que estava sendo exibido na tela
         tipo_detectado = None
         if any(p in ultima_resp_assist for p in ["últimos preços", "ultimos precos", "r$/kg médio", "última compra", "nº compras"]):
