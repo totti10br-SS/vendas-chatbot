@@ -975,6 +975,16 @@ async function sendMessage(){
       const replyClean = insight ? removeInsightFromText(reply) : reply;
       addMessage('assistant',replyClean);
       if(insight) addInsight(insight);
+      // Auto-voz: só se usuário pediu e resposta não é só tabela
+      const pedidoVoz = /\b(fala|fale|em voz|com voz|leia|lê|me diz|me fala|quero ouvir|ouvir|voz|audio|áudio|falar)\b/i.test(text);
+      const temTabela = (replyClean.match(/\|/g)||[]).length > 4;
+      if(pedidoVoz && !temTabela){
+        setTimeout(function(){
+          const btns = document.querySelectorAll('.speak-btn');
+          const lastBtn = btns[btns.length-1];
+          if(lastBtn) speakThis(lastBtn);
+        }, 300);
+      }
     }
   }catch(err){typing.remove();addMessage('assistant',`❌ ${err.message}`);}
   document.getElementById('sendBtn').disabled=false;
