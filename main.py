@@ -865,6 +865,30 @@ def gerar_relatorio_pdf(df: pd.DataFrame, filtro: dict, resultado: dict) -> byte
     if filtro.get("filial") and "NOME_FILIAL" in dff.columns:
         dff = dff[dff["NOME_FILIAL"].str.upper() == filtro["filial"].upper()]
 
+    # Filtro de cliente
+    cliente_label = None
+    if filtro.get("cliente") and "NOME_CLIENTE" in dff.columns:
+        nome_cli = filtro["cliente"]
+        for tam in [25, 15, 8, 5]:
+            mask = dff["NOME_CLIENTE"].str.lower().str.contains(nome_cli.lower()[:tam], na=False)
+            if mask.sum() > 0:
+                dff = dff[mask]
+                cliente_label = dff["NOME_CLIENTE"].iloc[0]
+                break
+    elif filtro.get("cnpj_raiz") and "CPF_CGC" in dff.columns:
+        raiz = re.sub(r'\D', '', filtro["cnpj_raiz"])[:8]
+        mask = dff["CPF_CGC"].astype(str).str.replace(r'\D','',regex=True).str.startswith(raiz)
+        if mask.sum() > 0:
+            dff = dff[mask]
+            cliente_label = dff["NOME_CLIENTE"].iloc[0] if "NOME_CLIENTE" in dff.columns else raiz
+
+    # Recalcula KPIs com dados filtrados (pode ter mudado por cliente)
+    fat   = round(float(dff["VALOR_LIQUIDO"].sum()), 2)
+    kg    = round(float(dff["QTDE_PRI"].sum()), 2) if "QTDE_PRI" in dff.columns else 0
+    cx    = int(round(kg / 30, 0))
+    notas = int(dff["NUM_DOCTO"].nunique()) if "NUM_DOCTO" in dff.columns else 0
+    pm    = round(fat / kg, 2) if kg > 0 else 0
+
     # Grupos por tipo de movimento
     grupos_html = ""
     tipos = sorted(dff["DESC_TIPO_MV"].fillna("SEM TIPO").unique()) if "DESC_TIPO_MV" in dff.columns else ["SEM TIPO"]
@@ -909,6 +933,22 @@ def gerar_relatorio_pdf(df: pd.DataFrame, filtro: dict, resultado: dict) -> byte
           </tbody>
         </table>"""
 
+    # Gera resumo sintético por tipo de movimento
+    resumo_tmv_html = ""
+    if "DESC_TIPO_MV" in dff.columns:
+        tmv_grp = dff.groupby("DESC_TIPO_MV").agg(
+            fat=("VALOR_LIQUIDO","sum"),
+            notas=("NUM_DOCTO","nunique")
+        ).sort_values("fat", ascending=False)
+        for tmv_idx, tmv_row in tmv_grp.iterrows():
+            pct = round(float(tmv_row["fat"]) / fat * 100, 1) if fat > 0 else 0
+            resumo_tmv_html += f"""<tr>
+                <td>{_h.escape(str(tmv_idx))}</td>
+                <td class="valor">{int(tmv_row["notas"]):,}</td>
+                <td class="valor">{fmt_brl(tmv_row["fat"])}</td>
+                <td class="valor">{pct:.1f}%</td>
+            </tr>"""
+
     html_content = f"""<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -942,7 +982,7 @@ tr:nth-child(even) td {{ background: #f9f9f9; }}
 <div class="header">
   <div class="header-left">
     <h1>IAF &middot; RELATÓRIO DE FATURAMENTO</h1>
-    <p>Frinense Alimentos &middot; {_h.escape(filial_filtro)}</p>
+    <p>Frinense Alimentos &middot; {_h.escape(filial_filtro)}{(' &middot; Cliente: ' + _h.escape(str(cliente_label))) if cliente_label else ''}</p>
   </div>
   <div class="header-right">
     <div><strong>Período:</strong> {periodo_label}</div>
@@ -957,6 +997,30 @@ tr:nth-child(even) td {{ background: #f9f9f9; }}
   <div class="kpi"><div class="kpi-label">R$/kg</div><div class="kpi-value">{fmt_brl(pm)}</div></div>
 </div>
 {grupos_html}
+
+<!-- RESUMO SINTÉTICO -->
+<div style="margin-top:20px;page-break-inside:avoid;">
+  <div class="grupo-header" style="border-radius:4px;margin-bottom:0;">
+    <span class="grupo-tipo">📊 RESUMO SINTÉTICO — POR TIPO DE MOVIMENTO</span>
+    <span class="grupo-stats">Total Geral: {fmt_brl(fat)}</span>
+  </div>
+  <table>
+    <thead><tr>
+      <th>TIPO DE MOVIMENTO</th><th style="text-align:right">NOTAS</th>
+      <th style="text-align:right">FATURAMENTO</th><th style="text-align:right">% DO TOTAL</th>
+    </tr></thead>
+    <tbody>
+      {resumo_tmv_html}
+      <tr class="total-row">
+        <td><strong>TOTAL GERAL</strong></td>
+        <td class="valor">{int(notas):,}</td>
+        <td class="valor">{fmt_brl(fat)}</td>
+        <td class="valor">100,00%</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
 <div class="footer">
   <span>IAF &middot; Analista Comercial &middot; Frinense Alimentos</span>
   <span>Gerado automaticamente em {hoje_str}</span>
@@ -1099,8 +1163,18 @@ async def chat(req: ChatRequest):
     if filtro.get("formato") == "pdf":
         try:
             pdf_bytes = gerar_relatorio_pdf(df, filtro, resultado)
-            periodo = filtro.get("data_inicio","").replace("-","")
-            filename = f"IAF_relatorio_{periodo}.pdf"
+            # Nome amigável: IAF_Abril2026_CAMARA.pdf
+            try:
+                d1_dt = datetime.strptime(filtro.get("data_inicio",""), "%Y-%m-%d")
+                meses_pt = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"]
+                mes_label = meses_pt[d1_dt.month-1] + str(d1_dt.year)
+            except:
+                mes_label = filtro.get("data_inicio","").replace("-","")
+            cli_label = ""
+            if filtro.get("cliente"):
+                cli_label = "_" + re.sub(r'[^A-Za-z0-9]','',filtro["cliente"])[:15].upper()
+            fil_label = ("_" + filtro["filial"]) if filtro.get("filial") else ""
+            filename = f"IAF_{mes_label}{fil_label}{cli_label}.pdf"
             import base64 as _b64
             pdf_b64 = _b64.b64encode(pdf_bytes).decode()
             return JSONResponse({
