@@ -896,6 +896,7 @@ def gerar_relatorio_pdf(df: pd.DataFrame, filtro: dict, resultado: dict) -> byte
     tipo_rel = filtro.get("tipo", "resumo_mensal")
     dados    = resultado.get("dados", {})
     d1       = filtro.get("data_inicio") or ""
+    logging.warning(f"[PDF-GERAR] tipo_rel={tipo_rel} sem_dados={resultado.get('sem_dados')} n_registros={resultado.get('n_registros')} dados_keys={list(dados.keys())} cliente={filtro.get('cliente')} data_inicio={filtro.get('data_inicio')}")
     d2       = filtro.get("data_fim") or ""
     hoje_str = datetime.now().strftime("%d/%m/%Y %H:%M")
 
