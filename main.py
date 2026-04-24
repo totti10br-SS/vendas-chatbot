@@ -173,6 +173,8 @@ REGRAS:
 - Se período não especificado e tipo for resumo: use o último mês disponível
 - Se cliente não especificado e tipo for ultimas_vendas: precisa_cliente=true
 - Se nr_nota mencionado: tipo="detalhe_nota"
+- Se usuário perguntar sobre PDF, DANFE, nota fiscal, NF, ou detalhe de nota SEM informar número: tipo="detalhe_nota", nr_nota=null
+- Se tipo="detalhe_nota" e nr_nota=null: o sistema vai pedir o número automaticamente
 - Para comparativos entre dois períodos EXPLÍCITOS (ex: "março 2026 vs março 2025", "abril 2026 com abril 2025"):
   * tipo="comparativo"
   * data_inicio/data_fim = período A (mais recente)
@@ -434,25 +436,6 @@ def calcular(df: pd.DataFrame, filtro: dict) -> dict:
              "pm": round(float(r.fat)/float(r.kg),2) if r.kg > 0 else 0}
             for idx, r in por_tipo.iterrows()
         ]
-
-    # ── Por tipo de movimento (COD_TIPO_MV / DESC_TIPO_MV) ──
-    if 'DESC_TIPO_MV' in dff.columns:
-        cols_tmv = ['COD_TIPO_MV','DESC_TIPO_MV'] if 'COD_TIPO_MV' in dff.columns else ['DESC_TIPO_MV']
-        por_tmv = dff.groupby(cols_tmv).agg(
-            kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'),
-            notas=('NUM_DOCTO','nunique') if 'NUM_DOCTO' in dff.columns else ('VALOR_LIQUIDO','count')
-        ).sort_values('kg', ascending=False)
-        d["por_tipo_movimento"] = []
-        for idx, r in por_tmv.iterrows():
-            cod  = idx[0] if isinstance(idx, tuple) else ''
-            desc = idx[1] if isinstance(idx, tuple) else idx
-            d["por_tipo_movimento"].append({
-                "cod": str(cod), "desc": str(desc),
-                "kg": round(float(r.kg),2), "cx30": int(round(r.kg/30,0)),
-                "faturamento": round(float(r.fat),2),
-                "pm": round(float(r.fat)/float(r.kg),2) if r.kg > 0 else 0,
-                "notas": int(r.notas)
-            })
 
     # ── Detalhe de nota fiscal ──
     if tipo == "detalhe_nota" and 'NUM_DOCTO' in dff.columns:
@@ -833,6 +816,11 @@ async def chat(req: ChatRequest):
     if filtro.get("precisa_periodo") and not filtro.get("data_inicio"):
         return JSONResponse({"content": [{"type": "text", "text":
             "Qual período você quer analisar? Ex: março 2026, esta semana, últimos 30 dias..."}]})
+
+    # Nota: pede número se não informado
+    if filtro.get("tipo") == "detalhe_nota" and not filtro.get("nr_nota"):
+        return JSONResponse({"content": [{"type": "text", "text":
+            "📄 Claro! Qual o **número da nota fiscal** que deseja consultar?\n\nSe preferir, pode informar também o nome do cliente para eu localizar mais rápido."}]})
 
     # Nota não encontrada
     if filtro.get("nr_nota"):
