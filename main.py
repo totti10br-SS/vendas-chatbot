@@ -161,6 +161,8 @@ Retorne JSON com esta estrutura exata:
   "precisa_cliente": true|false,
   "precisa_periodo": true|false,
   "comparar_periodo_anterior": true|false,
+  "data_inicio_b": "YYYY-MM-DD ou null",
+  "data_fim_b": "YYYY-MM-DD ou null",
   "observacao": "qualquer detalhe extra relevante ou null"
 }}
 
@@ -171,7 +173,12 @@ REGRAS:
 - Se período não especificado e tipo for resumo: use o último mês disponível
 - Se cliente não especificado e tipo for ultimas_vendas: precisa_cliente=true
 - Se nr_nota mencionado: tipo="detalhe_nota"
-- Para comparativos entre períodos: tipo="comparativo", coloque ambos os períodos em observacao
+- Para comparativos entre dois períodos EXPLÍCITOS (ex: "março 2026 vs março 2025", "abril 2026 com abril 2025"):
+  * tipo="comparativo"
+  * data_inicio/data_fim = período A (mais recente)
+  * data_inicio_b/data_fim_b = período B (mais antigo)
+  * comparar_periodo_anterior=false
+- Para comparativo com período imediatamente anterior (ex: "vs mês passado"): comparar_periodo_anterior=true
 - NUNCA invente dados, apenas interprete a pergunta"""
 
     async with httpx.AsyncClient(timeout=30) as client:
@@ -262,6 +269,13 @@ def _aplicar_filtros(df: pd.DataFrame, filtro: dict) -> pd.DataFrame:
 
 def _periodo_anterior(filtro: dict) -> tuple:
     """Calcula data_inicio/fim do período anterior equivalente."""
+    # Se o filtro já tem datas B explícitas, usa elas
+    if filtro.get("data_inicio_b") and filtro.get("data_fim_b"):
+        try:
+            return pd.to_datetime(filtro["data_inicio_b"]), pd.to_datetime(filtro["data_fim_b"])
+        except:
+            pass
+    # Senão calcula período imediatamente anterior
     try:
         d1 = pd.to_datetime(filtro["data_inicio"])
         d2 = pd.to_datetime(filtro["data_fim"])
@@ -464,7 +478,7 @@ def calcular(df: pd.DataFrame, filtro: dict) -> dict:
             d["cliente_encontrado"] = dff['NOME_CLIENTE'].iloc[0]
 
     # ── Comparativo com período anterior ──
-    if filtro.get("comparar_periodo_anterior") and filtro.get("data_inicio") and filtro.get("data_fim"):
+    if (filtro.get("comparar_periodo_anterior") or filtro.get("tipo") == "comparativo") and filtro.get("data_inicio") and filtro.get("data_fim"):
         pa_ini, pa_fim = _periodo_anterior(filtro)
         if pa_ini:
             filtro_pa = {**filtro, "data_inicio": pa_ini.strftime('%Y-%m-%d'),
@@ -472,15 +486,27 @@ def calcular(df: pd.DataFrame, filtro: dict) -> dict:
                          "comparar_periodo_anterior": False}
             dff_pa = _aplicar_filtros(df, filtro_pa)
             if len(dff_pa) > 0:
-                fat_pa = round(float(dff_pa['VALOR_LIQUIDO'].sum()), 2)
-                kg_pa  = round(float(dff_pa['QTDE_PRI'].sum()), 2)
+                fat_pa  = round(float(dff_pa['VALOR_LIQUIDO'].sum()), 2)
+                kg_pa   = round(float(dff_pa['QTDE_PRI'].sum()), 2)
+                notas_pa = int(dff_pa['NUM_DOCTO'].nunique()) if 'NUM_DOCTO' in dff_pa.columns else 0
+                pm_pa   = round(fat_pa / kg_pa, 2) if kg_pa > 0 else 0
+                cx_pa   = int(round(kg_pa / 30, 0))
+                # Por filial período B
+                filial_b = []
+                if 'NOME_FILIAL' in dff_pa.columns:
+                    grp_b = dff_pa.groupby('NOME_FILIAL').agg(kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum')).sort_values('kg', ascending=False)
+                    filial_b = [{"filial": idx, "kg": round(float(r.kg),2), "cx30": int(round(r.kg/30,0)), "faturamento": round(float(r.fat),2), "pm": round(float(r.fat)/float(r.kg),2) if r.kg > 0 else 0} for idx, r in grp_b.iterrows()]
                 d["comparativo"] = {
-                    "periodo_anterior_ini": pa_ini.strftime('%d/%m/%Y'),
-                    "periodo_anterior_fim": pa_fim.strftime('%d/%m/%Y'),
-                    "faturamento_anterior": fat_pa,
-                    "kg_anterior": kg_pa,
+                    "periodo_a_ini": d.get("periodo_ini"),
+                    "periodo_a_fim": d.get("periodo_fim"),
+                    "periodo_b_ini": pa_ini.strftime('%d/%m/%Y'),
+                    "periodo_b_fim": pa_fim.strftime('%d/%m/%Y'),
+                    "periodo_a": {"kg": kg, "cx30": int(cx), "faturamento": fat, "pm": pm, "notas": notas, "por_filial": d.get("por_filial",[])},
+                    "periodo_b": {"kg": kg_pa, "cx30": cx_pa, "faturamento": fat_pa, "pm": pm_pa, "notas": notas_pa, "por_filial": filial_b},
                     "var_fat_pct": round((fat - fat_pa) / fat_pa * 100, 1) if fat_pa > 0 else None,
                     "var_kg_pct":  round((kg  - kg_pa)  / kg_pa  * 100, 1) if kg_pa  > 0 else None,
+                    "var_pm_pct":  round((pm  - pm_pa)  / pm_pa  * 100, 1) if pm_pa  > 0 else None,
+                    "var_notas_pct": round((notas - notas_pa) / notas_pa * 100, 1) if notas_pa > 0 else None,
                 }
 
     # ── CNPJ query ──
@@ -536,7 +562,18 @@ async def narrar(pergunta: str, resultado: dict, historico: list, modo: str = "n
 - ultimas_vendas: Tabela DATA | NR NOTA | PRODUTO | KG | CX | R$ | R$/kg — decrescente, sem totais
 - ranking_clientes: Tabela com posição, nome, kg, cx30, faturamento, R$/kg
 - ranking_vendedores: Tabela com cod, nome, kg, cx30, faturamento, notas
-- comparativo: Mostre período atual vs anterior com variação % em cada métrica
+- comparativo: 
+  Use os campos periodo_a e periodo_b do JSON.
+  Mostre tabela:
+  | MÉTRICA | [periodo_a_ini ~ periodo_a_fim] | [periodo_b_ini ~ periodo_b_fim] | VAR % |
+  |---------|--------------------------------|--------------------------------|-------|
+  | Volume (kg) | ... | ... | +X% ⬆ ou -X% ⬇ |
+  | CX30 | ... | ... | ... |
+  | Faturamento | ... | ... | ... |
+  | Preço Médio | ... | ... | ... |
+  | Notas | ... | ... | ... |
+  Depois mostre comparativo por filial se disponível.
+  Use ⬆ verde para positivo e ⬇ vermelho para negativo nas variações.
 - cnpj_query: Liste clientes com CNPJ raiz formatado
 
 ## NOTA FISCAL — FORMATO OBRIGATÓRIO
