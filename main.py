@@ -621,8 +621,8 @@ async def narrar(pergunta: str, resultado: dict, historico: list, modo: str = "n
 - Valores: R$ X.XXX.XXX,XX | Kg: X.XXX.XXX kg | Datas: DD/MM/AA
 - CX30 = kg/30 — sempre exiba junto com kg
 - Toda tabela DEVE ter linha "| **TOTAIS** |" no final
-- Finalize com: 💡 **Insight:** [ação ou oportunidade concreta]
-- Após tabelas: 📊 **ANÁLISE RÁPIDA:** com 3-4 bullets (🔝 Destaque / 📉 Atenção / 📈 Tendência / 💰 Ticket médio)
+- NÃO inclua análise rápida, bullets de insight ou comentários automáticos — a menos que o usuário peça explicitamente ("analise", "o que você acha", "dê sua opinião")
+- Se o usuário pedir análise: finalize com 💡 **Insight:** e 📊 **ANÁLISE RÁPIDA:** com 3-4 bullets
 
 ## COMPORTAMENTOS POR TIPO
 - resumo_mensal / resumo_diario: Mostre KPIs gerais → por filial → por dia → previsão fechamento → top clientes → top produtos
@@ -837,17 +837,26 @@ def gerar_relatorio_pdf(df: pd.DataFrame, filtro: dict, resultado: dict) -> byte
     hoje_str = datetime.now().strftime("%d/%m/%Y %H:%M")
 
     try:
-        p1 = datetime.strptime(d1, "%Y-%m-%d").strftime("%d/%m/%Y")
-        p2 = datetime.strptime(d2, "%Y-%m-%d").strftime("%d/%m/%Y")
-        periodo_label = p1 if p1 == p2 else f"{p1} a {p2}"
+        p1 = datetime.strptime(d1, "%Y-%m-%d").strftime("%d/%m/%Y") if d1 else None
+        p2 = datetime.strptime(d2, "%Y-%m-%d").strftime("%d/%m/%Y") if d2 else None
+        if p1 and p2:
+            periodo_label = p1 if p1 == p2 else f"{p1} a {p2}"
+        elif p1:
+            periodo_label = f"a partir de {p1}"
+        else:
+            periodo_label = "Período não especificado"
     except:
-        periodo_label = f"{d1} a {d2}"
+        periodo_label = f"{d1 or ''} a {d2 or ''}"
 
     def fmt_brl(v):
-        try: return f"R$ {float(v):,.2f}".replace(",","X").replace(".",",").replace("X",".")
+        try:
+            if v is None: return "R$ 0,00"
+            return f"R$ {float(v):,.2f}".replace(",","X").replace(".",",").replace("X",".")
         except: return "R$ 0,00"
     def fmt_kg(v):
-        try: return f"{float(v):,.2f} kg".replace(",","X").replace(".",",").replace("X",".")
+        try:
+            if v is None: return "0,00 kg"
+            return f"{float(v):,.2f} kg".replace(",","X").replace(".",",").replace("X",".")
         except: return "0,00 kg"
 
     fat   = dados.get("faturamento", 0)
@@ -859,11 +868,15 @@ def gerar_relatorio_pdf(df: pd.DataFrame, filtro: dict, resultado: dict) -> byte
     # Dados brutos filtrados
     dff = df.copy()
     if filtro.get("data_inicio"):
-        dff = dff[dff["DATA_MOVTO"] >= pd.to_datetime(filtro["data_inicio"])]
+        try: dff = dff[dff["DATA_MOVTO"] >= pd.to_datetime(filtro["data_inicio"])]
+        except: pass
     if filtro.get("data_fim"):
-        dff = dff[dff["DATA_MOVTO"] < pd.to_datetime(filtro["data_fim"]) + timedelta(days=1)]
+        try: dff = dff[dff["DATA_MOVTO"] < pd.to_datetime(filtro["data_fim"]) + timedelta(days=1)]
+        except: pass
     if filtro.get("filial") and "NOME_FILIAL" in dff.columns:
         dff = dff[dff["NOME_FILIAL"].str.upper() == filtro["filial"].upper()]
+    # Label de filial para cabeçalho
+    filial_label = filtro.get("filial") or "Todas as Filiais"
 
     # Filtro de cliente
     cliente_label = None
@@ -982,7 +995,7 @@ tr:nth-child(even) td {{ background: #f9f9f9; }}
 <div class="header">
   <div class="header-left">
     <h1>IAF &middot; RELATÓRIO DE FATURAMENTO</h1>
-    <p>Frinense Alimentos &middot; {_h.escape(filial_filtro)}{(' &middot; Cliente: ' + _h.escape(str(cliente_label))) if cliente_label else ''}</p>
+    <p>Frinense Alimentos &middot; {_h.escape(filial_label)}{(' &middot; Cliente: ' + _h.escape(str(cliente_label))) if cliente_label else ''}</p>
   </div>
   <div class="header-right">
     <div><strong>Período:</strong> {periodo_label}</div>
@@ -1175,6 +1188,7 @@ async def chat(req: ChatRequest):
                 cli_label = "_" + re.sub(r'[^A-Za-z0-9]','',filtro["cliente"])[:15].upper()
             fil_label = ("_" + filtro["filial"]) if filtro.get("filial") else ""
             filename = f"IAF_{mes_label}{fil_label}{cli_label}.pdf"
+            logging.info(f"[PDF] Gerando: {filename} | linhas dff: {len(dff)}")
             import base64 as _b64
             pdf_b64 = _b64.b64encode(pdf_bytes).decode()
             return JSONResponse({
