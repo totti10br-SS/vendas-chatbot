@@ -162,7 +162,7 @@ PERGUNTA ATUAL: {pergunta}
 
 Retorne JSON com esta estrutura exata:
 {{
-  "tipo": "resumo_mensal|resumo_diario|ultimas_vendas|detalhe_nota|ranking_clientes|ranking_produtos|ranking_vendedores|comparativo|grafico|cnpj_query|periodo_livre|saudacao|indefinido",
+  "tipo": "resumo_mensal|resumo_diario|ultimas_vendas|ultimos_precos|detalhe_nota|ranking_clientes|ranking_produtos|ranking_vendedores|comparativo|grafico|cnpj_query|periodo_livre|saudacao|indefinido",
   "data_inicio": "YYYY-MM-DD ou null",
   "data_fim": "YYYY-MM-DD ou null",
   "filial": "ITAP|BJESUS|PORC ou null",
@@ -196,6 +196,8 @@ REGRAS:
   * comparar_periodo_anterior=false
 - Para comparativo com período imediatamente anterior (ex: "vs mês passado"): comparar_periodo_anterior=true
 - Se usuário pedir "em PDF", "relatório PDF", "manda em PDF", "exportar PDF": formato="pdf"
+- "últimas vendas", "últimas notas", "histórico de compras": tipo="ultimas_vendas" → mostra itens de notas (data, NF, produto, kg, valor)
+- "últimos preços", "preço atual", "quanto paga", "tabela de preços": tipo="ultimos_precos" → mostra preço mais recente por produto
 - NUNCA invente dados, apenas interprete a pergunta"""
 
     async with httpx.AsyncClient(timeout=30) as client:
@@ -545,6 +547,37 @@ def calcular(df: pd.DataFrame, filtro: dict) -> dict:
             registros.append(item)
         d["itens_detalhados"] = registros
 
+    # ── Últimos preços por produto ──
+    if tipo == "ultimos_precos" and "DESC_PRODUTO" in dff.columns:
+        cliente_nome = dff['NOME_CLIENTE'].iloc[0] if 'NOME_CLIENTE' in dff.columns and len(dff) > 0 else None
+        if cliente_nome:
+            d["cliente_encontrado"] = cliente_nome
+        # Para cada produto, pega a última nota e o preço praticado
+        prod_grp = dff.sort_values('DATA_MOVTO', ascending=False).groupby(['COD_PRODUTO','DESC_PRODUTO']).agg(
+            ultima_data=('DATA_MOVTO','first'),
+            ultima_nota=('NUM_DOCTO','first') if 'NUM_DOCTO' in dff.columns else ('VALOR_LIQUIDO','count'),
+            kg_total=('QTDE_PRI','sum'),
+            fat_total=('VALOR_LIQUIDO','sum'),
+            ultimo_vl_unit=('VALOR_UNITARIO','first') if 'VALOR_UNITARIO' in dff.columns else ('VALOR_LIQUIDO','first'),
+            n_compras=('NUM_DOCTO','nunique') if 'NUM_DOCTO' in dff.columns else ('VALOR_LIQUIDO','count'),
+        ).reset_index().sort_values('ultima_data', ascending=False)
+        precos = []
+        for _, r in prod_grp.iterrows():
+            kg_t = float(r['kg_total'])
+            fat_t = float(r['fat_total'])
+            pm = round(fat_t / kg_t, 2) if kg_t > 0 else 0
+            precos.append({
+                "cod": str(r['COD_PRODUTO']),
+                "produto": str(r['DESC_PRODUTO']),
+                "ultima_data": r['ultima_data'].strftime('%d/%m/%Y') if hasattr(r['ultima_data'],'strftime') else str(r['ultima_data']),
+                "ultima_nota": str(r['ultima_nota']),
+                "ultimo_vl_unit": round(float(r['ultimo_vl_unit']),2),
+                "pm_historico": pm,
+                "kg_total": round(kg_t,2),
+                "n_compras": int(r['n_compras']),
+            })
+        d["ultimos_precos"] = precos
+
     # ── Comparativo com período anterior ──
     if (filtro.get("comparar_periodo_anterior") or filtro.get("tipo") == "comparativo") and filtro.get("data_inicio") and filtro.get("data_fim"):
         pa_ini, pa_fim = _periodo_anterior(filtro)
@@ -633,6 +666,18 @@ async def narrar(pergunta: str, resultado: dict, historico: list, modo: str = "n
 ## COMPORTAMENTOS POR TIPO
 - resumo_mensal / resumo_diario: Mostre KPIs gerais → por filial → por dia → previsão fechamento → top clientes → top produtos
 - detalhe_nota: Mostre cabeçalho (filial, cliente, vendedor) + tabela de itens + DANFE se tiver chave_acesso
+- ultimos_precos:
+  Use o campo "ultimos_precos" do JSON.
+  
+  ## ÚLTIMOS PREÇOS · [cliente_encontrado]
+  
+  | COD | PRODUTO | ÚLTIMA COMPRA | NF | VL UNIT | R$/kg MÉDIO | TOTAL KG | Nº COMPRAS |
+  |-----|---------|---------------|-----|---------|-------------|----------|------------|
+  [uma linha por produto, ordenado por última data decrescente]
+  
+  Campos: cod=COD, produto=PRODUTO, ultima_data=ÚLTIMA COMPRA, ultima_nota=NF, ultimo_vl_unit=VL UNIT, pm_historico=R$/kg médio, kg_total=TOTAL KG, n_compras=Nº COMPRAS
+  Sem totais. Sem análise automática.
+
 - ultimas_vendas:
   Use "itens_detalhados" do JSON — cada linha é um item de nota fiscal.
   
@@ -993,6 +1038,36 @@ def gerar_relatorio_pdf(df: pd.DataFrame, filtro: dict, resultado: dict) -> byte
           </tr></thead>
           <tbody>{linhas_i}</tbody>
         </table>"""
+
+    # ── ÚLTIMOS PREÇOS por produto ──
+    elif tipo_rel == "ultimos_precos":
+        dados_preco = resultado.get("dados", {}).get("ultimos_precos", [])
+        if dados_preco:
+            linhas_p = ""
+            for r in dados_preco:
+                linhas_p += f"""<tr>
+                    <td>{_h.escape(str(r.get('cod',''))[:12])}</td>
+                    <td class="nome">{_h.escape(str(r.get('produto',''))[:45])}</td>
+                    <td style="white-space:nowrap">{_h.escape(str(r.get('ultima_data','')))}</td>
+                    <td>{_h.escape(str(r.get('ultima_nota','')))}</td>
+                    <td class="valor">{fmt_brl(r.get('ultimo_vl_unit',0))}</td>
+                    <td class="valor">{fmt_brl(r.get('pm_historico',0))}</td>
+                    <td class="valor">{r.get('kg_total',0):,.0f}</td>
+                    <td class="valor">{r.get('n_compras',0)}</td>
+                </tr>"""
+            corpo_html = f"""<table style="table-layout:fixed;width:100%;font-size:7.5px;">
+              <colgroup>
+                <col style="width:10%"><col style="width:35%"><col style="width:9%">
+                <col style="width:8%"><col style="width:10%"><col style="width:10%">
+                <col style="width:10%"><col style="width:8%">
+              </colgroup>
+              <thead><tr>
+                <th>COD</th><th>PRODUTO</th><th>ÚLTIMA COMPRA</th><th>NF</th>
+                <th style="text-align:right">VL UNIT</th><th style="text-align:right">R$/kg MÉDIO</th>
+                <th style="text-align:right">TOTAL KG</th><th style="text-align:right">Nº COMPRAS</th>
+              </tr></thead>
+              <tbody>{linhas_p}</tbody>
+            </table>"""
 
     # ── RANKING CLIENTES ──
     elif tipo_rel == "ranking_clientes" and "NOME_CLIENTE" in dff.columns:
