@@ -1354,7 +1354,7 @@ async def chat(req: ChatRequest):
         logging.error(f"[INTERPRETAR] erro: {e}")
         filtro = {"tipo": "indefinido"}
 
-    logging.info(f"[FILTRO] {json.dumps(filtro, ensure_ascii=False)}")
+    logging.warning(f"[FILTRO] {json.dumps(filtro, ensure_ascii=False)}")
 
     # Se o assistente acabou de pedir o cliente e o tipo voltou errado, corrigir pelo histórico
     ultimas_msgs = historico[-4:] if len(historico) >= 4 else historico
@@ -1423,11 +1423,11 @@ async def chat(req: ChatRequest):
                 break
 
         # LOG: ver exatamente o que chega como última resposta do assistente
-        logging.info(f"[PDF-DEBUG] ultima_resp_assist (primeiros 500 chars): {ultima_resp_assist[:500]!r}")
-        logging.info(f"[PDF-DEBUG] filtro antes da detecção: tipo={filtro.get('tipo')} cliente={filtro.get('cliente')}")
-        logging.info(f"[PDF-DEBUG] total msgs no histórico: {len(historico)}")
+        logging.warning(f"[PDF-DEBUG] ultima_resp_assist: {ultima_resp_assist[:300]!r}")
+        logging.warning(f"[PDF-DEBUG] filtro antes: tipo={filtro.get('tipo')} cliente={filtro.get('cliente')}")
+        logging.warning(f"[PDF-DEBUG] total msgs histórico: {len(historico)}")
         for i, msg in enumerate(historico[-6:]):
-            logging.info(f"[PDF-DEBUG] hist[-{6-i}] role={msg.get('role')} content={str(msg.get('content',''))[:100]!r}")
+            logging.warning(f"[PDF-DEBUG] hist[-{6-i}] role={msg.get('role')} content={str(msg.get('content',''))[:100]!r}")
 
         # Detectar tipo pelo que estava sendo exibido na tela
         tipo_detectado = None
@@ -1453,7 +1453,7 @@ async def chat(req: ChatRequest):
                         if txt and len(txt) < 60 and not any(p in txt.lower() for p in palavras_cmd):
                             filtro["cliente"] = txt
                             break
-            logging.info(f"[PDF] tipo detectado={tipo_detectado} cliente={filtro.get('cliente')}")
+            logging.warning(f"[PDF] tipo detectado={tipo_detectado} cliente={filtro.get('cliente')}")
             resultado = calcular(df, filtro)
 
     if filtro.get("formato") == "pdf":
@@ -1471,7 +1471,7 @@ async def chat(req: ChatRequest):
                 cli_label = "_" + re.sub(r'[^A-Za-z0-9]','',filtro["cliente"])[:15].upper()
             fil_label = ("_" + filtro["filial"]) if filtro.get("filial") else ""
             filename = f"IAF_{mes_label}{fil_label}{cli_label}.pdf"
-            logging.info(f"[PDF] Gerando: {filename}")
+            logging.warning(f"[PDF] Gerando: {filename}")
             import base64 as _b64
             pdf_b64 = _b64.b64encode(pdf_bytes).decode()
             return JSONResponse({
