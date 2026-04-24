@@ -1360,8 +1360,8 @@ async def chat(req: ChatRequest):
         return JSONResponse({"content": [{"type": "text", "text":
             "Para qual cliente? Pode informar o nome ou CNPJ raiz (8 dígitos)."}]})
 
-    # ultimos_precos sem período → assume últimos 90 dias automaticamente
-    if filtro.get("tipo") == "ultimos_precos" and not filtro.get("data_inicio"):
+    # ultimos_precos → SEMPRE 90 dias, ignora qualquer período que o LLM tenha inferido
+    if filtro.get("tipo") == "ultimos_precos":
         from datetime import date, timedelta
         hoje = date.today()
         filtro["data_inicio"] = (hoje - timedelta(days=90)).strftime("%Y-%m-%d")
