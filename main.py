@@ -197,7 +197,7 @@ REGRAS:
 - Para comparativo com período imediatamente anterior (ex: "vs mês passado"): comparar_periodo_anterior=true
 - Se usuário pedir "em PDF", "relatório PDF", "manda em PDF", "exportar PDF": formato="pdf"
 - "últimas vendas", "últimas notas", "histórico de compras": tipo="ultimas_vendas" → mostra itens de notas (data, NF, produto, kg, valor)
-- "últimos preços", "preço atual", "quanto paga", "tabela de preços": tipo="ultimos_precos" → mostra preço mais recente por produto
+- "últimos preços", "preço atual", "quanto paga", "tabela de preços": tipo="ultimos_precos" → mostra preço mais recente por produto; se período não especificado: precisa_periodo=false (o sistema assume 90 dias automaticamente)
 - NUNCA invente dados, apenas interprete a pergunta"""
 
     async with httpx.AsyncClient(timeout=30) as client:
@@ -1359,6 +1359,14 @@ async def chat(req: ChatRequest):
     if filtro.get("precisa_cliente") and not filtro.get("cliente") and not filtro.get("cnpj_raiz"):
         return JSONResponse({"content": [{"type": "text", "text":
             "Para qual cliente? Pode informar o nome ou CNPJ raiz (8 dígitos)."}]})
+
+    # ultimos_precos sem período → assume últimos 90 dias automaticamente
+    if filtro.get("tipo") == "ultimos_precos" and not filtro.get("data_inicio"):
+        from datetime import date, timedelta
+        hoje = date.today()
+        filtro["data_inicio"] = (hoje - timedelta(days=90)).strftime("%Y-%m-%d")
+        filtro["data_fim"]    = hoje.strftime("%Y-%m-%d")
+        filtro["precisa_periodo"] = False
 
     # Se período indefinido para resumo
     if filtro.get("precisa_periodo") and not filtro.get("data_inicio"):
