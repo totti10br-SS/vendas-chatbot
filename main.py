@@ -1415,6 +1415,39 @@ async def chat(req: ChatRequest):
             "⚠️ Sem dados disponíveis para o período/filtro solicitado. Verifique o período ou tente outro filtro."}]})
 
     # ETAPA 2.5 — Se formato PDF, gera e retorna direto
+    # Se o tipo ficou vago mas o usuário pediu PDF, herdar contexto do histórico
+    if filtro.get("formato") == "pdf" and filtro.get("tipo") in ("indefinido", "periodo_livre", None, "saudacao"):
+        # Buscar última mensagem do usuário que gerou um resultado real
+        for msg in reversed(historico[:-1]):
+            if msg.get("role") == "user":
+                txt = msg.get("content", "").lower()
+                if any(p in txt for p in ["preço","preco","quanto paga","tabela de preço"]):
+                    filtro["tipo"] = "ultimos_precos"
+                    break
+                elif any(p in txt for p in ["últimas vendas","ultimas vendas","últimas notas","ultimas notas","histórico"]):
+                    filtro["tipo"] = "ultimas_vendas"
+                    break
+                elif any(p in txt for p in ["ranking cliente","top cliente"]):
+                    filtro["tipo"] = "ranking_clientes"
+                    break
+                elif any(p in txt for p in ["ranking vendedor","top vendedor"]):
+                    filtro["tipo"] = "ranking_vendedores"
+                    break
+                elif any(p in txt for p in ["ranking produto","top produto"]):
+                    filtro["tipo"] = "ranking_produtos"
+                    break
+        # Também herdar cliente/período se não vieram
+        if not filtro.get("cliente") and not filtro.get("cnpj_raiz"):
+            for msg in reversed(historico[:-1]):
+                if msg.get("role") == "user":
+                    txt = msg.get("content", "").lower()
+                    if txt.strip() and len(txt.strip()) < 60 and not any(p in txt for p in ["pdf","preço","preco","venda","ranking"]):
+                        filtro["cliente"] = txt.strip()
+                        break
+        logging.info(f"[PDF] filtro herdado do histórico: {json.dumps(filtro, ensure_ascii=False)}")
+        # Recalcular com filtro corrigido
+        resultado = calcular(df, filtro)
+
     if filtro.get("formato") == "pdf":
         try:
             pdf_bytes = gerar_relatorio_pdf(df, filtro, resultado)
