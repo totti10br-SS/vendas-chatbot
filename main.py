@@ -435,6 +435,25 @@ def calcular(df: pd.DataFrame, filtro: dict) -> dict:
             for idx, r in por_tipo.iterrows()
         ]
 
+    # ── Por tipo de movimento (COD_TIPO_MV / DESC_TIPO_MV) ──
+    if 'DESC_TIPO_MV' in dff.columns:
+        cols_tmv = ['COD_TIPO_MV','DESC_TIPO_MV'] if 'COD_TIPO_MV' in dff.columns else ['DESC_TIPO_MV']
+        por_tmv = dff.groupby(cols_tmv).agg(
+            kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'),
+            notas=('NUM_DOCTO','nunique') if 'NUM_DOCTO' in dff.columns else ('VALOR_LIQUIDO','count')
+        ).sort_values('kg', ascending=False)
+        d["por_tipo_movimento"] = []
+        for idx, r in por_tmv.iterrows():
+            cod  = idx[0] if isinstance(idx, tuple) else ''
+            desc = idx[1] if isinstance(idx, tuple) else idx
+            d["por_tipo_movimento"].append({
+                "cod": str(cod), "desc": str(desc),
+                "kg": round(float(r.kg),2), "cx30": int(round(r.kg/30,0)),
+                "faturamento": round(float(r.fat),2),
+                "pm": round(float(r.fat)/float(r.kg),2) if r.kg > 0 else 0,
+                "notas": int(r.notas)
+            })
+
     # ── Detalhe de nota fiscal ──
     if tipo == "detalhe_nota" and 'NUM_DOCTO' in dff.columns:
         cols_nota = [c for c in ['NUM_DOCTO','DATA_MOVTO','NOME_CLIENTE','NOME_FILIAL',
