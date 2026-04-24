@@ -134,6 +134,18 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;ba
 #sendBtn:hover{background:var(--red-dark);transform:scale(1.05);}
 #sendBtn:disabled{opacity:.35;cursor:not-allowed;transform:none;}
 #sendBtn svg{width:16px;height:16px;fill:var(--yellow);}
+#micBtn{width:42px;height:42px;flex-shrink:0;background:var(--surface2);border:1px solid var(--border);border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s;font-size:18px;}
+#micBtn:hover{border-color:var(--yellow);background:rgba(245,200,0,.08);}
+#micBtn.recording{background:rgba(200,30,30,.25);border-color:#e03030;animation:micPulse .8s infinite;}
+#micBtn:disabled{opacity:.35;cursor:not-allowed;}
+#voiceToggle{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);font-family:'Barlow Condensed',sans-serif;letter-spacing:.5px;cursor:pointer;padding:4px 8px;border-radius:5px;border:1px solid transparent;transition:all .2s;}
+#voiceToggle:hover{border-color:var(--border);background:var(--surface2);}
+#voiceToggle .vtoggle-dot{width:10px;height:10px;border-radius:50%;background:var(--border);transition:background .2s;}
+#voiceToggle.active .vtoggle-dot{background:#4caf50;}
+.speak-btn{display:inline-block;margin-top:8px;font-size:14px;cursor:pointer;opacity:.4;transition:opacity .2s;user-select:none;}
+.speak-btn:hover{opacity:1;}
+.speak-btn.speaking{opacity:1;animation:micPulse .8s infinite;}
+@keyframes micPulse{0%,100%{box-shadow:0 0 0 0 rgba(200,30,30,.4);}50%{box-shadow:0 0 0 6px rgba(200,30,30,0);}}
 
 /* SIDE PANEL */
 .side-panel{width:0;overflow:hidden;background:var(--surface);border-left:1px solid rgba(204,0,0,.2);transition:width .3s ease;display:flex;flex-direction:column;flex-shrink:0;}
@@ -509,6 +521,7 @@ body.modo-vasco .welcome p strong{color:#fff;}
     <div class="input-area">
       <textarea id="userInput" placeholder="Pergunte ao IAF sobre suas vendas..." rows="1"
         onkeydown="handleKey(event)" oninput="autoResize(this)" disabled></textarea>
+      <button id="micBtn" onclick="toggleMic()" disabled title="Falar">🎤</button>
       <button id="sendBtn" onclick="sendMessage()" disabled>
         <svg viewBox="0 0 24 24"><path d="M2 21L23 12 2 3v7l15 2-15 2v7z"/></svg>
       </button>
@@ -528,6 +541,123 @@ body.modo-vasco .welcome p strong{color:#fff;}
 
 <script>
 let conversationHistory=[];
+
+// ─── VOZ ────────────────────────────────────────────────
+let voiceEnabled = false;
+let isRecording  = false;
+let recognition  = null;
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+function toggleVoice(){ /* legado */ }
+function speakThis(btn){
+  if(!window.speechSynthesis){ alert("Seu browser não suporta síntese de voz."); return; }
+  // Se já está falando, para
+  if(window.speechSynthesis.speaking){
+    window.speechSynthesis.cancel();
+    document.querySelectorAll('.speak-btn.speaking').forEach(b=>b.classList.remove('speaking'));
+    return;
+  }
+  // Pega o texto da bolha pai
+  const bubble = btn.closest('.bubble');
+  let text = bubble ? bubble.innerText : '';
+  // Prefere análise rápida se existir
+  const analise = text.match(/ANÁLISE RÁPIDA[\s\S]{0,600}/i);
+  if(analise) text = analise[0];
+  text = text
+    .replace(/[|\-]{2,}/g,' ')
+    .replace(/#{1,3}\s*/g,'')
+    .replace(/\*{1,2}([^*]+)\*{1,2}/g,'$1')
+    .replace(/[⬆⬇📊💡🔝📉📈💰🏆⛔🔊]/g,'')
+    .replace(/\n{2,}/g,'. ')
+    .trim()
+    .substring(0,700);
+  if(!text) return;
+  const utt = new SpeechSynthesisUtterance(text);
+  utt.lang = 'pt-BR';
+  utt.rate = 1.05;
+  const voices = window.speechSynthesis.getVoices();
+  const ptVoice = voices.find(v=>v.lang.startsWith('pt') && v.name.toLowerCase().includes('female'))
+               || voices.find(v=>v.lang.startsWith('pt'));
+  if(ptVoice) utt.voice = ptVoice;
+  btn.classList.add('speaking');
+  utt.onend = () => btn.classList.remove('speaking');
+  utt.onerror = () => btn.classList.remove('speaking');
+  window.speechSynthesis.speak(utt);
+}
+
+function speak(text){
+  if(!voiceEnabled || !window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  // Extrai só a análise rápida se houver, senão usa resumo curto
+  let toRead = text;
+  const analise = text.match(/ANÁLISE RÁPIDA[\s\S]{0,800}/i);
+  if(analise) toRead = analise[0];
+  // Remove markdown e emojis de tabela
+  toRead = toRead
+    .replace(/\|[^
+]+/g,'')          // remove linhas de tabela
+    .replace(/#{1,3}\s*/g,'')          // remove headers markdown
+    .replace(/\*{1,2}([^*]+)\*{1,2}/g,'$1')  // remove bold/italic
+    .replace(/[⬆⬇📊💡🔝📉📈💰🏆⛔]/g,'')
+    .replace(/
+{2,}/g,'. ')
+    .trim()
+    .substring(0,600);
+  if(!toRead) return;
+  const utt = new SpeechSynthesisUtterance(toRead);
+  utt.lang = 'pt-BR';
+  utt.rate = 1.05;
+  utt.pitch = 1.0;
+  // Prefere voz feminina pt-BR se disponível
+  const voices = window.speechSynthesis.getVoices();
+  const ptVoice = voices.find(v => v.lang.startsWith('pt') && v.name.toLowerCase().includes('female'))
+                || voices.find(v => v.lang.startsWith('pt'));
+  if(ptVoice) utt.voice = ptVoice;
+  window.speechSynthesis.speak(utt);
+}
+
+function toggleMic(){
+  if(!SpeechRecognition){
+    alert('Seu browser não suporta reconhecimento de voz. Use Chrome ou Edge.');
+    return;
+  }
+  if(isRecording){
+    recognition && recognition.stop();
+    return;
+  }
+  recognition = new SpeechRecognition();
+  recognition.lang = 'pt-BR';
+  recognition.continuous = false;
+  recognition.interimResults = false;
+  recognition.onstart = () => {
+    isRecording = true;
+    const btn = document.getElementById('micBtn');
+    btn.classList.add('recording');
+    btn.textContent = '🔴';
+  };
+  recognition.onresult = (e) => {
+    const transcript = e.results[0][0].transcript;
+    document.getElementById('userInput').value = transcript;
+    autoResize(document.getElementById('userInput'));
+  };
+  recognition.onend = () => {
+    isRecording = false;
+    const btn = document.getElementById('micBtn');
+    btn.classList.remove('recording');
+    btn.textContent = '🎤';
+    // Envia automaticamente se capturou algo
+    const val = document.getElementById('userInput').value.trim();
+    if(val) sendMessage();
+  };
+  recognition.onerror = (e) => {
+    isRecording = false;
+    document.getElementById('micBtn').classList.remove('recording');
+    document.getElementById('micBtn').textContent = '🎤';
+    if(e.error !== 'no-speech') console.warn('Mic erro:', e.error);
+  };
+  recognition.start();
+}
+// ────────────────────────────────────────────────────────
 let dashCollapsed=true;
 function toggleDash(){
   dashCollapsed=!dashCollapsed;
@@ -658,6 +788,8 @@ async function init(){
     showWelcome(d.total_registros);
     document.getElementById('userInput').disabled=false;
     document.getElementById('sendBtn').disabled=false;
+    const micBtnEl = document.getElementById('micBtn');
+    if(micBtnEl) micBtnEl.disabled = !window.SpeechRecognition && !window.webkitSpeechRecognition;
   }catch(err){
     document.getElementById('initLoader').innerHTML=`<p style="color:var(--yellow)">❌ ${err.message}</p>`;
   }
@@ -880,7 +1012,11 @@ function addMessage(role,content){
   div.className=`message ${role}`;
   const av=role==='assistant'?'IAF':'👤';
   const rendered=role==='assistant'?processDanfe(renderMarkdown(content)):content;
-  div.innerHTML=`<div class="msg-avatar">${av}</div><div class="bubble">${rendered}</div>`;
+  if(role==='assistant'){
+    div.innerHTML=`<div class="msg-avatar">${av}</div><div class="bubble">${rendered}<div class="speak-btn" onclick="speakThis(this)" title="Ouvir resposta">🔊</div></div>`;
+  } else {
+    div.innerHTML=`<div class="msg-avatar">${av}</div><div class="bubble">${rendered}</div>`;
+  }
   el.appendChild(div); scrollToBottom(); return div;
 }
 function addTyping(){
