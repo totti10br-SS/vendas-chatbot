@@ -35,6 +35,14 @@ try:
 except Exception:
     WEASYPRINT_OK = False
 
+# Fallback ReportLab (sempre disponível)
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.units import cm
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, HRFlowable
+from reportlab.lib.enums import TA_RIGHT, TA_CENTER
+
 # ─────────────────────────────────────────────
 #  CONFIG
 # ─────────────────────────────────────────────
@@ -955,11 +963,53 @@ tr:nth-child(even) td {{ background: #f9f9f9; }}
 </div>
 </body></html>"""
 
-    if not WEASYPRINT_OK:
-        raise HTTPException(status_code=500, detail="WeasyPrint não disponível no servidor.")
+    if WEASYPRINT_OK:
+        return WeasyprintHTML(string=html_content).write_pdf()
 
-    pdf_bytes = WeasyprintHTML(string=html_content).write_pdf()
-    return pdf_bytes
+    # Fallback: ReportLab
+    logging.warning("[PDF] WeasyPrint indisponível, usando ReportLab")
+    VERM = colors.HexColor("#C8102E"); AMAR = colors.HexColor("#F5C800")
+    PRET = colors.HexColor("#1A1A1A"); CINZ = colors.HexColor("#F5F5F5"); CINZ2 = colors.HexColor("#DDDDDD")
+    buf2 = io.BytesIO()
+    doc = SimpleDocTemplate(buf2, pagesize=landscape(A4), leftMargin=1.2*cm, rightMargin=1.2*cm, topMargin=1.2*cm, bottomMargin=1.2*cm)
+    s_t = ParagraphStyle("t", fontName="Helvetica-Bold", fontSize=13, textColor=colors.white)
+    s_s = ParagraphStyle("s", fontName="Helvetica", fontSize=8, textColor=colors.white, alignment=TA_RIGHT)
+    s_g = ParagraphStyle("g", fontName="Helvetica-Bold", fontSize=9, textColor=colors.white)
+    s_gs= ParagraphStyle("gs",fontName="Helvetica", fontSize=8, textColor=AMAR, alignment=TA_RIGHT)
+    s_kl= ParagraphStyle("kl",fontName="Helvetica", fontSize=7, textColor=colors.grey, alignment=TA_CENTER)
+    s_kv= ParagraphStyle("kv",fontName="Helvetica-Bold", fontSize=11, textColor=PRET, alignment=TA_CENTER)
+    s_r = ParagraphStyle("r", fontName="Helvetica", fontSize=7, textColor=colors.grey)
+    story2 = []
+    ht = Table([[Paragraph("IAF · RELATÓRIO DE FATURAMENTO", s_t), Paragraph(f"Período: {periodo_label}<br/>{filial_filtro}<br/>Gerado em {hoje_str}", s_s)]], colWidths=["60%","40%"])
+    ht.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,-1),VERM),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("TOPPADDING",(0,0),(-1,-1),8),("BOTTOMPADDING",(0,0),(-1,-1),8),("LEFTPADDING",(0,0),(-1,-1),10)]))
+    story2.append(ht); story2.append(Spacer(1,0.3*cm))
+    kpi = Table([[Paragraph("FATURAMENTO",s_kl),Paragraph("VOLUME",s_kl),Paragraph("CX30",s_kl),Paragraph("NOTAS",s_kl),Paragraph("R$/KG",s_kl)],[Paragraph(fmt_brl(fat),s_kv),Paragraph(fmt_kg(kg),s_kv),Paragraph(f"{int(cx):,}",s_kv),Paragraph(f"{int(notas):,}",s_kv),Paragraph(fmt_brl(pm),s_kv)]], colWidths=["20%"]*5)
+    kpi.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.5,CINZ2),("INNERGRID",(0,0),(-1,-1),0.5,CINZ2),("BACKGROUND",(0,0),(-1,-1),CINZ),("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5),("LINEABOVE",(0,0),(-1,0),2,VERM)]))
+    story2.append(kpi); story2.append(Spacer(1,0.4*cm))
+    cw = [1.8*cm,1.5*cm,1.8*cm,7*cm,3*cm,1*cm,3*cm,4*cm]
+    tipos2 = sorted(dff["DESC_TIPO_MV"].fillna("SEM TIPO").unique()) if "DESC_TIPO_MV" in dff.columns else ["SEM TIPO"]
+    for tipo2 in tipos2:
+        df_t2 = dff[dff["DESC_TIPO_MV"].fillna("SEM TIPO") == tipo2] if "DESC_TIPO_MV" in dff.columns else dff
+        if len(df_t2) == 0: continue
+        fat_t2 = df_t2["VALOR_LIQUIDO"].sum(); n_t2 = df_t2["NUM_DOCTO"].nunique() if "NUM_DOCTO" in df_t2.columns else 0
+        gt = Table([[Paragraph(str(tipo2),s_g),Paragraph(f"{n_t2} notas · {fmt_brl(fat_t2)}",s_gs)]],colWidths=["60%","40%"])
+        gt.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,-1),PRET),("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),("LEFTPADDING",(0,0),(0,0),8)]))
+        story2.append(gt)
+        gc2 = [col for col in ["DATA_MOVTO","NOME_FILIAL","NUM_DOCTO","NOME_CLIENTE","CIDADE","UF","NOM_VENDEDOR"] if col in df_t2.columns]
+        dn2 = df_t2.groupby(gc2).agg(valor=("VALOR_LIQUIDO","sum")).reset_index().sort_values("DATA_MOVTO")
+        td2 = [["DATA","FILIAL","NF","CLIENTE","CIDADE","UF","VALOR","VENDEDOR"]]; tot2 = 0
+        for _, row in dn2.iterrows():
+            ds = row["DATA_MOVTO"].strftime("%d/%m/%Y") if hasattr(row.get("DATA_MOVTO",None),"strftime") else ""
+            v2 = float(row.get("valor",0)); tot2 += v2
+            td2.append([ds,str(row.get("NOME_FILIAL",""))[:8],str(row.get("NUM_DOCTO","")),str(row.get("NOME_CLIENTE",""))[:45],str(row.get("CIDADE",""))[:18],str(row.get("UF","")),fmt_brl(v2),str(row.get("NOM_VENDEDOR",""))[:22]])
+        td2.append(["TOTAL","","","","","",fmt_brl(tot2),""])
+        t2 = Table(td2,colWidths=cw,repeatRows=1)
+        t2.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),CINZ),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),7.5),("FONTNAME",(0,1),(-1,-2),"Helvetica"),("BACKGROUND",(0,-1),(-1,-1),colors.HexColor("#FFF8DC")),("FONTNAME",(0,-1),(-1,-1),"Helvetica-Bold"),("GRID",(0,0),(-1,-1),0.3,CINZ2),("ROWBACKGROUNDS",(0,1),(-1,-2),[colors.white,CINZ]),("ALIGN",(6,0),(6,-1),"RIGHT"),("TOPPADDING",(0,0),(-1,-1),2),("BOTTOMPADDING",(0,0),(-1,-1),2)]))
+        story2.append(t2); story2.append(Spacer(1,0.3*cm))
+    story2.append(HRFlowable(width="100%",thickness=0.5,color=CINZ2))
+    story2.append(Paragraph(f"IAF · Analista Comercial Frinense Alimentos · Gerado em {hoje_str}", s_r))
+    doc.build(story2); buf2.seek(0)
+    return buf2.read()
 
 
 
