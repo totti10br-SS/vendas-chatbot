@@ -1067,6 +1067,7 @@ def gerar_relatorio_pdf(df: pd.DataFrame, filtro: dict, resultado: dict) -> byte
                     "ultimo_vl_unit": round(float(r["ultimo_vl_unit"]),2),
                     "pm_historico": pm, "kg_total": round(kg_t,2), "n_compras": int(r["n_compras"])
                 })
+        logging.warning(f"[PDF-PRECO] dados_preco len={len(dados_preco)} dff_interno_len={len(dff)} dff_cols={list(dff.columns)[:8]}")
         if dados_preco:
             linhas_p = ""
             for r in dados_preco:
