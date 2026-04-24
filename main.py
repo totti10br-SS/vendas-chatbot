@@ -1245,7 +1245,7 @@ async def chat(req: ChatRequest):
                 meses_pt = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"]
                 mes_label = meses_pt[d1_dt.month-1] + str(d1_dt.year)
             except:
-                mes_label = filtro.get("data_inicio","").replace("-","")
+                mes_label = (filtro.get("data_inicio") or datetime.now().strftime("%Y-%m")).replace("-","")
             cli_label = ""
             if filtro.get("cliente"):
                 cli_label = "_" + re.sub(r'[^A-Za-z0-9]','',filtro["cliente"])[:15].upper()
