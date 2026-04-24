@@ -143,6 +143,13 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;ba
 #voiceToggle .vtoggle-dot{width:10px;height:10px;border-radius:50%;background:var(--border);transition:background .2s;}
 #voiceToggle.active .vtoggle-dot{background:#4caf50;}
 .speak-btn{display:inline-block;margin-top:8px;font-size:14px;cursor:pointer;opacity:.4;transition:opacity .2s;user-select:none;}
+.pdf-card{display:flex;align-items:center;gap:10px;background:var(--surface2);border:1px solid var(--border);border-left:3px solid #b22222;border-radius:8px;padding:10px 14px;margin-top:10px;cursor:pointer;transition:all .2s;text-decoration:none;}
+.pdf-card:hover{border-color:var(--yellow);background:rgba(245,200,0,.05);}
+.pdf-icon{font-size:28px;flex-shrink:0;}
+.pdf-info{flex:1;min-width:0;}
+.pdf-name{font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:700;color:#fff;letter-spacing:.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pdf-meta{font-size:11px;color:var(--muted);margin-top:2px;}
+.pdf-dl{font-family:'Barlow Condensed',sans-serif;font-size:11px;font-weight:700;color:var(--yellow);letter-spacing:.5px;flex-shrink:0;}
 .speak-btn:hover{opacity:1;}
 .speak-btn.speaking{opacity:1;animation:micPulse .8s infinite;}
 @keyframes micPulse{0%,100%{box-shadow:0 0 0 0 rgba(200,30,30,.4);}50%{box-shadow:0 0 0 6px rgba(200,30,30,0);}}
@@ -401,23 +408,6 @@ body.modo-vasco .welcome p strong{color:#fff;}
   .bubble { font-size:13px; padding:9px 12px; }
   .msg-avatar { width:24px; height:24px; font-size:9px; }
   .bubble table { font-size:11px; }
-.mob-cards { display:none !important; }
-@media (max-width: 768px) {
-  .bubble table { display:none !important; }
-  .mob-cards { display:flex !important; flex-direction:column; gap:6px; margin:6px 0; }
-  .mob-card { background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:8px 10px; }
-  .mob-card-title { font-size:12px; font-weight:700; color:#fff; margin-bottom:6px; display:flex; align-items:center; gap:6px; }
-  .mob-card-rank { background:var(--red); color:#fff; font-size:10px; font-weight:700; border-radius:3px; padding:1px 5px; flex-shrink:0; }
-  .mob-card-totals { border-top:1px solid rgba(245,200,0,.2); margin-top:4px; padding-top:6px; }
-  .mob-card-totals .mob-card-title { color:var(--yellow); }
-  .mob-card-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:4px; }
-  .mob-card-grid.cols2 { grid-template-columns:repeat(2,1fr); }
-  .mob-card-grid.cols4 { grid-template-columns:repeat(2,1fr); }
-  .mob-cell { background:rgba(255,255,255,.04); border-radius:5px; padding:5px 6px; text-align:center; }
-  .mob-cell-label { font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin-bottom:2px; }
-  .mob-cell-val { font-size:12px; font-weight:700; color:#fff; }
-  .mob-cell-val strong { color:var(--yellow); }
-}
   .bubble th, .bubble td { padding:3px 5px; }
 
   /* SIDE PANEL tela cheia */
@@ -677,42 +667,13 @@ function renderMarkdown(text){
     var ths=parseCells('|'+header+'|');
     var hCount=ths.length;
     var thsHtml=ths.map(function(c){return '<th>'+c+'</th>';}).join('');
-    var rowList=rows.trim().split('\n');
-    var trs=rowList.map(function(row){
+    var trs=rows.trim().split('\n').map(function(row){
       var cells=parseCells(row);
+      // Preenche células faltantes (ex: linha TOTAIS com | | | |)
       while(cells.length<hCount)cells.push('');
       return '<tr>'+cells.map(function(c){return '<td>'+c+'</td>';}).join('')+'</tr>';
     }).join('');
-    // Gera cards mobile
-    var colCount=hCount-1; // sem a primeira coluna (nome/label)
-    var gridClass=colCount<=2?'cols2':colCount>=4?'cols4':'';
-    var cardsHtml='<!--MOBSTART--><div class="mob-cards">';
-    rowList.forEach(function(row,idx){
-      var cells=parseCells(row);
-      while(cells.length<hCount)cells.push('');
-      var isTotals=cells[0]&&cells[0].replace(/<[^>]+>/g,'').toUpperCase().indexOf('TOTAL')>=0;
-      var cardClass='mob-card'+(isTotals?' mob-card-totals':'');
-      var rankHtml='';
-      // Se primeira célula for número ou tiver rank
-      var firstClean=cells[0].replace(/<[^>]+>/g,'').trim();
-      var isNum=firstClean&&!isNaN(firstClean.replace(/[#.]/g,''));
-      if(isNum) rankHtml='<span class="mob-card-rank">'+firstClean+'</span>';
-      // Label principal: se houver segunda coluna com nome longo, usa ela
-      var labelIdx=isNum?1:0;
-      var titleText=cells[labelIdx]||'';
-      var dataStart=isNum?2:1;
-      cardsHtml+='<div class="'+cardClass+'">';
-      cardsHtml+='<div class="mob-card-title">'+rankHtml+titleText+'</div>';
-      cardsHtml+='<div class="mob-card-grid '+gridClass+'">';
-      for(var i=dataStart;i<cells.length;i++){
-        var lbl=ths[i]||'';
-        var val=cells[i]||'—';
-        cardsHtml+='<div class="mob-cell"><div class="mob-cell-label">'+lbl+'</div><div class="mob-cell-val">'+val+'</div></div>';
-      }
-      cardsHtml+='</div></div>';
-    });
-    cardsHtml+='</div><!--MOBEND-->';
-    return '<table><thead><tr>'+thsHtml+'</tr></thead><tbody>'+trs+'</tbody></table>'+cardsHtml;
+    return '<table><thead><tr>'+thsHtml+'</tr></thead><tbody>'+trs+'</tbody></table>';
   });
   text=text.replace(/^### (.+)$/gm,'<h3>$1</h3>');
   text=text.replace(/^## (.+)$/gm,'<h2>$1</h2>');
@@ -735,15 +696,7 @@ function renderMarkdown(text){
     if(items.length<2) return m;
     return '<div class="semanas-box"><div class="semanas-box-title">📅 Resumo por Semana</div>'+items.join('')+'</div>';
   });
-  // Extrai mob-cards (marcados com MOBSTART/MOBEND) para fora do <p>
-  var parts = text.split('<!--MOBSTART-->');
-  var result = '<p>' + parts[0] + '</p>';
-  for(var i=1; i<parts.length; i++){
-    var subparts = parts[i].split('<!--MOBEND-->');
-    result += subparts[0]; // card HTML (sem <p>)
-    if(subparts[1]) result += '<p>' + subparts[1] + '</p>';
-  }
-  return result;
+  return '<p>'+text+'</p>';
 }
 async function forceReload(){
   const btn = document.querySelector('button[onclick="forceReload()"]');
@@ -955,7 +908,7 @@ function showWelcome(total){
     <div class="suggestions">
       <div class="suggestion" onclick="sendSuggestion(this)">Vendas de março 2026</div>
       <div class="suggestion" onclick="sendSuggestion(this)">Top 10 produtos por volume</div>
-      <div class="suggestion" onclick="sendSuggestion(this)">Cópia de DANFE</div>
+      <div class="suggestion" onclick="sendSuggestion(this)">Comparar filiais em 2026</div>
       <div class="suggestion" onclick="sendSuggestion(this)">Ranking de vendedores</div>
       <div class="suggestion" onclick="sendSuggestion(this)">Clientes com maior volume</div>
       <div class="suggestion" onclick="sendSuggestion(this)">Últimas vendas de um cliente</div>
@@ -991,13 +944,62 @@ async function sendMessage(){
   scrollToBottom();
 }
 
+function isMobile(){
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth <= 768;
+}
+
 function processDanfe(html) {
   if(!html) return html;
   try {
     return html.replace(/DANFE:\s*([0-9]{44})/g, function(match, chave) {
-      return '<button class="btn-danfe" data-chave="' + chave + '" onclick="abrirDanfe(this.dataset.chave)">📄 Ver DANFE</button>';
+      var nrNota = chave.substring(25,34); // extrai número da nota da chave
+      var dataEmissao = chave.substring(2,6); // AAMM da chave
+      var nomeArq = 'DANFE_' + nrNota + '.pdf';
+      if(isMobile()){
+        // Mobile: card clicável que faz download do PDF
+        return '<a class="pdf-card" href="/danfe/'+chave+'" target="_blank">'
+          +'<span class="pdf-icon">📄</span>'
+          +'<div class="pdf-info">'
+          +'<div class="pdf-name">'+nomeArq+'</div>'
+          +'<div class="pdf-meta">Toque para abrir o PDF</div>'
+          +'</div>'
+          +'<span class="pdf-dl">ABRIR ›</span>'
+          +'</a>';
+      } else {
+        // Desktop: card clicável que abre modal
+        return '<div class="pdf-card" onclick="abrirDanfeModal(''+chave+'')">'
+          +'<span class="pdf-icon">📄</span>'
+          +'<div class="pdf-info">'
+          +'<div class="pdf-name">'+nomeArq+'</div>'
+          +'<div class="pdf-meta">Clique para visualizar o DANFE</div>'
+          +'</div>'
+          +'<span class="pdf-dl">VER ›</span>'
+          +'</div>';
+      }
     });
   } catch(e) { return html; }
+}
+
+function abrirDanfe(chave) {
+  if(isMobile()){
+    // Mobile: abre PDF nativo em nova aba
+    window.open('/danfe/' + chave, '_blank');
+  } else {
+    // Desktop: abre modal
+    abrirDanfeModal(chave);
+  }
+}
+
+function abrirDanfeModal(chave) {
+  var overlay = document.getElementById('danfeOverlay');
+  var iframe  = document.getElementById('danfeIframe');
+  var loading = document.getElementById('danfeLoading');
+  if(!overlay || !iframe) return;
+  overlay.classList.add('active');
+  if(loading) loading.style.display='flex';
+  iframe.src = '';
+  iframe.onload = function(){ if(loading) loading.style.display='none'; };
+  iframe.src = '/danfe/' + chave;
 }
 
 function abrirDanfe(chave) {
