@@ -550,71 +550,40 @@ const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecogni
 
 function toggleVoice(){ /* legado */ }
 function speakThis(btn){
-  if(!window.speechSynthesis){ alert("Seu browser não suporta síntese de voz."); return; }
-  // Se já está falando, para
+  if(!window.speechSynthesis){ alert("Seu browser nao suporta sintese de voz."); return; }
   if(window.speechSynthesis.speaking){
     window.speechSynthesis.cancel();
-    document.querySelectorAll('.speak-btn.speaking').forEach(b=>b.classList.remove('speaking'));
+    document.querySelectorAll('.speak-btn.speaking').forEach(function(b){b.classList.remove('speaking');});
     return;
   }
-  // Pega o texto da bolha pai
-  const bubble = btn.closest('.bubble');
-  let text = bubble ? bubble.innerText : '';
-  // Prefere análise rápida se existir
-  const analise = text.match(/ANÁLISE RÁPIDA[\s\S]{0,600}/i);
-  if(analise) text = analise[0];
-  text = text
-    .replace(/[|\-]{2,}/g,' ')
-    .replace(/#{1,3}\s*/g,'')
-    .replace(/\*{1,2}([^*]+)\*{1,2}/g,'$1')
-    .replace(/[⬆⬇📊💡🔝📉📈💰🏆⛔🔊]/g,'')
-    .replace(/\n{2,}/g,'. ')
-    .trim()
-    .substring(0,700);
+  var bubble = btn.closest('.bubble');
+  var text = bubble ? bubble.innerText : '';
+  // Remove linhas de tabela e formatacao
+  // Limpa texto para leitura
+  var lines = text.split('\n');
+  var clean = [];
+  for(var i=0;i<lines.length;i++){
+    var l = lines[i];
+    if(l.indexOf('|') >= 0) continue; // pula linhas de tabela
+    l = l.replace(/#+ */g,'').replace(/\*+([^*]+)\*+/g,'$1').trim();
+    if(l) clean.push(l);
+  }
+  text = clean.join('. ').substring(0,700);
   if(!text) return;
-  const utt = new SpeechSynthesisUtterance(text);
+  var utt = new SpeechSynthesisUtterance(text);
   utt.lang = 'pt-BR';
   utt.rate = 1.05;
-  const voices = window.speechSynthesis.getVoices();
-  const ptVoice = voices.find(v=>v.lang.startsWith('pt') && v.name.toLowerCase().includes('female'))
-               || voices.find(v=>v.lang.startsWith('pt'));
+  var voices = window.speechSynthesis.getVoices();
+  var ptVoice = voices.filter(function(v){return v.lang.indexOf('pt')===0 && v.name.toLowerCase().indexOf('female')>=0;})[0]
+             || voices.filter(function(v){return v.lang.indexOf('pt')===0;})[0];
   if(ptVoice) utt.voice = ptVoice;
   btn.classList.add('speaking');
-  utt.onend = () => btn.classList.remove('speaking');
-  utt.onerror = () => btn.classList.remove('speaking');
+  utt.onend = function(){btn.classList.remove('speaking');};
+  utt.onerror = function(){btn.classList.remove('speaking');};
   window.speechSynthesis.speak(utt);
 }
 
-function speak(text){
-  if(!voiceEnabled || !window.speechSynthesis) return;
-  window.speechSynthesis.cancel();
-  // Extrai só a análise rápida se houver, senão usa resumo curto
-  let toRead = text;
-  const analise = text.match(/ANÁLISE RÁPIDA[\s\S]{0,800}/i);
-  if(analise) toRead = analise[0];
-  // Remove markdown e emojis de tabela
-  toRead = toRead
-    .replace(/\|[^
-]+/g,'')          // remove linhas de tabela
-    .replace(/#{1,3}\s*/g,'')          // remove headers markdown
-    .replace(/\*{1,2}([^*]+)\*{1,2}/g,'$1')  // remove bold/italic
-    .replace(/[⬆⬇📊💡🔝📉📈💰🏆⛔]/g,'')
-    .replace(/
-{2,}/g,'. ')
-    .trim()
-    .substring(0,600);
-  if(!toRead) return;
-  const utt = new SpeechSynthesisUtterance(toRead);
-  utt.lang = 'pt-BR';
-  utt.rate = 1.05;
-  utt.pitch = 1.0;
-  // Prefere voz feminina pt-BR se disponível
-  const voices = window.speechSynthesis.getVoices();
-  const ptVoice = voices.find(v => v.lang.startsWith('pt') && v.name.toLowerCase().includes('female'))
-                || voices.find(v => v.lang.startsWith('pt'));
-  if(ptVoice) utt.voice = ptVoice;
-  window.speechSynthesis.speak(utt);
-}
+function speak(text){ /* legado - nao usado */ }
 
 function toggleMic(){
   if(!SpeechRecognition){
