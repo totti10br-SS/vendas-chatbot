@@ -1269,6 +1269,46 @@ td {{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
     kpi = Table([[Paragraph("FATURAMENTO",s_kl),Paragraph("VOLUME",s_kl),Paragraph("CX30",s_kl),Paragraph("NOTAS",s_kl),Paragraph("R$/KG",s_kl)],[Paragraph(fmt_brl(fat),s_kv),Paragraph(fmt_kg(kg),s_kv),Paragraph(f"{cx:,}",s_kv),Paragraph(f"{notas:,}",s_kv),Paragraph(fmt_brl(pm),s_kv)]], colWidths=["20%"]*5)
     kpi.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.5,CINZ2),("INNERGRID",(0,0),(-1,-1),0.5,CINZ2),("BACKGROUND",(0,0),(-1,-1),CINZ),("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5),("LINEABOVE",(0,0),(-1,0),2,VERM)]))
     story2.append(kpi); story2.append(Spacer(1,0.4*cm))
+
+    # ── ULTIMOS PREÇOS — ReportLab ──
+    if tipo_rel == "ultimos_precos":
+        dados_preco = resultado.get("dados", {}).get("ultimos_precos", [])
+        s_th = ParagraphStyle("th", fontName="Helvetica-Bold", fontSize=7, textColor=colors.HexColor("#666666"))
+        s_td = ParagraphStyle("td", fontName="Helvetica", fontSize=7.5, textColor=PRET)
+        s_td_r = ParagraphStyle("tdr", fontName="Helvetica", fontSize=7.5, textColor=PRET, alignment=TA_RIGHT)
+        cw_p = [2*cm, 8*cm, 2.5*cm, 2.2*cm, 2.8*cm, 2.8*cm, 2.5*cm, 2*cm]
+        td_p = [["COD", "PRODUTO", "ÚLT. COMPRA", "NF", "VL UNIT", "R$/kg MÉD.", "TOTAL KG", "Nº COMP."]]
+        for r in dados_preco:
+            td_p.append([
+                str(r.get("cod",""))[:12],
+                str(r.get("produto",""))[:50],
+                str(r.get("ultima_data","")),
+                str(r.get("ultima_nota","")),
+                fmt_brl(r.get("ultimo_vl_unit",0)),
+                fmt_brl(r.get("pm_historico",0)),
+                f"{r.get('kg_total',0):,.0f}",
+                str(r.get("n_compras",0)),
+            ])
+        t_p = Table(td_p, colWidths=cw_p, repeatRows=1)
+        t_p.setStyle(TableStyle([
+            ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#F0F0F0")),
+            ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),
+            ("FONTSIZE",(0,0),(-1,-1),7.5),
+            ("FONTNAME",(0,1),(-1,-1),"Helvetica"),
+            ("GRID",(0,0),(-1,-1),0.3,CINZ2),
+            ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,CINZ]),
+            ("ALIGN",(4,0),(-1,-1),"RIGHT"),
+            ("TOPPADDING",(0,0),(-1,-1),2),
+            ("BOTTOMPADDING",(0,0),(-1,-1),2),
+            ("LINEABOVE",(0,0),(-1,0),2,VERM),
+        ]))
+        story2.append(t_p)
+        story2.append(Spacer(1,0.2*cm))
+        story2.append(HRFlowable(width="100%",thickness=0.5,color=CINZ2))
+        story2.append(Paragraph(f"IAF · Analista Comercial Frinense Alimentos · Gerado em {hoje_str}", s_r))
+        doc.build(story2); buf2.seek(0)
+        return buf2.read()
+
     cw = [1.8*cm,1.5*cm,1.8*cm,7*cm,3*cm,1*cm,3*cm,4*cm]
     tipos2 = sorted(dff["DESC_TIPO_MV"].fillna("SEM TIPO").unique()) if "DESC_TIPO_MV" in dff.columns else ["SEM TIPO"]
     for tipo2 in tipos2:
