@@ -634,20 +634,17 @@ async def narrar(pergunta: str, resultado: dict, historico: list, modo: str = "n
 - resumo_mensal / resumo_diario: Mostre KPIs gerais → por filial → por dia → previsão fechamento → top clientes → top produtos
 - detalhe_nota: Mostre cabeçalho (filial, cliente, vendedor) + tabela de itens + DANFE se tiver chave_acesso
 - ultimas_vendas:
-  Use os campos "resumo_notas" e "itens_detalhados" do JSON.
-  NUNCA agrupe por data — mostre cada item individualmente.
+  Use "itens_detalhados" do JSON — cada linha é um item de nota fiscal.
   
-  Primeiro mostre cabeçalho: "## ÚLTIMAS VENDAS · [cliente_encontrado]"
+  ## ÚLTIMAS VENDAS · [cliente_encontrado]
   
-  Depois tabela de itens usando "itens_detalhados":
-  | DATA | NR NOTA | FILIAL | PRODUTO | KG | CX | R$/kg |
-  |------|---------|--------|---------|----|----|-------|
-  [uma linha por item, decrescente por data]
+  | DATA | NR NOTA | FILIAL | COD PRODUTO | PRODUTO | KG | CX | VL UNIT | R$/kg |
+  |------|---------|--------|-------------|---------|----|----|---------|-------|
+  [uma linha por item de itens_detalhados, decrescente por DATA_MOVTO]
   
-  Se itens_detalhados estiver vazio mas resumo_notas tiver dados, use resumo_notas:
-  | DATA | NR NOTA | FILIAL | KG | CX | R$ | R$/kg |
+  Campos: DATA_MOVTO=data, NUM_DOCTO=NR NOTA, NOME_FILIAL=filial, COD_PRODUTO=cod, DESC_PRODUTO=produto, QTDE_PRI=kg, QTDE_AUX=cx, VALOR_UNITARIO=vl unit, calcule R$/kg = VALOR_LIQUIDO/QTDE_PRI
   
-  NUNCA mostre traços —. Se não tiver dado em um campo, deixe em branco ou "N/D".
+  Sem linha de totais. Sem análise automática.
 - ranking_clientes: Tabela com posição, nome, kg, cx30, faturamento, R$/kg
 - ranking_vendedores: Tabela com cod, nome, kg, cx30, faturamento, notas
 - comparativo: 
@@ -965,11 +962,12 @@ def gerar_relatorio_pdf(df: pd.DataFrame, filtro: dict, resultado: dict) -> byte
     corpo_html = ""
     resumo_tmv_html = ""
 
-    # ── ULTIMAS VENDAS: itens com filial, data, NF, produto, qtde, R$/kg ──
+    # ── ULTIMAS VENDAS: itens com filial, data, NF, cod produto, produto, qtde, R$/kg ──
     if tipo_rel in ("ultimas_vendas", "ranking_produtos"):
-        cols_item = [col for col in ["DATA_MOVTO","NOME_FILIAL","NUM_DOCTO","DESC_PRODUTO",
-                                     "QTDE_PRI","QTDE_AUX","VALOR_UNITARIO","VALOR_LIQUIDO"] if col in dff.columns]
-        df_itens = dff[cols_item].sort_values("DATA_MOVTO", ascending=False).head(200)
+        cols_item = [col for col in ["DATA_MOVTO","NOME_FILIAL","NUM_DOCTO","COD_PRODUTO",
+                                     "DESC_PRODUTO","QTDE_PRI","QTDE_AUX",
+                                     "VALOR_UNITARIO","VALOR_LIQUIDO"] if col in dff.columns]
+        df_itens = dff[cols_item].sort_values("DATA_MOVTO", ascending=False).head(300)
         linhas_i = ""
         for _, row in df_itens.iterrows():
             data_str = row["DATA_MOVTO"].strftime("%d/%m/%Y") if hasattr(row.get("DATA_MOVTO",None),"strftime") else ""
@@ -978,33 +976,20 @@ def gerar_relatorio_pdf(df: pd.DataFrame, filtro: dict, resultado: dict) -> byte
             vl_unit  = float(row.get("VALOR_UNITARIO",0))
             vl_liq   = float(row.get("VALOR_LIQUIDO",0))
             pm_item  = round(vl_liq / qtde_pri, 2) if qtde_pri > 0 else 0
-            linhas_i += f"""<tr>
-                <td>{_h.escape(str(row.get("NOME_FILIAL",""))[:8])}</td>
-                <td>{_h.escape(data_str)}</td>
-                <td>{_h.escape(str(row.get("NUM_DOCTO","")))}</td>
-                <td class="nome">{_h.escape(str(row.get("DESC_PRODUTO",""))[:55])}</td>
-                <td class="valor">{qtde_pri:,.2f} kg</td>
-                <td class="valor">{int(round(qtde_aux,0)):,} cx</td>
-                <td class="valor">{fmt_brl(vl_unit)}</td>
-                <td class="valor">{fmt_brl(pm_item)}</td>
-            </tr>"""
-        corpo_html = f"""<table style="table-layout:fixed;width:100%;">
+            cod      = str(row.get("COD_PRODUTO",""))[:12]
+            prod     = str(row.get("DESC_PRODUTO",""))[:40]
+            linhas_i += f"<tr><td>{_h.escape(str(row.get('NOME_FILIAL',''))[:6])}</td><td style='white-space:nowrap'>{_h.escape(data_str)}</td><td>{_h.escape(str(row.get('NUM_DOCTO','')))}</td><td>{_h.escape(cod)}</td><td>{_h.escape(prod)}</td><td class='valor'>{qtde_pri:,.0f}</td><td class='valor'>{int(round(qtde_aux,0))}</td><td class='valor'>{fmt_brl(vl_unit)}</td><td class='valor'>{fmt_brl(pm_item)}</td></tr>"
+        corpo_html = f"""<table style="table-layout:fixed;width:100%;font-size:7px;">
           <colgroup>
-            <col style="width:6%">
-            <col style="width:8%">
-            <col style="width:7%">
-            <col style="width:45%">
-            <col style="width:10%">
-            <col style="width:7%">
-            <col style="width:9%">
-            <col style="width:8%">
+            <col style="width:5%"><col style="width:8%"><col style="width:7%">
+            <col style="width:10%"><col style="width:35%">
+            <col style="width:8%"><col style="width:5%">
+            <col style="width:10%"><col style="width:12%">
           </colgroup>
           <thead><tr>
-            <th>FILIAL</th><th>DATA</th><th>NF</th><th>PRODUTO</th>
-            <th style="text-align:right">KG</th>
-            <th style="text-align:right">CX</th>
-            <th style="text-align:right">VL UNIT</th>
-            <th style="text-align:right">R$/KG</th>
+            <th>FILIAL</th><th>DATA</th><th>NF</th><th>COD</th><th>PRODUTO</th>
+            <th style="text-align:right">KG</th><th style="text-align:right">CX</th>
+            <th style="text-align:right">VL UNIT</th><th style="text-align:right">R$/KG</th>
           </tr></thead>
           <tbody>{linhas_i}</tbody>
         </table>"""
