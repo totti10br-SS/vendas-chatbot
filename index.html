@@ -401,10 +401,10 @@ body.modo-vasco .welcome p strong{color:#fff;}
   .bubble { font-size:13px; padding:9px 12px; }
   .msg-avatar { width:24px; height:24px; font-size:9px; }
   .bubble table { font-size:11px; }
-.mob-cards { display:none; }
+.mob-cards { display:none !important; }
 @media (max-width: 768px) {
   .bubble table { display:none !important; }
-  .mob-cards { display:flex; flex-direction:column; gap:6px; margin:6px 0; }
+  .mob-cards { display:flex !important; flex-direction:column; gap:6px; margin:6px 0; }
   .mob-card { background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:8px 10px; }
   .mob-card-title { font-size:12px; font-weight:700; color:#fff; margin-bottom:6px; display:flex; align-items:center; gap:6px; }
   .mob-card-rank { background:var(--red); color:#fff; font-size:10px; font-weight:700; border-radius:3px; padding:1px 5px; flex-shrink:0; }
@@ -735,7 +735,18 @@ function renderMarkdown(text){
     if(items.length<2) return m;
     return '<div class="semanas-box"><div class="semanas-box-title">📅 Resumo por Semana</div>'+items.join('')+'</div>';
   });
-  return '<p>'+text+'</p>';
+  // Extrai mob-cards do fluxo antes de envolver em <p>
+  var mobCardsExtracted = [];
+  text = text.replace(/<div class="mob-cards">[\s\S]*?<\/div><\/div><\/div>/g, function(m){
+    mobCardsExtracted.push(m);
+    return '%%%MOBCARD'+(mobCardsExtracted.length-1)+'%%%';
+  });
+  var result = '<p>'+text+'</p>';
+  // Reinsere os mob-cards fora do <p>
+  mobCardsExtracted.forEach(function(card, i){
+    result = result.replace('%%%MOBCARD'+i+'%%%', '</p>'+card+'<p>');
+  });
+  return result;
 }
 async function forceReload(){
   const btn = document.querySelector('button[onclick="forceReload()"]');
