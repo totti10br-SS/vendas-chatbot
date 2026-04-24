@@ -603,7 +603,13 @@ async def narrar(pergunta: str, resultado: dict, historico: list, modo: str = "n
     elif modo == "vasco":
         personalidade = "\nMODO GIGANTE DA COLINA ⬛⬜: Tempere com referências vascaínas, mas NUNCA altere os números."
 
-    dados_json = json.dumps(resultado["dados"], ensure_ascii=False, indent=2)
+    # Limita itens_detalhados para 50 no JSON (evita overflow de tokens)
+    dados_narrar = resultado["dados"].copy()
+    if "itens_detalhados" in dados_narrar and len(dados_narrar["itens_detalhados"]) > 50:
+        dados_narrar["itens_detalhados"] = dados_narrar["itens_detalhados"][:50]
+    if "resumo_notas" in dados_narrar and len(dados_narrar["resumo_notas"]) > 30:
+        dados_narrar["resumo_notas"] = dados_narrar["resumo_notas"][:30]
+    dados_json = json.dumps(dados_narrar, ensure_ascii=False, indent=2)
     tipo = resultado.get("tipo", "")
 
     system_narrar = f"""Você é o IAF, Analista Comercial Sênior da Frinense Alimentos.{personalidade}
@@ -627,7 +633,21 @@ async def narrar(pergunta: str, resultado: dict, historico: list, modo: str = "n
 ## COMPORTAMENTOS POR TIPO
 - resumo_mensal / resumo_diario: Mostre KPIs gerais → por filial → por dia → previsão fechamento → top clientes → top produtos
 - detalhe_nota: Mostre cabeçalho (filial, cliente, vendedor) + tabela de itens + DANFE se tiver chave_acesso
-- ultimas_vendas: Tabela DATA | NR NOTA | PRODUTO | KG | CX | R$ | R$/kg — decrescente, sem totais
+- ultimas_vendas:
+  Use os campos "resumo_notas" e "itens_detalhados" do JSON.
+  NUNCA agrupe por data — mostre cada item individualmente.
+  
+  Primeiro mostre cabeçalho: "## ÚLTIMAS VENDAS · [cliente_encontrado]"
+  
+  Depois tabela de itens usando "itens_detalhados":
+  | DATA | NR NOTA | FILIAL | PRODUTO | KG | CX | R$/kg |
+  |------|---------|--------|---------|----|----|-------|
+  [uma linha por item, decrescente por data]
+  
+  Se itens_detalhados estiver vazio mas resumo_notas tiver dados, use resumo_notas:
+  | DATA | NR NOTA | FILIAL | KG | CX | R$ | R$/kg |
+  
+  NUNCA mostre traços —. Se não tiver dado em um campo, deixe em branco ou "N/D".
 - ranking_clientes: Tabela com posição, nome, kg, cx30, faturamento, R$/kg
 - ranking_vendedores: Tabela com cod, nome, kg, cx30, faturamento, notas
 - comparativo: 
@@ -665,7 +685,7 @@ DADOS CALCULADOS (use SOMENTE estes):
     msgs.append({"role": "user", "content": pergunta})
 
     # Max tokens por tipo
-    max_tok = 4000 if tipo in ("resumo_mensal", "comparativo") else 2000 if tipo == "detalhe_nota" else 1500
+    max_tok = 4000 if tipo in ("resumo_mensal", "comparativo") else 2500 if tipo in ("detalhe_nota", "ultimas_vendas") else 1500
 
     async with httpx.AsyncClient(timeout=90) as client:
         r = await client.post(
