@@ -1415,37 +1415,41 @@ async def chat(req: ChatRequest):
             "⚠️ Sem dados disponíveis para o período/filtro solicitado. Verifique o período ou tente outro filtro."}]})
 
     # ETAPA 2.5 — Se formato PDF, gera e retorna direto
-    # Se o tipo ficou vago mas o usuário pediu PDF, herdar contexto do histórico
+    # Se tipo vago, herdar contexto varrendo TODO o histórico do usuário
     if filtro.get("formato") == "pdf" and filtro.get("tipo") in ("indefinido", "periodo_livre", None, "saudacao"):
-        # Buscar última mensagem do usuário que gerou um resultado real
+        tipo_encontrado = None
+        cliente_encontrado = None
+        palavras_tipo = {
+            "ultimos_precos":    ["preço","preco","quanto paga","tabela de preço","últimos preços","ultimos precos"],
+            "ultimas_vendas":    ["últimas vendas","ultimas vendas","últimas notas","ultimas notas","histórico de compra"],
+            "ranking_clientes":  ["ranking cliente","top cliente","ranking de cliente"],
+            "ranking_vendedores":["ranking vendedor","top vendedor","ranking de vendedor"],
+            "ranking_produtos":  ["ranking produto","top produto","ranking de produto"],
+        }
         for msg in reversed(historico[:-1]):
-            if msg.get("role") == "user":
-                txt = msg.get("content", "").lower()
-                if any(p in txt for p in ["preço","preco","quanto paga","tabela de preço"]):
-                    filtro["tipo"] = "ultimos_precos"
-                    break
-                elif any(p in txt for p in ["últimas vendas","ultimas vendas","últimas notas","ultimas notas","histórico"]):
-                    filtro["tipo"] = "ultimas_vendas"
-                    break
-                elif any(p in txt for p in ["ranking cliente","top cliente"]):
-                    filtro["tipo"] = "ranking_clientes"
-                    break
-                elif any(p in txt for p in ["ranking vendedor","top vendedor"]):
-                    filtro["tipo"] = "ranking_vendedores"
-                    break
-                elif any(p in txt for p in ["ranking produto","top produto"]):
-                    filtro["tipo"] = "ranking_produtos"
-                    break
-        # Também herdar cliente/período se não vieram
-        if not filtro.get("cliente") and not filtro.get("cnpj_raiz"):
-            for msg in reversed(historico[:-1]):
-                if msg.get("role") == "user":
-                    txt = msg.get("content", "").lower()
-                    if txt.strip() and len(txt.strip()) < 60 and not any(p in txt for p in ["pdf","preço","preco","venda","ranking"]):
-                        filtro["cliente"] = txt.strip()
+            if msg.get("role") != "user":
+                continue
+            txt = msg.get("content", "").lower().strip()
+            if not txt:
+                continue
+            # Tentar identificar tipo
+            if tipo_encontrado is None:
+                for tipo_key, palavras in palavras_tipo.items():
+                    if any(p in txt for p in palavras):
+                        tipo_encontrado = tipo_key
                         break
-        logging.info(f"[PDF] filtro herdado do histórico: {json.dumps(filtro, ensure_ascii=False)}")
-        # Recalcular com filtro corrigido
+            # Tentar identificar cliente (mensagem curta sem palavras de comando)
+            if cliente_encontrado is None:
+                palavras_cmd = ["pdf","preço","preco","venda","ranking","último","ultim","relatorio","relatório","quanto","tabela","histórico","historico","notas"]
+                if len(txt) < 60 and not any(p in txt for p in palavras_cmd):
+                    cliente_encontrado = txt
+
+        if tipo_encontrado:
+            filtro["tipo"] = tipo_encontrado
+        if cliente_encontrado and not filtro.get("cliente") and not filtro.get("cnpj_raiz"):
+            filtro["cliente"] = cliente_encontrado
+
+        logging.info(f"[PDF] filtro herdado: tipo={filtro.get('tipo')} cliente={filtro.get('cliente')}")
         resultado = calcular(df, filtro)
 
     if filtro.get("formato") == "pdf":
