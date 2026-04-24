@@ -945,8 +945,76 @@ def gerar_relatorio_pdf(df: pd.DataFrame, filtro: dict, resultado: dict) -> byte
     corpo_html = ""
     resumo_tmv_html = ""
 
-    if tipo_rel in ("resumo_mensal","resumo_diario","periodo_livre","comparativo","ultimas_vendas") or True:
-        # Para TODOS os tipos: agrupa notas por tipo de movimento
+    # ── ULTIMAS VENDAS: itens com filial, data, NF, produto, qtde, R$/kg ──
+    if tipo_rel in ("ultimas_vendas", "ranking_produtos"):
+        cols_item = [col for col in ["DATA_MOVTO","NOME_FILIAL","NUM_DOCTO","DESC_PRODUTO",
+                                     "QTDE_PRI","QTDE_AUX","VALOR_UNITARIO","VALOR_LIQUIDO"] if col in dff.columns]
+        df_itens = dff[cols_item].sort_values("DATA_MOVTO", ascending=False).head(200)
+        linhas_i = ""
+        for _, row in df_itens.iterrows():
+            data_str = row["DATA_MOVTO"].strftime("%d/%m/%Y") if hasattr(row.get("DATA_MOVTO",None),"strftime") else ""
+            qtde_pri = float(row.get("QTDE_PRI",0))
+            qtde_aux = float(row.get("QTDE_AUX",0))
+            vl_unit  = float(row.get("VALOR_UNITARIO",0))
+            vl_liq   = float(row.get("VALOR_LIQUIDO",0))
+            pm_item  = round(vl_liq / qtde_pri, 2) if qtde_pri > 0 else 0
+            linhas_i += f"""<tr>
+                <td>{_h.escape(str(row.get("NOME_FILIAL",""))[:8])}</td>
+                <td>{_h.escape(data_str)}</td>
+                <td>{_h.escape(str(row.get("NUM_DOCTO","")))}</td>
+                <td class="nome">{_h.escape(str(row.get("DESC_PRODUTO",""))[:55])}</td>
+                <td class="valor">{qtde_pri:,.2f} kg</td>
+                <td class="valor">{int(round(qtde_aux,0)):,} cx</td>
+                <td class="valor">{fmt_brl(vl_unit)}</td>
+                <td class="valor">{fmt_brl(pm_item)}</td>
+            </tr>"""
+        corpo_html = f"""<table style="table-layout:fixed;width:100%;">
+          <colgroup>
+            <col style="width:6%">
+            <col style="width:8%">
+            <col style="width:7%">
+            <col style="width:45%">
+            <col style="width:10%">
+            <col style="width:7%">
+            <col style="width:9%">
+            <col style="width:8%">
+          </colgroup>
+          <thead><tr>
+            <th>FILIAL</th><th>DATA</th><th>NF</th><th>PRODUTO</th>
+            <th style="text-align:right">KG</th>
+            <th style="text-align:right">CX</th>
+            <th style="text-align:right">VL UNIT</th>
+            <th style="text-align:right">R$/KG</th>
+          </tr></thead>
+          <tbody>{linhas_i}</tbody>
+        </table>"""
+
+    # ── RANKING CLIENTES ──
+    elif tipo_rel == "ranking_clientes" and "NOME_CLIENTE" in dff.columns:
+        cli_grp = dff.groupby("NOME_CLIENTE").agg(kg=("QTDE_PRI","sum"),fat=("VALOR_LIQUIDO","sum"),notas=("NUM_DOCTO","nunique")).sort_values("kg",ascending=False).head(50)
+        linhas_c = ""
+        for i,(ci,cr) in enumerate(cli_grp.iterrows(),1):
+            kc=float(cr["kg"]); fc=float(cr["fat"]); pmc=round(fc/kc,2) if kc>0 else 0
+            linhas_c += f"<tr><td>{i}</td><td class='nome'>{_h.escape(str(ci)[:50])}</td><td class='valor'>{kc:,.2f}</td><td class='valor'>{int(round(kc/30,0)):,}</td><td class='valor'>{fmt_brl(fc)}</td><td class='valor'>{fmt_brl(pmc)}</td><td class='valor'>{int(cr['notas'])}</td></tr>"
+        corpo_html = f"""<table>
+          <thead><tr><th>#</th><th>CLIENTE</th><th style="text-align:right">KG</th><th style="text-align:right">CX30</th><th style="text-align:right">FATURAMENTO</th><th style="text-align:right">R$/KG</th><th style="text-align:right">NOTAS</th></tr></thead>
+          <tbody>{linhas_c}<tr class="total-row"><td colspan="2"><strong>TOTAIS</strong></td><td class="valor">{kg:,.2f}</td><td class="valor">{cx:,}</td><td class="valor">{fmt_brl(fat)}</td><td class="valor">{fmt_brl(pm)}</td><td class="valor">{notas}</td></tr></tbody>
+        </table>"""
+
+    # ── RANKING VENDEDORES ──
+    elif tipo_rel == "ranking_vendedores" and "NOM_VENDEDOR" in dff.columns:
+        vend_grp = dff.groupby("NOM_VENDEDOR").agg(kg=("QTDE_PRI","sum"),fat=("VALOR_LIQUIDO","sum"),notas=("NUM_DOCTO","nunique")).sort_values("kg",ascending=False)
+        linhas_v = ""
+        for i,(vi,vr) in enumerate(vend_grp.iterrows(),1):
+            kv=float(vr["kg"]); fv=float(vr["fat"]); pmv=round(fv/kv,2) if kv>0 else 0
+            linhas_v += f"<tr><td>{i}</td><td class='nome'>{_h.escape(str(vi)[:40])}</td><td class='valor'>{kv:,.2f}</td><td class='valor'>{int(round(kv/30,0)):,}</td><td class='valor'>{fmt_brl(fv)}</td><td class='valor'>{fmt_brl(pmv)}</td><td class='valor'>{int(vr['notas'])}</td></tr>"
+        corpo_html = f"""<table>
+          <thead><tr><th>#</th><th>VENDEDOR</th><th style="text-align:right">KG</th><th style="text-align:right">CX30</th><th style="text-align:right">FATURAMENTO</th><th style="text-align:right">R$/KG</th><th style="text-align:right">NOTAS</th></tr></thead>
+          <tbody>{linhas_v}<tr class="total-row"><td colspan="2"><strong>TOTAIS</strong></td><td class="valor">{kg:,.2f}</td><td class="valor">{cx:,}</td><td class="valor">{fmt_brl(fat)}</td><td class="valor">{fmt_brl(pm)}</td><td class="valor">{notas}</td></tr></tbody>
+        </table>"""
+
+    # ── PADRÃO: relatório de faturamento por tipo de movimento ──
+    else:
         if "DESC_TIPO_MV" in dff.columns:
             tipos = sorted(dff["DESC_TIPO_MV"].fillna("SEM TIPO").unique())
             for tipo in tipos:
@@ -984,31 +1052,14 @@ def gerar_relatorio_pdf(df: pd.DataFrame, filtro: dict, resultado: dict) -> byte
                   </tbody>
                 </table>"""
         else:
-            # Sem coluna de tipo: lista direto
             grp_cols = [col for col in ["DATA_MOVTO","NOME_FILIAL","NUM_DOCTO","NOME_CLIENTE","CIDADE","UF","NOM_VENDEDOR"] if col in dff.columns]
             df_notas = dff.groupby(grp_cols).agg(valor=("VALOR_LIQUIDO","sum")).reset_index().sort_values("DATA_MOVTO", ascending=False)
-            linhas = ""
-            total_valor = 0
+            linhas = ""; total_valor = 0
             for _, row in df_notas.iterrows():
                 data_str = row["DATA_MOVTO"].strftime("%d/%m/%Y") if hasattr(row.get("DATA_MOVTO",None),"strftime") else ""
-                valor = float(row.get("valor",0))
-                total_valor += valor
-                linhas += f"""<tr>
-                    <td>{_h.escape(data_str)}</td>
-                    <td>{_h.escape(str(row.get("NOME_FILIAL",""))[:8])}</td>
-                    <td>{_h.escape(str(row.get("NUM_DOCTO","")))}</td>
-                    <td class="nome">{_h.escape(str(row.get("NOME_CLIENTE",""))[:45])}</td>
-                    <td>{_h.escape(str(row.get("CIDADE",""))[:18])}</td>
-                    <td>{_h.escape(str(row.get("UF","")))}</td>
-                    <td class="valor">{fmt_brl(valor)}</td>
-                    <td>{_h.escape(str(row.get("NOM_VENDEDOR",""))[:22])}</td>
-                </tr>"""
-            corpo_html = f"""<table>
-              <thead><tr><th>DATA</th><th>FILIAL</th><th>NF</th><th>CLIENTE</th><th>CIDADE</th><th>UF</th><th>VALOR</th><th>VENDEDOR</th></tr></thead>
-              <tbody>{linhas}
-                <tr class="total-row"><td colspan="6"><strong>TOTAL</strong></td><td class="valor">{fmt_brl(total_valor)}</td><td></td></tr>
-              </tbody>
-            </table>"""
+                valor = float(row.get("valor",0)); total_valor += valor
+                linhas += f"""<tr><td>{_h.escape(data_str)}</td><td>{_h.escape(str(row.get("NOME_FILIAL",""))[:8])}</td><td>{_h.escape(str(row.get("NUM_DOCTO","")))}</td><td class="nome">{_h.escape(str(row.get("NOME_CLIENTE",""))[:45])}</td><td>{_h.escape(str(row.get("CIDADE",""))[:18])}</td><td>{_h.escape(str(row.get("UF","")))}</td><td class="valor">{fmt_brl(valor)}</td><td>{_h.escape(str(row.get("NOM_VENDEDOR",""))[:22])}</td></tr>"""
+            corpo_html = f"""<table><thead><tr><th>DATA</th><th>FILIAL</th><th>NF</th><th>CLIENTE</th><th>CIDADE</th><th>UF</th><th>VALOR</th><th>VENDEDOR</th></tr></thead><tbody>{linhas}<tr class="total-row"><td colspan="6"><strong>TOTAL</strong></td><td class="valor">{fmt_brl(total_valor)}</td><td></td></tr></tbody></table>"""
 
     # ── Resumo sintético por tipo de movimento ──
     if "DESC_TIPO_MV" in dff.columns:
@@ -1044,10 +1095,11 @@ body {{ font-family: Arial, sans-serif; font-size: 9px; color: #222; margin: 0; 
 table {{ width: 100%; border-collapse: collapse; margin-bottom: 0; }}
 thead tr {{ background: #f0f0f0; }}
 th {{ padding: 5px 6px; text-align: left; font-size: 8px; color: #666; text-transform: uppercase; border-bottom: 2px solid #ddd; white-space: nowrap; }}
-td {{ padding: 4px 6px; border-bottom: 1px solid #eee; font-size: 8.5px; }}
+td {{ padding: 3px 5px; border-bottom: 1px solid #eee; font-size: 7.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
 tr:nth-child(even) td {{ background: #f9f9f9; }}
 .valor {{ text-align: right; font-weight: bold; }}
-.nome {{ max-width: 200px; }}
+.nome {{ max-width: 200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
+td {{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
 .total-row td {{ background: #FFF8DC !important; font-weight: bold; border-top: 2px solid #ddd; }}
 .footer {{ margin-top: 16px; border-top: 1px solid #ddd; padding-top: 6px; display: flex; justify-content: space-between; font-size: 8px; color: #aaa; }}
 </style>
