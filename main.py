@@ -437,6 +437,25 @@ def calcular(df: pd.DataFrame, filtro: dict) -> dict:
             for idx, r in por_tipo.iterrows()
         ]
 
+    # ── Por tipo de movimento (COD_TIPO_MV / DESC_TIPO_MV) ──
+    if 'DESC_TIPO_MV' in dff.columns:
+        cols_tmv = ['COD_TIPO_MV','DESC_TIPO_MV'] if 'COD_TIPO_MV' in dff.columns else ['DESC_TIPO_MV']
+        por_tmv = dff.groupby(cols_tmv).agg(
+            kg=('QTDE_PRI','sum'), fat=('VALOR_LIQUIDO','sum'),
+            notas=('NUM_DOCTO','nunique') if 'NUM_DOCTO' in dff.columns else ('VALOR_LIQUIDO','count')
+        ).sort_values('kg', ascending=False)
+        d["por_tipo_movimento"] = []
+        for idx, r in por_tmv.iterrows():
+            cod  = idx[0] if isinstance(idx, tuple) else ''
+            desc = idx[1] if isinstance(idx, tuple) else idx
+            d["por_tipo_movimento"].append({
+                "cod": str(cod), "desc": str(desc),
+                "kg": round(float(r.kg),2), "cx30": int(round(r.kg/30,0)),
+                "faturamento": round(float(r.fat),2),
+                "pm": round(float(r.fat)/float(r.kg),2) if r.kg > 0 else 0,
+                "notas": int(r.notas)
+            })
+
     # ── Detalhe de nota fiscal ──
     if tipo == "detalhe_nota" and 'NUM_DOCTO' in dff.columns:
         cols_nota = [c for c in ['NUM_DOCTO','DATA_MOVTO','NOME_CLIENTE','NOME_FILIAL',
@@ -460,24 +479,56 @@ def calcular(df: pd.DataFrame, filtro: dict) -> dict:
 
     # ── Últimas vendas de cliente ──
     if tipo == "ultimas_vendas" and filtro.get("cliente"):
-        cols_venda = [c for c in ['DATA_MOVTO','NUM_DOCTO','COD_PRODUTO','DESC_PRODUTO',
-                                   'QTDE_PRI','QTDE_AUX','VALOR_LIQUIDO','NOME_FILIAL'] if c in dff.columns]
-        ultimas = dff[cols_venda].sort_values('DATA_MOVTO', ascending=False).head(20)
+        if 'NOME_CLIENTE' in dff.columns:
+            d["cliente_encontrado"] = dff['NOME_CLIENTE'].iloc[0]
+
+        # Resumo por nota (agrupado)
+        if 'NUM_DOCTO' in dff.columns:
+            grp = dff.groupby(['DATA_MOVTO','NUM_DOCTO']).agg(
+                kg=('QTDE_PRI','sum'),
+                fat=('VALOR_LIQUIDO','sum'),
+                n_itens=('COD_PRODUTO','count') if 'COD_PRODUTO' in dff.columns else ('VALOR_LIQUIDO','count'),
+            ).reset_index().sort_values('DATA_MOVTO', ascending=False).head(30)
+            extras = {}
+            for col in ['NOME_FILIAL','NOM_VENDEDOR','CHAVE_ACESSO']:
+                if col in dff.columns:
+                    extras[col] = dff.groupby('NUM_DOCTO')[col].first()
+            resumo_notas = []
+            for _, r in grp.iterrows():
+                nr = r['NUM_DOCTO']
+                resumo_notas.append({
+                    "data":     r['DATA_MOVTO'].strftime('%d/%m/%Y') if hasattr(r['DATA_MOVTO'],'strftime') else str(r['DATA_MOVTO']),
+                    "nr_nota":  str(nr),
+                    "filial":   str(extras['NOME_FILIAL'].get(nr,'')) if 'NOME_FILIAL' in extras else '',
+                    "vendedor": str(extras['NOM_VENDEDOR'].get(nr,'')) if 'NOM_VENDEDOR' in extras else '',
+                    "kg":       round(float(r['kg']),2),
+                    "cx30":     int(round(float(r['kg'])/30,0)),
+                    "fat":      round(float(r['fat']),2),
+                    "pm":       round(float(r['fat'])/float(r['kg']),2) if float(r['kg']) > 0 else 0,
+                    "n_itens":  int(r['n_itens']),
+                    "chave":    str(extras['CHAVE_ACESSO'].get(nr,'')) if 'CHAVE_ACESSO' in extras else '',
+                })
+            d["resumo_notas"] = resumo_notas
+
+        # Itens detalhados — max 100 linhas
+        cols_item = [col for col in ['DATA_MOVTO','NUM_DOCTO','NOME_FILIAL','NOM_VENDEDOR',
+                                     'COD_PRODUTO','DESC_PRODUTO','DESC_DIVISAO2',
+                                     'QTDE_PRI','QTDE_AUX','VALOR_UNITARIO','VALOR_LIQUIDO',
+                                     'CHAVE_ACESSO'] if col in dff.columns]
+        ultimas = dff[cols_item].sort_values('DATA_MOVTO', ascending=False).head(100)
         registros = []
         for _, row in ultimas.iterrows():
             item = {}
-            for c in cols_venda:
-                v = row[c]
+            for col in cols_item:
+                v = row[col]
                 if hasattr(v, 'strftime'):
-                    item[c] = v.strftime('%d/%m/%Y')
+                    item[col] = v.strftime('%d/%m/%Y')
                 elif pd.isna(v):
-                    item[c] = None
+                    item[col] = None
                 else:
-                    item[c] = v
+                    item[col] = v
             registros.append(item)
-        d["ultimas_vendas"] = registros
-        if 'NOME_CLIENTE' in dff.columns:
-            d["cliente_encontrado"] = dff['NOME_CLIENTE'].iloc[0]
+        d["itens_detalhados"] = registros
 
     # ── Comparativo com período anterior ──
     if (filtro.get("comparar_periodo_anterior") or filtro.get("tipo") == "comparativo") and filtro.get("data_inicio") and filtro.get("data_fim"):
