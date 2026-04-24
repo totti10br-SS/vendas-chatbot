@@ -29,6 +29,11 @@ import httpx
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
+try:
+    from weasyprint import HTML as WeasyprintHTML
+    WEASYPRINT_OK = True
+except Exception:
+    WEASYPRINT_OK = False
 
 # ─────────────────────────────────────────────
 #  CONFIG
@@ -163,6 +168,7 @@ Retorne JSON com esta estrutura exata:
   "comparar_periodo_anterior": true|false,
   "data_inicio_b": "YYYY-MM-DD ou null",
   "data_fim_b": "YYYY-MM-DD ou null",
+  "formato": "normal|pdf",
   "observacao": "qualquer detalhe extra relevante ou null"
 }}
 
@@ -181,6 +187,7 @@ REGRAS:
   * data_inicio_b/data_fim_b = período B (mais antigo)
   * comparar_periodo_anterior=false
 - Para comparativo com período imediatamente anterior (ex: "vs mês passado"): comparar_periodo_anterior=true
+- Se usuário pedir "em PDF", "relatório PDF", "manda em PDF", "exportar PDF": formato="pdf"
 - NUNCA invente dados, apenas interprete a pergunta"""
 
     async with httpx.AsyncClient(timeout=30) as client:
@@ -811,6 +818,154 @@ def detalhe_tipo(tipo: str):
 # ─────────────────────────────────────────────
 #  ROUTE — /chat (nova arquitetura)
 # ─────────────────────────────────────────────
+def gerar_relatorio_pdf(df: pd.DataFrame, filtro: dict, resultado: dict) -> bytes:
+    """Gera PDF de relatório de faturamento agrupado por tipo de movimento."""
+    import html as html_escape
+
+    dados = resultado.get("dados", {})
+    d1 = filtro.get("data_inicio", "")
+    d2 = filtro.get("data_fim", "")
+    filial_filtro = filtro.get("filial", "Todas as Filiais")
+    hoje_str = datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    # Período label
+    try:
+        p1 = datetime.strptime(d1, "%Y-%m-%d").strftime("%d/%m/%Y")
+        p2 = datetime.strptime(d2, "%Y-%m-%d").strftime("%d/%m/%Y")
+        periodo_label = p1 if p1 == p2 else f"{p1} a {p2}"
+    except:
+        periodo_label = f"{d1} a {d2}"
+
+    # KPIs
+    fat   = dados.get("faturamento", 0)
+    kg    = dados.get("kg", 0)
+    cx    = dados.get("cx30", 0)
+    notas = dados.get("notas", 0)
+    pm    = dados.get("preco_medio", 0)
+
+    def fmt_brl(v):
+        return f"R$ {v:,.2f}".replace(",","X").replace(".",",").replace("X",".")
+    def fmt_kg(v):
+        return f"{v:,.2f} kg".replace(",","X").replace(".",",").replace("X",".")
+
+    # Busca dados brutos filtrados do DataFrame
+    dff = df.copy()
+    if filtro.get("data_inicio"):
+        dff = dff[dff["DATA_MOVTO"] >= pd.to_datetime(filtro["data_inicio"])]
+    if filtro.get("data_fim"):
+        dff = dff[dff["DATA_MOVTO"] < pd.to_datetime(filtro["data_fim"]) + timedelta(days=1)]
+    if filtro.get("filial") and "NOME_FILIAL" in dff.columns:
+        dff = dff[dff["NOME_FILIAL"].str.upper() == filtro["filial"].upper()]
+
+    # Agrupa por tipo de movimento → notas
+    grupos_html = ""
+    if "DESC_TIPO_MV" in dff.columns:
+        tipos = dff["DESC_TIPO_MV"].fillna("SEM TIPO").unique()
+        for tipo in sorted(tipos):
+            df_tipo = dff[dff["DESC_TIPO_MV"].fillna("SEM TIPO") == tipo]
+            # Agrupa por nota
+            cols_grp = [c for c in ["DATA_MOVTO","cod_filial","NUM_DOCTO","NOME_CLIENTE","CIDADE","UF","NOM_VENDEDOR"] if c in df_tipo.columns]
+            df_notas = df_tipo.groupby(cols_grp).agg(valor=("VALOR_LIQUIDO","sum")).reset_index()
+            df_notas = df_notas.sort_values("DATA_MOVTO")
+
+            fat_tipo = df_tipo["VALOR_LIQUIDO"].sum()
+            n_notas  = df_tipo["NUM_DOCTO"].nunique() if "NUM_DOCTO" in df_tipo.columns else 0
+
+            linhas = ""
+            for _, row in df_notas.iterrows():
+                data_str = row["DATA_MOVTO"].strftime("%d/%m/%Y") if hasattr(row.get("DATA_MOVTO"), "strftime") else str(row.get("DATA_MOVTO",""))
+                filial_str = html_escape.escape(str(row.get("cod_filial","")))
+                nr_nota    = html_escape.escape(str(row.get("NUM_DOCTO","")))
+                cliente    = html_escape.escape(str(row.get("NOME_CLIENTE",""))[:40])
+                cidade     = html_escape.escape(str(row.get("CIDADE",""))[:20])
+                uf         = html_escape.escape(str(row.get("UF","")))
+                valor      = fmt_brl(float(row.get("valor",0)))
+                vendedor   = html_escape.escape(str(row.get("NOM_VENDEDOR",""))[:25])
+                linhas += f"""<tr>
+                    <td>{data_str}</td><td>{filial_str}</td><td>{nr_nota}</td>
+                    <td class="nome">{cliente}</td><td>{cidade}</td><td>{uf}</td>
+                    <td class="valor">{valor}</td><td>{vendedor}</td>
+                </tr>"""
+
+            grupos_html += f"""
+            <div class="grupo">
+              <div class="grupo-header">
+                <span class="grupo-tipo">{html_escape.escape(tipo)}</span>
+                <span class="grupo-stats">{n_notas} notas · {fmt_brl(fat_tipo)}</span>
+              </div>
+              <table>
+                <thead><tr>
+                  <th>DATA</th><th>FILIAL</th><th>NF</th><th>CLIENTE</th>
+                  <th>CIDADE</th><th>UF</th><th>VALOR</th><th>VENDEDOR</th>
+                </tr></thead>
+                <tbody>{linhas}</tbody>
+              </table>
+            </div>"""
+
+    html_content = f"""<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<style>
+  @page {{ margin: 1.5cm 1.2cm; size: A4 landscape; }}
+  body {{ font-family: Arial, sans-serif; font-size: 9px; color: #222; margin: 0; }}
+  .header {{ background: #c8102e; color: #fff; padding: 10px 14px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }}
+  .header h1 {{ margin: 0; font-size: 16px; letter-spacing: 1px; }}
+  .header .sub {{ font-size: 10px; opacity: .85; margin-top: 2px; }}
+  .header .right {{ text-align: right; font-size: 9px; }}
+  .kpis {{ display: flex; gap: 10px; margin-bottom: 14px; }}
+  .kpi {{ flex: 1; border: 1px solid #ddd; border-top: 3px solid #c8102e; border-radius: 4px; padding: 6px 10px; }}
+  .kpi-label {{ font-size: 8px; color: #888; text-transform: uppercase; letter-spacing: .5px; }}
+  .kpi-value {{ font-size: 14px; font-weight: bold; color: #111; margin-top: 2px; }}
+  .grupo {{ margin-bottom: 16px; }}
+  .grupo-header {{ background: #1a1a1a; color: #fff; padding: 5px 10px; display: flex; justify-content: space-between; border-radius: 3px 3px 0 0; }}
+  .grupo-tipo {{ font-size: 10px; font-weight: bold; letter-spacing: .5px; }}
+  .grupo-stats {{ font-size: 9px; color: #f5c800; }}
+  table {{ width: 100%; border-collapse: collapse; }}
+  thead tr {{ background: #f5f5f5; }}
+  th {{ padding: 4px 5px; text-align: left; font-size: 8px; color: #555; text-transform: uppercase; border-bottom: 1px solid #ddd; white-space: nowrap; }}
+  td {{ padding: 3px 5px; border-bottom: 1px solid #eee; font-size: 8.5px; }}
+  tr:nth-child(even) {{ background: #fafafa; }}
+  .valor {{ text-align: right; font-weight: bold; }}
+  .nome {{ max-width: 180px; }}
+  .footer {{ margin-top: 20px; border-top: 1px solid #ddd; padding-top: 6px; font-size: 8px; color: #999; display: flex; justify-content: space-between; }}
+</style>
+</head>
+<body>
+<div class="header">
+  <div>
+    <div class="h1" style="font-size:16px;font-weight:bold;letter-spacing:1px;">IAF · RELATÓRIO DE FATURAMENTO</div>
+    <div class="sub">Frinense Alimentos · {html_escape.escape(filial_filtro or "Todas as Filiais")}</div>
+  </div>
+  <div class="right">
+    <div><strong>Período:</strong> {periodo_label}</div>
+    <div>Gerado em {hoje_str}</div>
+  </div>
+</div>
+
+<div class="kpis">
+  <div class="kpi"><div class="kpi-label">Faturamento</div><div class="kpi-value">{fmt_brl(fat)}</div></div>
+  <div class="kpi"><div class="kpi-label">Volume</div><div class="kpi-value">{fmt_kg(kg)}</div></div>
+  <div class="kpi"><div class="kpi-label">CX30</div><div class="kpi-value">{cx:,}</div></div>
+  <div class="kpi"><div class="kpi-label">Notas</div><div class="kpi-value">{notas:,}</div></div>
+  <div class="kpi"><div class="kpi-label">R$/kg</div><div class="kpi-value">{fmt_brl(pm)}</div></div>
+</div>
+
+{grupos_html}
+
+<div class="footer">
+  <span>IAF · Analista Comercial Frinense Alimentos</span>
+  <span>Gerado automaticamente em {hoje_str}</span>
+</div>
+</body></html>"""
+
+    if not WEASYPRINT_OK:
+        raise HTTPException(status_code=500, detail="WeasyPrint não disponível no servidor.")
+
+    pdf_bytes = WeasyprintHTML(string=html_content).write_pdf()
+    return pdf_bytes
+
+
 @app.post("/chat")
 async def chat(req: ChatRequest):
     if not CLAUDE_KEY:
@@ -892,6 +1047,28 @@ async def chat(req: ChatRequest):
     if resultado.get("sem_dados"):
         return JSONResponse({"content": [{"type": "text", "text":
             "⚠️ Sem dados disponíveis para o período/filtro solicitado. Verifique o período ou tente outro filtro."}]})
+
+    # ETAPA 2.5 — Se formato PDF, gera e retorna direto
+    if filtro.get("formato") == "pdf":
+        try:
+            pdf_bytes = gerar_relatorio_pdf(df, filtro, resultado)
+            periodo = filtro.get("data_inicio","").replace("-","")
+            filename = f"IAF_relatorio_{periodo}.pdf"
+            import base64 as _b64
+            pdf_b64 = _b64.b64encode(pdf_bytes).decode()
+            return JSONResponse({
+                "id": "iaf-pdf",
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text":
+                    f"📄 Relatório gerado!\nRELATORIO_PDF_BASE64:{pdf_b64}:FILENAME:{filename}"}],
+                "model": "iaf-v2",
+                "stop_reason": "end_turn"
+            })
+        except Exception as e:
+            logging.error(f"[PDF] erro: {e}")
+            return JSONResponse({"content": [{"type": "text", "text":
+                f"❌ Erro ao gerar PDF: {str(e)}. Tente sem o PDF por enquanto."}]})
 
     # ETAPA 3 — Narrar
     try:
