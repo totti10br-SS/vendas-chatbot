@@ -528,6 +528,7 @@ body.modo-vasco .welcome p strong{color:#fff;}
     <div class="input-area">
       <textarea id="userInput" placeholder="Pergunte ao IAF sobre suas vendas..." rows="1"
         onkeydown="handleKey(event)" oninput="autoResize(this)" disabled></textarea>
+      <button id="stopSpeakBtn" onclick="stopSpeaking()" title="Parar voz" style="display:none;width:42px;height:42px;flex-shrink:0;background:#1a1a1a;border:1px solid rgba(245,200,0,.5);border-radius:8px;cursor:pointer;font-size:18px;align-items:center;justify-content:center;">⏹️</button>
       <button id="micBtn" onclick="toggleMic()" disabled title="Falar">🎤</button>
       <button id="sendBtn" onclick="sendMessage()" disabled>
         <svg viewBox="0 0 24 24"><path d="M2 21L23 12 2 3v7l15 2-15 2v7z"/></svg>
@@ -556,37 +557,71 @@ let recognition  = null;
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 function toggleVoice(){ /* legado */ }
-function speakThis(btn){
-  if(!window.speechSynthesis){ alert("Seu browser nao suporta sintese de voz."); return; }
-  if(window.speechSynthesis.speaking){
+function stopSpeaking(){
+  if(window.speechSynthesis && window.speechSynthesis.speaking){
     window.speechSynthesis.cancel();
     document.querySelectorAll('.speak-btn.speaking').forEach(function(b){b.classList.remove('speaking');});
+  }
+  var stopBtn = document.getElementById('stopSpeakBtn');
+  if(stopBtn) stopBtn.style.display = 'none';
+}
+
+function speakThis(btn, rawText){
+  if(!window.speechSynthesis){ alert("Seu browser nao suporta sintese de voz."); return; }
+  if(window.speechSynthesis.speaking){
+    stopSpeaking();
     return;
   }
-  var bubble = btn.closest('.bubble');
-  var text = bubble ? bubble.innerText : '';
-  // Remove linhas de tabela e formatacao
-  // Limpa texto para leitura
+  // Usa o markdown bruto se disponível, senão fallback para innerText
+  var text = rawText || '';
+  if(!text){
+    var bubble = btn.closest('.bubble');
+    text = bubble ? bubble.innerText : '';
+  }
+  // Filtrar: remover blocos de tabela (linhas com | ou ---), código, e formatação
   var lines = text.split('\n');
   var clean = [];
+  var inTabela = false;
   for(var i=0;i<lines.length;i++){
     var l = lines[i];
-    if(l.indexOf('|') >= 0) continue; // pula linhas de tabela
-    l = l.replace(/#+ */g,'').replace(/\*+([^*]+)\*+/g,'$1').trim();
-    if(l) clean.push(l);
+    // Detecta linha de tabela markdown (tem | ou é separador ---)
+    if(l.indexOf('|') >= 0 || /^[-|\s]+$/.test(l)){ inTabela = true; continue; }
+    // Detecta bloco de código
+    if(l.indexOf('```') >= 0) continue;
+    inTabela = false;
+    // Remove formatação markdown
+    l = l.replace(/^#+\s*/,'')          // títulos
+         .replace(/\*\*([^*]+)\*\*/g,'$1') // negrito
+         .replace(/\*([^*]+)\*/g,'$1')   // itálico
+         .replace(/`[^`]+`/g,'')          // código inline
+         .replace(/^[-*>]\s+/,'')         // listas e quotes
+         .replace(/\[([^\]]+)\]\([^)]+\)/g,'$1') // links
+         .trim();
+    if(l && l.length > 2) clean.push(l);
   }
-  text = clean.join('. ').substring(0,700);
-  if(!text) return;
+  text = clean.join('. ').substring(0, 1200);
+  if(!text){ stopSpeaking(); return; }
   var utt = new SpeechSynthesisUtterance(text);
   utt.lang = 'pt-BR';
-  utt.rate = 1.05;
+  utt.rate = 1.0;
+  // Voz salva pelo usuário ou padrão pt-BR
+  var savedVoice = localStorage.getItem('iaf_voice_name');
   var voices = window.speechSynthesis.getVoices();
-  var ptVoice = voices.filter(function(v){return v.lang.indexOf('pt')===0 && v.name.toLowerCase().indexOf('female')>=0;})[0]
-             || voices.filter(function(v){return v.lang.indexOf('pt')===0;})[0];
-  if(ptVoice) utt.voice = ptVoice;
+  var chosen = null;
+  if(savedVoice) chosen = voices.find(function(v){return v.name === savedVoice;});
+  if(!chosen) chosen = voices.filter(function(v){return v.lang.startsWith('pt');})[0];
+  if(chosen) utt.voice = chosen;
   btn.classList.add('speaking');
-  utt.onend = function(){btn.classList.remove('speaking');};
-  utt.onerror = function(){btn.classList.remove('speaking');};
+  var stopBtn = document.getElementById('stopSpeakBtn');
+  if(stopBtn) stopBtn.style.display = 'flex';
+  utt.onend = function(){
+    btn.classList.remove('speaking');
+    if(stopBtn) stopBtn.style.display = 'none';
+  };
+  utt.onerror = function(){
+    btn.classList.remove('speaking');
+    if(stopBtn) stopBtn.style.display = 'none';
+  };
   window.speechSynthesis.speak(utt);
 }
 
@@ -978,10 +1013,11 @@ async function sendMessage(){
       // Auto-voz: dispara se usuário pediu — speakThis já filtra tabelas internamente
       const pedidoVoz = /\b(fala|fale|em voz|com voz|leia|lê|me diz|me fala|quero ouvir|ouvir|voz|audio|áudio|falar|responde em áudio|responde em audio)\b/i.test(text);
       if(pedidoVoz){
+        const _autoRaw = replyClean;
         setTimeout(function(){
           const btns = document.querySelectorAll('.speak-btn');
           const lastBtn = btns[btns.length-1];
-          if(lastBtn) speakThis(lastBtn);
+          if(lastBtn) speakThis(lastBtn, _autoRaw);
         }, 400);
       }
     }
@@ -1096,7 +1132,8 @@ function addMessage(role,content){
     speakBtn.className = 'speak-btn';
     speakBtn.title = 'Ouvir resposta';
     speakBtn.textContent = '🔊';
-    speakBtn.onclick = function(){ speakThis(this); };
+    const _rawContent = content;
+    speakBtn.onclick = function(){ speakThis(this, _rawContent); };
     bubble.appendChild(speakBtn);
     const avatar = document.createElement('div');
     avatar.className = 'msg-avatar';
