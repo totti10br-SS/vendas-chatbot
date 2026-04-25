@@ -52,9 +52,10 @@ app.add_middleware(CORSMiddleware,
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"])
 
-FILE_ID    = os.environ.get("DRIVE_FILE_ID", "")
-CLAUDE_KEY = os.environ.get("CLAUDE_API_KEY", "")
-MEUDANFE_KEY = "0c1588f4-f90e-4711-8b39-87be9a1581da"
+FILE_ID       = os.environ.get("DRIVE_FILE_ID", "")
+CLAUDE_KEY    = os.environ.get("CLAUDE_API_KEY", "")
+ELEVENLABS_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
+MEUDANFE_KEY  = "0c1588f4-f90e-4711-8b39-87be9a1581da"
 
 FILIAIS_VALIDAS = {"ITAP", "BJESUS", "PORC"}
 
@@ -1587,6 +1588,38 @@ def debug_csv():
 def invalidar():
     invalidar_cache()
     return JSONResponse({"status": "cache invalidado"})
+
+@app.post("/tts")
+async def tts(req: Request):
+    """Converte texto em áudio via ElevenLabs."""
+    if not ELEVENLABS_KEY:
+        raise HTTPException(status_code=503, detail="ElevenLabs não configurado.")
+    body = await req.json()
+    texto = body.get("texto", "").strip()
+    voice_id = body.get("voice_id", "4za2kOXGgUd57HRSQ1fn")
+    if not texto:
+        raise HTTPException(status_code=400, detail="Texto vazio.")
+    # Limitar texto (ElevenLabs cobra por char)
+    texto = texto[:1500]
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+            headers={
+                "xi-api-key": ELEVENLABS_KEY,
+                "Content-Type": "application/json",
+                "Accept": "audio/mpeg"
+            },
+            json={
+                "text": texto,
+                "model_id": "eleven_multilingual_v2",
+                "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
+            }
+        )
+    if r.status_code != 200:
+        raise HTTPException(status_code=r.status_code, detail=f"ElevenLabs erro: {r.text[:200]}")
+    import base64 as _b64
+    audio_b64 = _b64.b64encode(r.content).decode()
+    return JSONResponse({"audio_b64": audio_b64})
 
 @app.get("/health")
 def health():

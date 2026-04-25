@@ -558,73 +558,7 @@ let recognition  = null;
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 function toggleVoice(){ /* legado */ }
-function stopSpeaking(){
-  if(window.speechSynthesis && window.speechSynthesis.speaking){
-    window.speechSynthesis.cancel();
-    document.querySelectorAll('.speak-btn.speaking').forEach(function(b){b.classList.remove('speaking');});
-  }
-  var stopBtn = document.getElementById('stopSpeakBtn');
-  if(stopBtn) stopBtn.style.display = 'none';
-}
-
-function speakThis(btn, rawText){
-  if(!window.speechSynthesis){ alert("Seu browser nao suporta sintese de voz."); return; }
-  if(window.speechSynthesis.speaking){
-    stopSpeaking();
-    return;
-  }
-  // Usa o markdown bruto se disponível, senão fallback para innerText
-  var text = rawText || '';
-  if(!text){
-    var bubble = btn.closest('.bubble');
-    text = bubble ? bubble.innerText : '';
-  }
-  // Filtrar: remover blocos de tabela (linhas com | ou ---), código, e formatação
-  var lines = text.split('\n');
-  var clean = [];
-  var inTabela = false;
-  for(var i=0;i<lines.length;i++){
-    var l = lines[i];
-    // Detecta linha de tabela markdown (tem | ou é separador ---)
-    if(l.indexOf('|') >= 0 || /^[-|\s]+$/.test(l)){ inTabela = true; continue; }
-    // Detecta bloco de código
-    if(l.indexOf('```') >= 0) continue;
-    inTabela = false;
-    // Remove formatação markdown
-    l = l.replace(/^#+\s*/,'')          // títulos
-         .replace(/\*\*([^*]+)\*\*/g,'$1') // negrito
-         .replace(/\*([^*]+)\*/g,'$1')   // itálico
-         .replace(/`[^`]+`/g,'')          // código inline
-         .replace(/^[-*>]\s+/,'')         // listas e quotes
-         .replace(/\[([^\]]+)\]\([^)]+\)/g,'$1') // links
-         .trim();
-    if(l && l.length > 2) clean.push(l);
-  }
-  text = clean.join('. ').substring(0, 1200);
-  if(!text){ stopSpeaking(); return; }
-  var utt = new SpeechSynthesisUtterance(text);
-  utt.lang = 'pt-BR';
-  utt.rate = 1.0;
-  // Voz salva pelo usuário ou padrão pt-BR
-  var savedVoice = localStorage.getItem('iaf_voice_name');
-  var voices = window.speechSynthesis.getVoices();
-  var chosen = null;
-  if(savedVoice) chosen = voices.find(function(v){return v.name === savedVoice;});
-  if(!chosen) chosen = voices.filter(function(v){return v.lang.startsWith('pt');})[0];
-  if(chosen) utt.voice = chosen;
-  btn.classList.add('speaking');
-  var stopBtn = document.getElementById('stopSpeakBtn');
-  if(stopBtn) stopBtn.style.display = 'flex';
-  utt.onend = function(){
-    btn.classList.remove('speaking');
-    if(stopBtn) stopBtn.style.display = 'none';
-  };
-  utt.onerror = function(){
-    btn.classList.remove('speaking');
-    if(stopBtn) stopBtn.style.display = 'none';
-  };
-  window.speechSynthesis.speak(utt);
-}
+// speakThis e stopSpeaking definidos no painel ElevenLabs abaixo
 
 function speak(text){ /* legado - nao usado */ }
 
@@ -1364,72 +1298,144 @@ sendMessage = async function(){
   </div>
 </div>
 <!-- Popup seletor de voz -->
-<div id="voicePanel" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.7);z-index:9999;align-items:center;justify-content:center;">
-  <div style="background:#1a1a1a;border:1px solid rgba(245,200,0,.3);border-radius:10px;padding:24px;max-width:400px;width:90%;max-height:70vh;overflow-y:auto;">
+<!-- Painel de seleção de voz ElevenLabs -->
+<div id="voicePanel" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.75);z-index:9999;align-items:center;justify-content:center;">
+  <div style="background:#1a1a1a;border:1px solid rgba(245,200,0,.35);border-radius:12px;padding:24px;max-width:380px;width:90%;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
       <span style="color:var(--yellow);font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:16px;letter-spacing:1px;">🔊 CONFIGURAR VOZ</span>
       <button onclick="closeVoicePanel()" style="background:none;border:none;color:var(--yellow);font-size:18px;cursor:pointer;">✕</button>
     </div>
-    <p style="color:rgba(255,255,255,.6);font-size:12px;margin-bottom:12px;">Selecione a voz que o IAF usará para falar as análises:</p>
-    <div id="voiceList" style="display:flex;flex-direction:column;gap:8px;"></div>
-    <div style="margin-top:16px;display:flex;gap:8px;">
-      <button onclick="testVoice()" style="flex:1;background:rgba(245,200,0,.15);border:1px solid rgba(245,200,0,.4);border-radius:6px;padding:8px;color:var(--yellow);cursor:pointer;font-size:12px;font-family:'Barlow',sans-serif;">▶ Testar voz</button>
-      <button onclick="closeVoicePanel()" style="flex:1;background:var(--red);border:none;border-radius:6px;padding:8px;color:#fff;cursor:pointer;font-size:12px;font-family:'Barlow',sans-serif;font-weight:700;">Salvar</button>
+    <p style="color:rgba(255,255,255,.55);font-size:12px;margin-bottom:14px;">Vozes em Português Brasileiro via ElevenLabs:</p>
+    <div id="voiceList" style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;"></div>
+    <div style="display:flex;gap:8px;">
+      <button onclick="testVoiceEL()" style="flex:1;background:rgba(245,200,0,.12);border:1px solid rgba(245,200,0,.35);border-radius:6px;padding:9px;color:var(--yellow);cursor:pointer;font-size:12px;font-family:'Barlow',sans-serif;">▶ Testar</button>
+      <button onclick="closeVoicePanel()" style="flex:1;background:var(--red);border:none;border-radius:6px;padding:9px;color:#fff;cursor:pointer;font-size:12px;font-family:'Barlow',sans-serif;font-weight:700;">Salvar</button>
     </div>
   </div>
 </div>
 
 <script>
+// Vozes ElevenLabs disponíveis
+const EL_VOICES = [
+  { id: '4za2kOXGgUd57HRSQ1fn', label: 'Homem 1' },
+  { id: 'zNEsdgTUa3ndwKry8Xcq', label: 'Homem 2' },
+  { id: 'GDzHdQOi6jjf8zaXhCYD', label: 'Mulher 1' },
+];
+
 function openVoicePanel(){
-  var panel = document.getElementById('voicePanel');
-  panel.style.display = 'flex';
+  document.getElementById('voicePanel').style.display = 'flex';
   renderVoiceList();
 }
 function closeVoicePanel(){
   document.getElementById('voicePanel').style.display = 'none';
 }
 function renderVoiceList(){
-  var voices = window.speechSynthesis.getVoices();
-  var ptVoices = voices.filter(function(v){ return v.lang.startsWith('pt'); });
-  // Se não tiver pt-BR, mostrar todas
-  if(ptVoices.length === 0) ptVoices = voices;
-  var saved = localStorage.getItem('iaf_voice_name');
+  var saved = localStorage.getItem('iaf_el_voice_id') || EL_VOICES[0].id;
   var list = document.getElementById('voiceList');
   list.innerHTML = '';
-  if(ptVoices.length === 0){
-    list.innerHTML = '<p style="color:rgba(255,255,255,.5);font-size:12px;">Nenhuma voz disponível no momento. Tente recarregar a página.</p>';
-    return;
-  }
-  ptVoices.forEach(function(v){
+  EL_VOICES.forEach(function(v){
+    var isSelected = (saved === v.id);
     var btn = document.createElement('button');
-    var isSelected = (saved === v.name) || (!saved && ptVoices.indexOf(v) === 0);
-    btn.style.cssText = 'background:'+(isSelected?'rgba(245,200,0,.2)':'rgba(255,255,255,.05)')+';border:1px solid '+(isSelected?'rgba(245,200,0,.6)':'rgba(255,255,255,.15)')+';border-radius:6px;padding:10px 14px;color:#fff;cursor:pointer;text-align:left;font-size:12px;font-family:Barlow,sans-serif;transition:all .2s;';
-    btn.innerHTML = '<span style="color:var(--yellow);font-weight:700;">'+(isSelected?'✓ ':'')+v.name+'</span><br><span style="color:rgba(255,255,255,.4);font-size:10px;">'+v.lang+(v.localService?' · Local':' · Online')+'</span>';
+    btn.style.cssText = 'width:100%;background:'+(isSelected?'rgba(245,200,0,.18)':'rgba(255,255,255,.04)')+';border:1px solid '+(isSelected?'rgba(245,200,0,.6)':'rgba(255,255,255,.12)')+';border-radius:7px;padding:11px 14px;color:#fff;cursor:pointer;text-align:left;font-size:13px;font-family:Barlow,sans-serif;transition:all .2s;';
+    btn.innerHTML = (isSelected?'<span style="color:var(--yellow);margin-right:6px;">✓</span>':'<span style="margin-right:20px;"></span>')+'<span style="font-weight:'+(isSelected?'700':'400')+';">'+v.label+'</span>';
     btn.onclick = function(){
-      localStorage.setItem('iaf_voice_name', v.name);
+      localStorage.setItem('iaf_el_voice_id', v.id);
       renderVoiceList();
     };
     list.appendChild(btn);
   });
 }
-function testVoice(){
-  var saved = localStorage.getItem('iaf_voice_name');
-  var voices = window.speechSynthesis.getVoices();
-  var chosen = saved ? voices.find(function(v){return v.name===saved;}) : voices.filter(function(v){return v.lang.startsWith('pt');})[0];
-  if(!chosen) return;
-  window.speechSynthesis.cancel();
-  var utt = new SpeechSynthesisUtterance('Olá, sou o IAF, seu analista comercial.');
-  utt.lang = 'pt-BR';
-  utt.rate = 1.0;
-  utt.voice = chosen;
-  window.speechSynthesis.speak(utt);
+
+// Limpa texto para leitura — remove tabelas, títulos, markdown
+function limparTextoParaVoz(raw){
+  var lines = raw.split('\n');
+  var clean = [];
+  for(var i=0;i<lines.length;i++){
+    var l = lines[i];
+    if(l.indexOf('|') >= 0) continue;
+    if(/^[-|\s]+$/.test(l)) continue;
+    if(l.indexOf('```') >= 0) continue;
+    l = l.replace(/^#+\s*/,'')
+         .replace(/\*\*([^*]+)\*\*/g,'$1')
+         .replace(/\*([^*]+)\*/g,'$1')
+         .replace(/`[^`]+`/g,'')
+         .replace(/^[-*>]\s+/,'')
+         .replace(/\[([^\]]+)\]\([^)]+\)/g,'$1')
+         .trim();
+    if(l && l.length > 2) clean.push(l);
+  }
+  return clean.join('. ').substring(0, 1200);
 }
-// Recarrega lista quando vozes ficam disponíveis (Chrome carrega async)
-if(window.speechSynthesis){
-  window.speechSynthesis.onvoiceschanged = function(){
-    var panel = document.getElementById('voicePanel');
-    if(panel && panel.style.display === 'flex') renderVoiceList();
-  };
+
+var _currentAudio = null;
+function stopSpeaking(){
+  if(_currentAudio){
+    _currentAudio.pause();
+    _currentAudio.currentTime = 0;
+    _currentAudio = null;
+  }
+  if(window.speechSynthesis && window.speechSynthesis.speaking){
+    window.speechSynthesis.cancel();
+  }
+  document.querySelectorAll('.speak-btn.speaking').forEach(function(b){b.classList.remove('speaking');});
+  var stopBtn = document.getElementById('stopSpeakBtn');
+  if(stopBtn) stopBtn.style.display = 'none';
+}
+
+async function speakThis(btn, rawText){
+  // Se já está falando, para
+  if(_currentAudio || (window.speechSynthesis && window.speechSynthesis.speaking)){
+    stopSpeaking(); return;
+  }
+  var texto = limparTextoParaVoz(rawText || (btn.closest('.bubble') ? btn.closest('.bubble').innerText : ''));
+  if(!texto) return;
+
+  var voiceId = localStorage.getItem('iaf_el_voice_id') || EL_VOICES[0].id;
+  btn.classList.add('speaking');
+  btn.textContent = '⏳';
+  var stopBtn = document.getElementById('stopSpeakBtn');
+  if(stopBtn) stopBtn.style.display = 'flex';
+
+  try{
+    var resp = await fetch('/tts', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({texto: texto, voice_id: voiceId})
+    });
+    if(!resp.ok) throw new Error('TTS erro '+resp.status);
+    var data = await resp.json();
+    var audioBytes = Uint8Array.from(atob(data.audio_b64), function(c){return c.charCodeAt(0);});
+    var blob = new Blob([audioBytes], {type:'audio/mpeg'});
+    var url = URL.createObjectURL(blob);
+    _currentAudio = new Audio(url);
+    _currentAudio.onended = function(){
+      _currentAudio = null;
+      btn.classList.remove('speaking');
+      btn.textContent = '🔊';
+      if(stopBtn) stopBtn.style.display = 'none';
+      URL.revokeObjectURL(url);
+    };
+    _currentAudio.onerror = function(){
+      _currentAudio = null;
+      btn.classList.remove('speaking');
+      btn.textContent = '🔊';
+      if(stopBtn) stopBtn.style.display = 'none';
+    };
+    _currentAudio.play();
+  } catch(e){
+    btn.classList.remove('speaking');
+    btn.textContent = '🔊';
+    if(stopBtn) stopBtn.style.display = 'none';
+    console.error('TTS erro:', e);
+  }
+}
+
+async function testVoiceEL(){
+  var voiceId = localStorage.getItem('iaf_el_voice_id') || EL_VOICES[0].id;
+  var voz = EL_VOICES.find(function(v){return v.id===voiceId;}) || EL_VOICES[0];
+  // Criar btn temporário para teste
+  var fakeBtn = {classList:{add:function(){},remove:function(){}}, closest:function(){return null;}, textContent:''};
+  await speakThis(fakeBtn, 'Olá, sou o IAF, analista comercial da Frinense Alimentos. Voz ' + voz.label + ' selecionada.');
 }
 </script>
 
