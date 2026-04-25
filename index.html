@@ -469,6 +469,7 @@ body.modo-vasco .welcome p strong{color:#fff;}
     <div style="display:flex;align-items:center;gap:8px;">
       <div class="stat-pill"><div class="stat-dot"></div><span id="totalReg">—</span></div>
       <button onclick="forceReload()" title="Recarregar dados do Drive" style="background:none;border:1px solid rgba(245,200,0,.3);border-radius:5px;padding:3px 8px;cursor:pointer;color:var(--yellow);font-size:10px;font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.5px;transition:all .2s;" onmouseover="this.style.background='rgba(245,200,0,.1)'" onmouseout="this.style.background='none'">↺ ATUALIZAR</button>
+      <button onclick="openVoicePanel()" title="Configurar voz" style="background:none;border:1px solid rgba(245,200,0,.3);border-radius:5px;padding:3px 8px;cursor:pointer;color:var(--yellow);font-size:10px;font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.5px;transition:all .2s;" onmouseover="this.style.background='rgba(245,200,0,.1)'" onmouseout="this.style.background='none'">🔊 VOZ</button>
     </div>
     <div class="stat-sub" id="csvData" style="color:rgba(245,200,0,.6);font-size:10px;">Atualizado em: —</div>
   </div>
@@ -1362,5 +1363,75 @@ sendMessage = async function(){
     </div>
   </div>
 </div>
+<!-- Popup seletor de voz -->
+<div id="voicePanel" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.7);z-index:9999;align-items:center;justify-content:center;">
+  <div style="background:#1a1a1a;border:1px solid rgba(245,200,0,.3);border-radius:10px;padding:24px;max-width:400px;width:90%;max-height:70vh;overflow-y:auto;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <span style="color:var(--yellow);font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:16px;letter-spacing:1px;">🔊 CONFIGURAR VOZ</span>
+      <button onclick="closeVoicePanel()" style="background:none;border:none;color:var(--yellow);font-size:18px;cursor:pointer;">✕</button>
+    </div>
+    <p style="color:rgba(255,255,255,.6);font-size:12px;margin-bottom:12px;">Selecione a voz que o IAF usará para falar as análises:</p>
+    <div id="voiceList" style="display:flex;flex-direction:column;gap:8px;"></div>
+    <div style="margin-top:16px;display:flex;gap:8px;">
+      <button onclick="testVoice()" style="flex:1;background:rgba(245,200,0,.15);border:1px solid rgba(245,200,0,.4);border-radius:6px;padding:8px;color:var(--yellow);cursor:pointer;font-size:12px;font-family:'Barlow',sans-serif;">▶ Testar voz</button>
+      <button onclick="closeVoicePanel()" style="flex:1;background:var(--red);border:none;border-radius:6px;padding:8px;color:#fff;cursor:pointer;font-size:12px;font-family:'Barlow',sans-serif;font-weight:700;">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function openVoicePanel(){
+  var panel = document.getElementById('voicePanel');
+  panel.style.display = 'flex';
+  renderVoiceList();
+}
+function closeVoicePanel(){
+  document.getElementById('voicePanel').style.display = 'none';
+}
+function renderVoiceList(){
+  var voices = window.speechSynthesis.getVoices();
+  var ptVoices = voices.filter(function(v){ return v.lang.startsWith('pt'); });
+  // Se não tiver pt-BR, mostrar todas
+  if(ptVoices.length === 0) ptVoices = voices;
+  var saved = localStorage.getItem('iaf_voice_name');
+  var list = document.getElementById('voiceList');
+  list.innerHTML = '';
+  if(ptVoices.length === 0){
+    list.innerHTML = '<p style="color:rgba(255,255,255,.5);font-size:12px;">Nenhuma voz disponível no momento. Tente recarregar a página.</p>';
+    return;
+  }
+  ptVoices.forEach(function(v){
+    var btn = document.createElement('button');
+    var isSelected = (saved === v.name) || (!saved && ptVoices.indexOf(v) === 0);
+    btn.style.cssText = 'background:'+(isSelected?'rgba(245,200,0,.2)':'rgba(255,255,255,.05)')+';border:1px solid '+(isSelected?'rgba(245,200,0,.6)':'rgba(255,255,255,.15)')+';border-radius:6px;padding:10px 14px;color:#fff;cursor:pointer;text-align:left;font-size:12px;font-family:Barlow,sans-serif;transition:all .2s;';
+    btn.innerHTML = '<span style="color:var(--yellow);font-weight:700;">'+(isSelected?'✓ ':'')+v.name+'</span><br><span style="color:rgba(255,255,255,.4);font-size:10px;">'+v.lang+(v.localService?' · Local':' · Online')+'</span>';
+    btn.onclick = function(){
+      localStorage.setItem('iaf_voice_name', v.name);
+      renderVoiceList();
+    };
+    list.appendChild(btn);
+  });
+}
+function testVoice(){
+  var saved = localStorage.getItem('iaf_voice_name');
+  var voices = window.speechSynthesis.getVoices();
+  var chosen = saved ? voices.find(function(v){return v.name===saved;}) : voices.filter(function(v){return v.lang.startsWith('pt');})[0];
+  if(!chosen) return;
+  window.speechSynthesis.cancel();
+  var utt = new SpeechSynthesisUtterance('Olá, sou o IAF, seu analista comercial.');
+  utt.lang = 'pt-BR';
+  utt.rate = 1.0;
+  utt.voice = chosen;
+  window.speechSynthesis.speak(utt);
+}
+// Recarrega lista quando vozes ficam disponíveis (Chrome carrega async)
+if(window.speechSynthesis){
+  window.speechSynthesis.onvoiceschanged = function(){
+    var panel = document.getElementById('voicePanel');
+    if(panel && panel.style.display === 'flex') renderVoiceList();
+  };
+}
+</script>
+
 </body>
 </html>
