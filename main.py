@@ -27,6 +27,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 import httpx
 from google.auth.transport.requests import Request
+import starlette.requests
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 try:
@@ -1590,7 +1591,7 @@ def invalidar():
     return JSONResponse({"status": "cache invalidado"})
 
 @app.post("/tts")
-async def tts(req: Request):
+async def tts(req: starlette.requests.Request):
     """Converte texto em áudio via ElevenLabs."""
     if not ELEVENLABS_KEY:
         raise HTTPException(status_code=503, detail="ElevenLabs não configurado.")
