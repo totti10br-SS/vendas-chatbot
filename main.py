@@ -1617,6 +1617,7 @@ async def tts(req: starlette.requests.Request):
             }
         )
     if r.status_code != 200:
+        logging.warning(f"[TTS] ElevenLabs status={r.status_code} body={r.text[:300]!r} key_prefix={ELEVENLABS_KEY[:8] if ELEVENLABS_KEY else 'VAZIA'}")
         raise HTTPException(status_code=r.status_code, detail=f"ElevenLabs erro: {r.text[:200]}")
     import base64 as _b64
     audio_b64 = _b64.b64encode(r.content).decode()
