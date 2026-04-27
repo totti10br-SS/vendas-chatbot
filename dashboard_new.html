@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IAF · Dashboard Comercial</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root {
+    --red: #CC0000;
+    --red2: #990000;
+    --yellow: #F5C800;
+    --bg: #0d0d0d;
+    --surface: #141414;
+    --surface2: #1a1a1a;
+    --border: rgba(204,0,0,.2);
+    --text: #e8e8e8;
+    --muted: rgba(255,255,255,.4);
+    --green: #22c55e;
+    --blue: #38bdf8;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text); font-family:'Barlow',sans-serif; min-height:100vh; }
+
+  /* HEADER */
+  .header {
+    background:linear-gradient(135deg, #1a0000 0%, #0d0d0d 60%);
+    border-bottom:2px solid var(--red);
+    padding:0 24px;
+    height:56px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    position:sticky;
+    top:0;
+    z-index:100;
+    box-shadow:0 4px 24px rgba(204,0,0,.15);
+  }
+  .header-left { display:flex; align-items:center; gap:14px; }
+  .header-logo { width:36px; height:36px; }
+  .header-title { font-family:'Barlow Condensed',sans-serif; font-weight:900; font-size:20px; letter-spacing:1px; color:#fff; }
+  .header-title span { color:var(--yellow); }
+  .header-badge { background:var(--red); color:#fff; font-family:'Barlow Condensed',sans-serif; font-size:10px; font-weight:700; letter-spacing:1px; padding:2px 6px; border-radius:3px; }
+  .header-right { display:flex; gap:10px; align-items:center; }
+  .btn-back { background:none; border:1px solid rgba(245,200,0,.3); border-radius:5px; padding:4px 14px; color:var(--yellow); font-family:'Barlow Condensed',sans-serif; font-size:11px; font-weight:700; letter-spacing:1px; cursor:pointer; text-decoration:none; transition:all .2s; }
+  .btn-back:hover { background:rgba(245,200,0,.1); }
+  #lastUpdate { color:var(--muted); font-size:11px; }
+
+  /* FILTROS */
+  .filtros {
+    background:var(--surface);
+    border-bottom:1px solid var(--border);
+    padding:12px 24px;
+    display:flex;
+    gap:12px;
+    align-items:center;
+    flex-wrap:wrap;
+  }
+  .filtro-label { color:var(--muted); font-size:11px; font-family:'Barlow Condensed',sans-serif; letter-spacing:1px; text-transform:uppercase; }
+  .filtro-select {
+    background:var(--surface2);
+    border:1px solid rgba(204,0,0,.3);
+    border-radius:6px;
+    color:var(--text);
+    font-family:'Barlow',sans-serif;
+    font-size:13px;
+    padding:6px 12px;
+    cursor:pointer;
+    outline:none;
+    transition:border .2s;
+    min-width:110px;
+  }
+  .filtro-select:focus { border-color:var(--yellow); }
+  .btn-aplicar {
+    background:var(--red);
+    border:none;
+    border-radius:6px;
+    color:#fff;
+    font-family:'Barlow Condensed',sans-serif;
+    font-size:13px;
+    font-weight:700;
+    letter-spacing:1px;
+    padding:7px 20px;
+    cursor:pointer;
+    transition:background .2s;
+  }
+  .btn-aplicar:hover { background:var(--red2); }
+  .btn-limpar {
+    background:none;
+    border:1px solid rgba(255,255,255,.15);
+    border-radius:6px;
+    color:var(--muted);
+    font-size:12px;
+    padding:6px 14px;
+    cursor:pointer;
+    transition:all .2s;
+  }
+  .btn-limpar:hover { border-color:rgba(255,255,255,.4); color:var(--text); }
+  .filtro-ativo { color:var(--yellow); font-size:11px; font-family:'Barlow Condensed',sans-serif; margin-left:4px; }
+
+  /* MAIN */
+  .main { padding:20px 24px; max-width:1600px; margin:0 auto; }
+
+  /* KPIS */
+  .kpis { display:grid; grid-template-columns:repeat(5,1fr); gap:14px; margin-bottom:20px; }
+  @media(max-width:1100px){ .kpis{ grid-template-columns:repeat(3,1fr); } }
+  @media(max-width:700px){ .kpis{ grid-template-columns:repeat(2,1fr); } }
+
+  .kpi-card {
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:16px 18px;
+    position:relative;
+    overflow:hidden;
+    transition:transform .2s, border-color .2s;
+  }
+  .kpi-card:hover { transform:translateY(-2px); border-color:rgba(204,0,0,.4); }
+  .kpi-card::before {
+    content:'';
+    position:absolute;
+    top:0; left:0; right:0;
+    height:3px;
+    background:linear-gradient(90deg, var(--red), var(--yellow));
+  }
+  .kpi-label { color:var(--muted); font-size:10px; font-family:'Barlow Condensed',sans-serif; letter-spacing:1.5px; text-transform:uppercase; margin-bottom:8px; }
+  .kpi-value { font-family:'Barlow Condensed',sans-serif; font-size:28px; font-weight:800; color:#fff; line-height:1; }
+  .kpi-value.yellow { color:var(--yellow); }
+  .kpi-sub { color:var(--muted); font-size:11px; margin-top:4px; }
+
+  /* GRID GRAFICOS */
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
+  .grid3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; margin-bottom:16px; }
+  @media(max-width:1000px){ .grid2,.grid3{ grid-template-columns:1fr; } }
+
+  .chart-card {
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:18px 20px;
+  }
+  .chart-card.full { grid-column:1/-1; }
+  .chart-title {
+    font-family:'Barlow Condensed',sans-serif;
+    font-weight:700;
+    font-size:13px;
+    letter-spacing:1px;
+    text-transform:uppercase;
+    color:var(--yellow);
+    margin-bottom:14px;
+    display:flex;
+    align-items:center;
+    gap:8px;
+  }
+  .chart-title::before { content:''; display:block; width:3px; height:14px; background:var(--red); border-radius:2px; }
+  .chart-wrap { position:relative; }
+
+  /* TABELA TOP CLIENTES */
+  .table-wrap { overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  thead tr { border-bottom:1px solid rgba(204,0,0,.3); }
+  th { color:var(--muted); font-family:'Barlow Condensed',sans-serif; font-size:10px; letter-spacing:1px; text-transform:uppercase; padding:6px 10px; text-align:left; font-weight:600; }
+  td { padding:7px 10px; border-bottom:1px solid rgba(255,255,255,.04); color:var(--text); }
+  tbody tr:hover { background:rgba(255,255,255,.03); }
+  .rank { color:var(--yellow); font-family:'Barlow Condensed',sans-serif; font-weight:700; font-size:14px; width:30px; }
+  .bar-mini { height:4px; background:linear-gradient(90deg,var(--red),var(--yellow)); border-radius:2px; margin-top:3px; transition:width .5s; }
+
+  /* LOADING / ERRO */
+  .loading-overlay {
+    position:fixed; inset:0; background:rgba(13,13,13,.85);
+    display:flex; align-items:center; justify-content:center;
+    z-index:999; flex-direction:column; gap:12px;
+  }
+  .spinner { width:40px; height:40px; border:3px solid rgba(204,0,0,.2); border-top-color:var(--red); border-radius:50%; animation:spin .7s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .loading-txt { color:var(--muted); font-family:'Barlow Condensed',sans-serif; font-size:13px; letter-spacing:1px; }
+
+  .empty-state { color:var(--muted); text-align:center; padding:40px 20px; font-size:13px; }
+</style>
+</head>
+<body>
+
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="spinner"></div>
+  <div class="loading-txt">CARREGANDO DADOS...</div>
+</div>
+
+<header class="header">
+  <div class="header-left">
+    <svg class="header-logo" viewBox="0 0 40 40" fill="none">
+      <circle cx="20" cy="20" r="19" fill="#CC0000" stroke="#990000" stroke-width="1"/>
+      <text x="20" y="26" font-family="'Barlow Condensed'" font-weight="900" font-size="16" fill="white" text-anchor="middle">IAF</text>
+    </svg>
+    <div>
+      <div class="header-title">DASHBOARD <span>COMERCIAL</span></div>
+    </div>
+    <span class="header-badge">AMPLIADO</span>
+  </div>
+  <div class="header-right">
+    <span id="lastUpdate"></span>
+    <a href="/iaf" class="btn-back">← IAF</a>
+  </div>
+</header>
+
+<div class="filtros">
+  <span class="filtro-label">Filtros:</span>
+  <select class="filtro-select" id="selAno"><option value="">Todos os anos</option></select>
+  <select class="filtro-select" id="selMes">
+    <option value="">Todos os meses</option>
+    <option value="1">Janeiro</option><option value="2">Fevereiro</option>
+    <option value="3">Março</option><option value="4">Abril</option>
+    <option value="5">Maio</option><option value="6">Junho</option>
+    <option value="7">Julho</option><option value="8">Agosto</option>
+    <option value="9">Setembro</option><option value="10">Outubro</option>
+    <option value="11">Novembro</option><option value="12">Dezembro</option>
+  </select>
+  <select class="filtro-select" id="selFilial"><option value="">Todas as filiais</option></select>
+  <button class="btn-aplicar" onclick="aplicarFiltros()">▶ APLICAR</button>
+  <button class="btn-limpar" onclick="limparFiltros()">✕ Limpar</button>
+  <span class="filtro-ativo" id="filtroAtivo"></span>
+</div>
+
+<div class="main">
+  <!-- KPIs -->
+  <div class="kpis" id="kpis">
+    <div class="kpi-card"><div class="kpi-label">Faturamento</div><div class="kpi-value yellow" id="kFat">—</div></div>
+    <div class="kpi-card"><div class="kpi-label">Volume</div><div class="kpi-value" id="kKg">—</div></div>
+    <div class="kpi-card"><div class="kpi-label">CX30</div><div class="kpi-value" id="kCx30">—</div></div>
+    <div class="kpi-card"><div class="kpi-label">Notas Emitidas</div><div class="kpi-value" id="kNotas">—</div></div>
+    <div class="kpi-card"><div class="kpi-label">Preço Médio/kg</div><div class="kpi-value" id="kPm">—</div></div>
+  </div>
+
+  <!-- EVOLUÇÃO MENSAL + DIÁRIA -->
+  <div class="grid2">
+    <div class="chart-card">
+      <div class="chart-title">Evolução Mensal — Faturamento</div>
+      <div class="chart-wrap"><canvas id="chartMensal" height="200"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Evolução Diária — Mês de Referência</div>
+      <div class="chart-wrap"><canvas id="chartDiario" height="200"></canvas></div>
+    </div>
+  </div>
+
+  <!-- POR FILIAL + POR DIVISÃO -->
+  <div class="grid2">
+    <div class="chart-card">
+      <div class="chart-title">Faturamento por Filial</div>
+      <div class="chart-wrap"><canvas id="chartFilial" height="220"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Volume por Tipo de Carne</div>
+      <div class="chart-wrap"><canvas id="chartDivisao" height="220"></canvas></div>
+    </div>
+  </div>
+
+  <!-- TOP CLIENTES + TOP PRODUTOS -->
+  <div class="grid2">
+    <div class="chart-card">
+      <div class="chart-title">Top 10 Clientes — Faturamento</div>
+      <div class="table-wrap" id="tblClientes"></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Top 10 Produtos — Volume (kg)</div>
+      <div class="table-wrap" id="tblProdutos"></div>
+    </div>
+  </div>
+
+  <!-- TOP VENDEDORES -->
+  <div class="chart-card" style="margin-bottom:24px;">
+    <div class="chart-title">Top Vendedores — Faturamento</div>
+    <div class="chart-wrap"><canvas id="chartVendedores" height="120"></canvas></div>
+  </div>
+</div>
+
+<script>
+const MESES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+let charts = {};
+
+function fmt(v){ return 'R$ ' + v.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function fmtKg(v){ return v.toLocaleString('pt-BR',{minimumFractionDigits:0,maximumFractionDigits:0}) + ' kg'; }
+function fmtN(v){ return v.toLocaleString('pt-BR'); }
+
+function destroyChart(id){ if(charts[id]){ charts[id].destroy(); delete charts[id]; } }
+
+function renderKpis(k){
+  document.getElementById('kFat').textContent   = fmt(k.fat);
+  document.getElementById('kKg').textContent    = fmtKg(k.kg);
+  document.getElementById('kCx30').textContent  = fmtN(k.cx30) + ' cx';
+  document.getElementById('kNotas').textContent = fmtN(k.notas);
+  document.getElementById('kPm').textContent    = 'R$ ' + k.pm.toFixed(2).replace('.',',') + '/kg';
+}
+
+function renderMensal(data){
+  destroyChart('mensal');
+  const labels = data.map(d => {
+    const [ano,mes] = d.mes.split('-');
+    return MESES[parseInt(mes)-1]+'/'+ano.slice(2);
+  });
+  const ctx = document.getElementById('chartMensal').getContext('2d');
+  charts['mensal'] = new Chart(ctx, {
+    type:'line',
+    data:{
+      labels,
+      datasets:[{
+        label:'Faturamento',
+        data: data.map(d=>d.fat),
+        borderColor:'#CC0000',
+        backgroundColor:'rgba(204,0,0,.08)',
+        borderWidth:2,
+        pointBackgroundColor:'#F5C800',
+        pointRadius:4,
+        tension:.3,
+        fill:true,
+      }]
+    },
+    options:{
+      responsive:true,
+      plugins:{ legend:{display:false}, tooltip:{callbacks:{label:c=>' '+fmt(c.raw)}} },
+      scales:{
+        x:{ticks:{color:'rgba(255,255,255,.4)',font:{size:10}}, grid:{color:'rgba(255,255,255,.04)'}},
+        y:{ticks:{color:'rgba(255,255,255,.4)',font:{size:10},callback:v=>v>=1e6?'R$'+(v/1e6).toFixed(1)+'M':'R$'+(v/1e3).toFixed(0)+'k'}, grid:{color:'rgba(255,255,255,.04)'}}
+      }
+    }
+  });
+}
+
+function renderDiario(data){
+  destroyChart('diario');
+  const ctx = document.getElementById('chartDiario').getContext('2d');
+  charts['diario'] = new Chart(ctx, {
+    type:'bar',
+    data:{
+      labels: data.map(d=>'Dia '+d.dia),
+      datasets:[{
+        label:'Fat.',
+        data: data.map(d=>d.fat),
+        backgroundColor:'rgba(204,0,0,.7)',
+        borderColor:'#CC0000',
+        borderWidth:1,
+        borderRadius:3,
+      }]
+    },
+    options:{
+      responsive:true,
+      plugins:{ legend:{display:false}, tooltip:{callbacks:{label:c=>' '+fmt(c.raw)}} },
+      scales:{
+        x:{ticks:{color:'rgba(255,255,255,.4)',font:{size:9}}, grid:{display:false}},
+        y:{ticks:{color:'rgba(255,255,255,.4)',font:{size:10},callback:v=>v>=1e6?'R$'+(v/1e6).toFixed(1)+'M':'R$'+(v/1e3).toFixed(0)+'k'}, grid:{color:'rgba(255,255,255,.04)'}}
+      }
+    }
+  });
+}
+
+function renderFilial(data){
+  destroyChart('filial');
+  if(!data.length){ document.getElementById('chartFilial').parentElement.innerHTML='<div class="empty-state">Sem dados</div>'; return; }
+  const ctx = document.getElementById('chartFilial').getContext('2d');
+  const colors = ['#CC0000','#F5C800','#22c55e','#38bdf8'];
+  charts['filial'] = new Chart(ctx, {
+    type:'doughnut',
+    data:{
+      labels: data.map(d=>d.filial),
+      datasets:[{ data:data.map(d=>d.fat), backgroundColor:colors, borderColor:'#141414', borderWidth:3 }]
+    },
+    options:{
+      responsive:true,
+      plugins:{
+        legend:{position:'bottom', labels:{color:'rgba(255,255,255,.6)',font:{size:11},padding:12}},
+        tooltip:{callbacks:{label:c=>' '+fmt(c.raw)+' ('+((c.raw/data.reduce((a,b)=>a+b.fat,0))*100).toFixed(1)+'%)'}}
+      }
+    }
+  });
+}
+
+function renderDivisao(data){
+  destroyChart('divisao');
+  if(!data.length){ return; }
+  const top = data.slice(0,8);
+  const ctx = document.getElementById('chartDivisao').getContext('2d');
+  charts['divisao'] = new Chart(ctx, {
+    type:'bar',
+    data:{
+      labels: top.map(d=>d.tipo),
+      datasets:[{
+        label:'kg',
+        data: top.map(d=>d.kg),
+        backgroundColor: top.map((_,i)=>i===0?'#CC0000':i===1?'#F5C800':'rgba(204,0,0,.4)'),
+        borderRadius:4,
+      }]
+    },
+    options:{
+      indexAxis:'y',
+      responsive:true,
+      plugins:{ legend:{display:false}, tooltip:{callbacks:{label:c=>' '+fmtKg(c.raw)}} },
+      scales:{
+        x:{ticks:{color:'rgba(255,255,255,.4)',font:{size:10}}, grid:{color:'rgba(255,255,255,.04)'}},
+        y:{ticks:{color:'rgba(255,255,255,.5)',font:{size:10}}, grid:{display:false}}
+      }
+    }
+  });
+}
+
+function renderTabelaClientes(data){
+  if(!data.length){ document.getElementById('tblClientes').innerHTML='<div class="empty-state">Sem dados</div>'; return; }
+  const maxFat = data[0].fat;
+  let html = '<table><thead><tr><th>#</th><th>Cliente</th><th>Faturamento</th><th>kg</th></tr></thead><tbody>';
+  data.forEach((r,i)=>{
+    const pct = Math.round((r.fat/maxFat)*100);
+    html += `<tr>
+      <td class="rank">${i+1}</td>
+      <td><div>${r.nome.length>35?r.nome.substring(0,35)+'...':r.nome}</div><div class="bar-mini" style="width:${pct}%"></div></td>
+      <td style="color:var(--yellow);font-weight:600">${fmt(r.fat)}</td>
+      <td style="color:var(--muted)">${fmtKg(r.kg)}</td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  document.getElementById('tblClientes').innerHTML = html;
+}
+
+function renderTabelaProdutos(data){
+  if(!data.length){ document.getElementById('tblProdutos').innerHTML='<div class="empty-state">Sem dados</div>'; return; }
+  const maxKg = data[0].kg;
+  let html = '<table><thead><tr><th>#</th><th>Produto</th><th>Volume</th><th>Fat.</th></tr></thead><tbody>';
+  data.forEach((r,i)=>{
+    const pct = Math.round((r.kg/maxKg)*100);
+    html += `<tr>
+      <td class="rank">${i+1}</td>
+      <td><div>${r.nome.length>35?r.nome.substring(0,35)+'...':r.nome}</div><div class="bar-mini" style="width:${pct}%"></div></td>
+      <td style="color:var(--yellow);font-weight:600">${fmtKg(r.kg)}</td>
+      <td style="color:var(--muted)">${fmt(r.fat)}</td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  document.getElementById('tblProdutos').innerHTML = html;
+}
+
+function renderVendedores(data){
+  destroyChart('vendedores');
+  if(!data.length) return;
+  const top = data.slice(0,10);
+  const ctx = document.getElementById('chartVendedores').getContext('2d');
+  charts['vendedores'] = new Chart(ctx, {
+    type:'bar',
+    data:{
+      labels: top.map(d=>d.nome.length>25?d.nome.substring(0,25)+'...':d.nome),
+      datasets:[{
+        label:'Faturamento',
+        data: top.map(d=>d.fat),
+        backgroundColor: top.map((_,i)=>i===0?'#CC0000':i===1?'#F5C800':'rgba(204,0,0,.45)'),
+        borderRadius:4,
+      }]
+    },
+    options:{
+      responsive:true,
+      plugins:{ legend:{display:false}, tooltip:{callbacks:{label:c=>' '+fmt(c.raw)}} },
+      scales:{
+        x:{ticks:{color:'rgba(255,255,255,.45)',font:{size:10},maxRotation:30}, grid:{display:false}},
+        y:{ticks:{color:'rgba(255,255,255,.4)',font:{size:10},callback:v=>v>=1e6?'R$'+(v/1e6).toFixed(1)+'M':'R$'+(v/1e3).toFixed(0)+'k'}, grid:{color:'rgba(255,255,255,.04)'}}
+      }
+    }
+  });
+}
+
+function populateFiltros(d){
+  const selAno = document.getElementById('selAno');
+  const valAno = selAno.value;
+  selAno.innerHTML = '<option value="">Todos os anos</option>';
+  (d.anos||[]).forEach(a=>{
+    const opt = document.createElement('option');
+    opt.value = a; opt.textContent = a;
+    if(String(a)===valAno) opt.selected = true;
+    selAno.appendChild(opt);
+  });
+  const selFilial = document.getElementById('selFilial');
+  const valFilial = selFilial.value;
+  selFilial.innerHTML = '<option value="">Todas as filiais</option>';
+  (d.filiais||[]).forEach(f=>{
+    const opt = document.createElement('option');
+    opt.value = f; opt.textContent = f;
+    if(f===valFilial) opt.selected = true;
+    selFilial.appendChild(opt);
+  });
+}
+
+async function carregarDados(){
+  document.getElementById('loadingOverlay').style.display = 'flex';
+  const ano    = document.getElementById('selAno').value;
+  const mes    = document.getElementById('selMes').value;
+  const filial = document.getElementById('selFilial').value;
+
+  let url = '/dash-data?';
+  if(ano)    url += 'ano='+ano+'&';
+  if(mes)    url += 'mes='+mes+'&';
+  if(filial) url += 'filial='+encodeURIComponent(filial)+'&';
+
+  // Filtro ativo label
+  const partes = [];
+  if(ano)    partes.push(ano);
+  if(mes)    partes.push(MESES[parseInt(mes)-1]);
+  if(filial) partes.push(filial);
+  document.getElementById('filtroAtivo').textContent = partes.length ? '— '+partes.join(' · ') : '';
+
+  try {
+    const resp = await fetch(url);
+    const data = await resp.json();
+
+    if(data.erro){ alert(data.erro); return; }
+
+    populateFiltros(data.filtros_disp);
+    renderKpis(data.kpis);
+    renderMensal(data.evolucao_mensal || []);
+    renderDiario(data.evolucao_diaria || []);
+    renderFilial(data.por_filial || []);
+    renderDivisao(data.por_divisao || []);
+    renderTabelaClientes(data.top_clientes || []);
+    renderTabelaProdutos(data.top_produtos || []);
+    renderVendedores(data.top_vendedores || []);
+
+    const now = new Date();
+    document.getElementById('lastUpdate').textContent = 'Atualizado ' + now.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+  } catch(e) {
+    alert('Erro ao carregar dados: '+e.message);
+  } finally {
+    document.getElementById('loadingOverlay').style.display = 'none';
+  }
+}
+
+function aplicarFiltros(){ carregarDados(); }
+function limparFiltros(){
+  document.getElementById('selAno').value='';
+  document.getElementById('selMes').value='';
+  document.getElementById('selFilial').value='';
+  carregarDados();
+}
+
+// Carregar ao iniciar com ano atual selecionado
+window.addEventListener('load', function(){
+  const anoAtual = new Date().getFullYear();
+  document.getElementById('selAno').value = anoAtual;
+  carregarDados();
+});
+</script>
+</body>
+</html>

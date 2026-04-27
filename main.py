@@ -1623,6 +1623,115 @@ async def tts(req: starlette.requests.Request):
     audio_b64 = _b64.b64encode(r.content).decode()
     return JSONResponse({"audio_b64": audio_b64})
 
+
+@app.get("/dash-data")
+def dash_data(ano: int = None, mes: int = None, filial: str = None):
+    """Endpoint do novo dashboard ampliado — retorna dados filtrados por ano/mês/filial."""
+    try:
+        df = load_df()
+        dff = df.copy()
+
+        # Filtros
+        if ano:
+            dff = dff[dff['DATA_MOVTO'].dt.year == ano]
+        if mes:
+            dff = dff[dff['DATA_MOVTO'].dt.month == mes]
+        if filial and filial != "TODAS":
+            dff = dff[dff['NOME_FILIAL'].str.upper() == filial.upper()]
+
+        if len(dff) == 0:
+            return JSONResponse({"erro": "Sem dados para o filtro selecionado."})
+
+        fat   = round(float(dff['VALOR_LIQUIDO'].sum()), 2)
+        kg    = round(float(dff['QTDE_PRI'].sum()), 2)
+        cx30  = int(round(kg / 30, 0))
+        notas = int(dff['NUM_DOCTO'].nunique()) if 'NUM_DOCTO' in dff.columns else 0
+        pm    = round(fat / kg, 2) if kg > 0 else 0
+
+        # Anos e meses disponíveis
+        anos_disp  = sorted(df['DATA_MOVTO'].dt.year.dropna().unique().tolist(), reverse=True)
+        filiais_disp = sorted(df['NOME_FILIAL'].dropna().unique().tolist()) if 'NOME_FILIAL' in df.columns else []
+
+        # Evolução mensal (últimos 12 meses do filtro)
+        dff2 = dff.copy()
+        dff2['mes_ano'] = dff2['DATA_MOVTO'].dt.to_period('M')
+        evol = (dff2.groupby('mes_ano').agg(fat=('VALOR_LIQUIDO','sum'), kg=('QTDE_PRI','sum'))
+                .sort_index().tail(13))
+        evolucao = [{"mes": str(idx), "fat": round(float(r.fat),2), "kg": round(float(r.kg),2)}
+                    for idx, r in evol.iterrows()]
+
+        # Evolução diária (mês atual do filtro ou último mês)
+        mes_ref = mes or dff['DATA_MOVTO'].dt.month.max()
+        ano_ref = ano or dff['DATA_MOVTO'].dt.year.max()
+        df_dia = dff[(dff['DATA_MOVTO'].dt.month == mes_ref) & (dff['DATA_MOVTO'].dt.year == ano_ref)]
+        evol_dia = (df_dia.groupby(df_dia['DATA_MOVTO'].dt.day)
+                    .agg(fat=('VALOR_LIQUIDO','sum'), kg=('QTDE_PRI','sum'))
+                    .sort_index())
+        por_dia = [{"dia": int(idx), "fat": round(float(r.fat),2), "kg": round(float(r.kg),2)}
+                   for idx, r in evol_dia.iterrows()]
+
+        # Top 10 clientes
+        top_cli = (dff.groupby('NOME_CLIENTE').agg(fat=('VALOR_LIQUIDO','sum'), kg=('QTDE_PRI','sum'))
+                   .sort_values('fat', ascending=False).head(10).reset_index())
+        top_clientes = [{"nome": str(r.NOME_CLIENTE), "fat": round(float(r.fat),2), "kg": round(float(r.kg),2)}
+                        for r in top_cli.itertuples()]
+
+        # Por filial
+        por_filial = []
+        if 'NOME_FILIAL' in dff.columns:
+            grp_fil = (dff.groupby('NOME_FILIAL').agg(fat=('VALOR_LIQUIDO','sum'), kg=('QTDE_PRI','sum'))
+                       .sort_values('fat', ascending=False).reset_index())
+            por_filial = [{"filial": str(r.NOME_FILIAL), "fat": round(float(r.fat),2), "kg": round(float(r.kg),2)}
+                          for r in grp_fil.itertuples()]
+
+        # Por divisão (tipo de carne)
+        por_divisao = []
+        if 'DESC_DIVISAO2' in dff.columns:
+            grp_div = (dff.groupby('DESC_DIVISAO2').agg(fat=('VALOR_LIQUIDO','sum'), kg=('QTDE_PRI','sum'))
+                       .sort_values('kg', ascending=False).reset_index())
+            por_divisao = [{"tipo": str(r.DESC_DIVISAO2), "fat": round(float(r.fat),2), "kg": round(float(r.kg),2)}
+                           for r in grp_div.itertuples()]
+
+        # Top 10 produtos
+        top_prod = (dff.groupby('DESC_PRODUTO').agg(fat=('VALOR_LIQUIDO','sum'), kg=('QTDE_PRI','sum'))
+                    .sort_values('kg', ascending=False).head(10).reset_index())
+        top_produtos = [{"nome": str(r.DESC_PRODUTO), "fat": round(float(r.fat),2), "kg": round(float(r.kg),2)}
+                        for r in top_prod.itertuples()]
+
+        # Top vendedores
+        top_vend = []
+        if 'NOM_VENDEDOR' in dff.columns:
+            grp_v = (dff.groupby('NOM_VENDEDOR').agg(fat=('VALOR_LIQUIDO','sum'), kg=('QTDE_PRI','sum'))
+                     .sort_values('fat', ascending=False).head(10).reset_index())
+            top_vend = [{"nome": str(r.NOM_VENDEDOR), "fat": round(float(r.fat),2), "kg": round(float(r.kg),2)}
+                        for r in grp_v.itertuples()]
+
+        meses_pt = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez']
+
+        return JSONResponse({
+            "kpis": {"fat": fat, "kg": kg, "cx30": cx30, "notas": notas, "pm": pm},
+            "filtros_disp": {"anos": anos_disp, "filiais": filiais_disp, "meses": meses_pt},
+            "evolucao_mensal": evolucao,
+            "evolucao_diaria": por_dia,
+            "top_clientes": top_clientes,
+            "por_filial": por_filial,
+            "por_divisao": por_divisao,
+            "top_produtos": top_produtos,
+            "top_vendedores": top_vend,
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/dash", response_class=HTMLResponse)
+def dash_page():
+    """Serve o novo dashboard ampliado."""
+    try:
+        with open("dashboard_new.html", "r", encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="dashboard_new.html não encontrado.")
+
 @app.get("/health")
 def health():
     return {"status": "ok", "sistema": "IAF-v2"}
