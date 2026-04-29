@@ -1891,6 +1891,25 @@ async def chat_analitico(req: ChatRequest):
             for _, r in pm.iterrows()
         ]
 
+    # Cruzamento cliente × divisão × mês (top 30 clientes × todas divisões)
+    if 'NOME_CLIENTE' in df_prod.columns and 'DESC_DIVISAO2' in df_prod.columns:
+        top_nomes_cli = df_prod.groupby('NOME_CLIENTE')['VALOR_LIQUIDO'].sum().nlargest(30).index.tolist()
+        df_cross = df_prod[df_prod['NOME_CLIENTE'].isin(top_nomes_cli)]
+        grp_cross_cols = ['ano','mes','NOME_CLIENTE','DESC_DIVISAO2']
+        if 'DESC_DIVISAO3' in df_cross.columns:
+            grp_cross_cols.append('DESC_DIVISAO3')
+        cross = df_cross.groupby(grp_cross_cols).agg(
+            fat=('VALOR_LIQUIDO','sum'), kg=('QTDE_PRI','sum')
+        ).reset_index()
+        ctx['cliente_por_divisao'] = [
+            {"ano": int(r.ano), "mes": int(r.mes),
+             "cliente": str(r.NOME_CLIENTE),
+             "divisao": str(r.DESC_DIVISAO2),
+             "tipo_corte": str(r.DESC_DIVISAO3) if 'DESC_DIVISAO3' in cross.columns else None,
+             "fat": round(float(r.fat),2), "kg": round(float(r.kg),2)}
+            for _, r in cross.iterrows()
+        ]
+
     ctx_json = json.dumps(ctx, ensure_ascii=False)
 
     # Meses disponíveis
