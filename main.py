@@ -1891,13 +1891,13 @@ async def chat_analitico(req: ChatRequest):
             for _, r in pm.iterrows()
         ]
 
-    # Cruzamento cliente × divisão × mês (top 30 clientes × todas divisões)
+    # Cruzamento cliente × divisão — últimos 6 meses (top 20 clientes)
     if 'NOME_CLIENTE' in df_prod.columns and 'DESC_DIVISAO2' in df_prod.columns:
-        top_nomes_cli = df_prod.groupby('NOME_CLIENTE')['VALOR_LIQUIDO'].sum().nlargest(30).index.tolist()
-        df_cross = df_prod[df_prod['NOME_CLIENTE'].isin(top_nomes_cli)]
+        data_corte_cross = df_prod['DATA_MOVTO'].max() - pd.DateOffset(months=6)
+        df_cross = df_prod[df_prod['DATA_MOVTO'] >= data_corte_cross]
+        top_nomes_cli = df_cross.groupby('NOME_CLIENTE')['VALOR_LIQUIDO'].sum().nlargest(20).index.tolist()
+        df_cross = df_cross[df_cross['NOME_CLIENTE'].isin(top_nomes_cli)]
         grp_cross_cols = ['ano','mes','NOME_CLIENTE','DESC_DIVISAO2']
-        if 'DESC_DIVISAO3' in df_cross.columns:
-            grp_cross_cols.append('DESC_DIVISAO3')
         cross = df_cross.groupby(grp_cross_cols).agg(
             fat=('VALOR_LIQUIDO','sum'), kg=('QTDE_PRI','sum')
         ).reset_index()
@@ -1905,7 +1905,6 @@ async def chat_analitico(req: ChatRequest):
             {"ano": int(r.ano), "mes": int(r.mes),
              "cliente": str(r.NOME_CLIENTE),
              "divisao": str(r.DESC_DIVISAO2),
-             "tipo_corte": str(r.DESC_DIVISAO3) if 'DESC_DIVISAO3' in cross.columns else None,
              "fat": round(float(r.fat),2), "kg": round(float(r.kg),2)}
             for _, r in cross.iterrows()
         ]
@@ -1959,7 +1958,11 @@ CONTEXTO ANALÍTICO COMPLETO (evolução YoY, clientes, mix, preços):
                   "messages": msgs}
         )
     data = r.json()
-    resposta = data["content"][0]["text"] if data.get("content") else "❌ Erro na análise."
+    if data.get("content") and len(data["content"]) > 0:
+        resposta = data["content"][0]["text"]
+    else:
+        logging.warning(f"[ANALITICO] resposta vazia: {str(data)[:300]}")
+        resposta = "❌ Erro na análise — o modelo não retornou resposta. Tente reformular a pergunta."
     return JSONResponse({"content": [{"type": "text", "text": resposta}]})
 
 @app.get("/health")
