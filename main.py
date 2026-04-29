@@ -191,6 +191,7 @@ REGRAS:
 - Se cliente não especificado e tipo for ultimas_vendas: precisa_cliente=true
 - IMPORTANTE: Se a última mensagem do assistente no histórico for "Para qual cliente?" (ou similar pedindo nome de cliente), e a pergunta atual for apenas um nome/CNPJ, então herde o tipo da penúltima mensagem do usuário e preencha o cliente com o valor informado agora. NÃO mude o tipo.
 - Se nr_nota mencionado: tipo="detalhe_nota"
+- Se usuário perguntar "última nota", "última nota emitida", "quando foi a última nota" para um cliente: tipo="ultimas_vendas", precisa_cliente=true se cliente não informado (busca a nota mais recente)
 - Se usuário perguntar sobre PDF, DANFE, nota fiscal, NF, ou detalhe de nota SEM informar número: tipo="detalhe_nota", nr_nota=null
 - Se tipo="detalhe_nota" e nr_nota=null: o sistema vai pedir o número automaticamente
 - Para comparativos entre dois períodos EXPLÍCITOS (ex: "março 2026 vs março 2025", "abril 2026 com abril 2025"):
@@ -722,6 +723,14 @@ async def narrar(pergunta: str, resultado: dict, historico: list, modo: str = "n
   Campos: DATA_MOVTO=data, NUM_DOCTO=NR NOTA, NOME_FILIAL=filial, COD_PRODUTO=cod, DESC_PRODUTO=produto, QTDE_PRI=kg, QTDE_AUX=cx, VALOR_UNITARIO=vl unit, calcule R$/kg = VALOR_LIQUIDO/QTDE_PRI
   
   Sem linha de totais. Sem análise automática.
+  
+  CASO ESPECIAL — ÚLTIMA NOTA: Se "resumo_notas" tiver exatamente 1 nota (ou o usuário perguntar "última nota", "quando foi a última nota"), exiba apenas o resumo dessa nota:
+  **Nota [nr_nota]** · [data] · [filial]
+  **Cliente:** [cliente_encontrado] | **Vendedor:** [vendedor]
+  **Faturamento:** R$ [fat] | **Volume:** [kg] kg | **Itens:** [n_itens]
+  
+  E finalize com a pergunta (em texto corrido, sem markdown):
+  "Deseja que eu gere o PDF (DANFE) desta nota? Responda sim para receber o arquivo."
 - ranking_clientes: Tabela com posição, nome, kg, cx30, faturamento, R$/kg
 - ranking_vendedores: Tabela com cod, nome, kg, cx30, faturamento, notas
 - comparativo: 
@@ -1434,6 +1443,27 @@ async def chat(req: ChatRequest):
 
     # Se o assistente acabou de pedir o cliente e o tipo voltou errado, corrigir pelo histórico
     ultimas_msgs = historico[-4:] if len(historico) >= 4 else historico
+    # Se assistente ofereceu PDF da nota e usuário respondeu "sim"
+    assist_ofereceu_danfe = any(
+        m.get("role") == "assistant" and "DANFE" in str(m.get("content","")) and "Deseja" in str(m.get("content",""))
+        for m in ultimas_msgs
+    )
+    ultima_lower = ultima.lower().strip()
+    if assist_ofereceu_danfe and ultima_lower in ("sim", "sim.", "yes", "pode", "pode sim", "quero", "quero sim", "gera", "gera sim"):
+        # Buscar nr_nota e chave_acesso da última resposta do assistente
+        for msg in reversed(historico[:-1]):
+            if msg.get("role") == "assistant":
+                txt = msg.get("content","")
+                import re as _re
+                m_nota = _re.search(r'Nota\s+(\d+)', txt)
+                m_chave = _re.search(r'DANFE:(\d{44})', txt)
+                if m_nota:
+                    filtro["tipo"] = "detalhe_nota"
+                    filtro["nr_nota"] = m_nota.group(1)
+                if m_chave:
+                    filtro["chave_acesso_override"] = m_chave.group(1)
+                break
+
     assist_pediu_cliente = any(
         m.get("role") == "assistant" and "Para qual cliente" in str(m.get("content",""))
         for m in ultimas_msgs
