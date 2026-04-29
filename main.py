@@ -179,6 +179,7 @@ Retorne JSON com esta estrutura exata:
   "data_inicio_b": "YYYY-MM-DD ou null",
   "data_fim_b": "YYYY-MM-DD ou null",
   "formato": "normal|pdf",
+  "tipo_operacao": "PRODUTOS|SERVICOS|TODOS",
   "observacao": "qualquer detalhe extra relevante ou null"
 }}
 
@@ -198,6 +199,7 @@ REGRAS:
   * data_inicio_b/data_fim_b = período B (mais antigo)
   * comparar_periodo_anterior=false
 - Para comparativo com período imediatamente anterior (ex: "vs mês passado"): comparar_periodo_anterior=true
+- tipo_operacao="PRODUTOS" por padrão em TODAS as consultas. Somente use "SERVICOS" se o usuário mencionar explicitamente serviços/serviço. Use "TODOS" apenas se pedir ambos juntos.
 - Se usuário pedir "em PDF", "relatório PDF", "manda em PDF", "exportar PDF": formato="pdf"
 - "últimas vendas", "últimas notas", "histórico de compras": tipo="ultimas_vendas" → mostra itens de notas (data, NF, produto, kg, valor)
 - "últimos preços", "preço atual", "quanto paga", "tabela de preços": tipo="ultimos_precos" → mostra preço mais recente por produto; se período não especificado: precisa_periodo=false (o sistema assume 90 dias automaticamente)
@@ -286,6 +288,15 @@ def _aplicar_filtros(df: pd.DataFrame, filtro: dict) -> pd.DataFrame:
     # Nota fiscal
     if filtro.get("nr_nota") and 'NUM_DOCTO' in dff.columns:
         dff = dff[dff['NUM_DOCTO'].astype(str).str.strip() == str(filtro["nr_nota"]).strip()]
+
+    # Tipo de operação — padrão PRODUTOS, override apenas se solicitado
+    if 'TIPO_OPERACAO' in dff.columns:
+        tp = filtro.get("tipo_operacao", "PRODUTOS").upper()
+        if tp == "SERVICOS":
+            dff = dff[dff['TIPO_OPERACAO'] == 'SERVICOS']
+        elif tp != "TODOS":
+            dff = dff[dff['TIPO_OPERACAO'] == 'PRODUTOS']
+        # se TODOS, não filtra
 
     return dff
 
