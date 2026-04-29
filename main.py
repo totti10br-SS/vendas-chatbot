@@ -668,6 +668,9 @@ async def narrar(pergunta: str, resultado: dict, historico: list, modo: str = "n
         dados_narrar["itens_detalhados"] = dados_narrar["itens_detalhados"][:50]
     if "resumo_notas" in dados_narrar and len(dados_narrar["resumo_notas"]) > 30:
         dados_narrar["resumo_notas"] = dados_narrar["resumo_notas"][:30]
+    # Passar tipo_operacao para o narrador
+    tipo_operacao = resultado.get("filtro_aplicado", {}).get("tipo_operacao", "PRODUTOS")
+    dados_narrar["_tipo_operacao"] = tipo_operacao
     dados_json = json.dumps(dados_narrar, ensure_ascii=False, indent=2)
     tipo = resultado.get("tipo", "")
 
@@ -689,6 +692,8 @@ async def narrar(pergunta: str, resultado: dict, historico: list, modo: str = "n
 - NÃO inclua análise rápida, bullets de insight ou comentários automáticos — a menos que o usuário peça explicitamente ("analise", "o que você acha", "dê sua opinião")
 - Se o usuário pedir resposta "em áudio", "em voz" ou similar: IGNORE essa parte do pedido e responda normalmente em texto — o sistema de áudio é gerenciado pelo frontend automaticamente. NUNCA diga que não consegue gerar áudio.
 - Se o usuário pedir análise: finalize com 💡 **Insight:** e 📊 **ANÁLISE RÁPIDA:** com 3-4 bullets
+- RESUMO DE VOZ OBRIGATÓRIO: Toda resposta que contenha tabela com totais DEVE terminar com um parágrafo em texto corrido (sem markdown) resumindo os principais números da tabela — ex: "No período, a Sendas faturou R$ 2.538.781,82 com 609 notas e volume de 72.510 kg a R$ 35,01/kg." Esse parágrafo é essencial para leitura em voz alta.
+- SERVIÇOS — quando tipo_operacao=SERVICOS: nas tabelas de ranking/resumo por cliente, OMITA as colunas R$/kg e CX30. Mostre apenas: Cliente | Faturamento | Nº Notas
 
 ## COMPORTAMENTOS POR TIPO
 - resumo_mensal / resumo_diario: Mostre KPIs gerais → por filial → por dia → previsão fechamento → top clientes → top produtos
