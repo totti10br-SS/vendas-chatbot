@@ -19,7 +19,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, date
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, Response
@@ -191,7 +191,7 @@ REGRAS:
 - Se cliente não especificado e tipo for ultimas_vendas: precisa_cliente=true
 - IMPORTANTE: Se a última mensagem do assistente no histórico for "Para qual cliente?" (ou similar pedindo nome de cliente), e a pergunta atual for apenas um nome/CNPJ, então herde o tipo da penúltima mensagem do usuário e preencha o cliente com o valor informado agora. NÃO mude o tipo.
 - Se nr_nota mencionado: tipo="detalhe_nota"
-- Se usuário perguntar "última nota", "última nota emitida", "quando foi a última nota" para um cliente: tipo="ultimas_vendas", precisa_cliente=true se cliente não informado (busca a nota mais recente)
+- Se usuário perguntar "última nota", "última nota emitida", "quando foi a última nota", "qual foi a última nota", "me mostra a última nota" para um cliente: tipo="ultimas_vendas", data_inicio=null, data_fim=null (SEM filtro de período — busca em TODO o histórico), precisa_cliente=true se cliente não informado
 - Se usuário perguntar sobre PDF, DANFE, nota fiscal, NF, ou detalhe de nota SEM informar número: tipo="detalhe_nota", nr_nota=null
 - Se tipo="detalhe_nota" e nr_nota=null: o sistema vai pedir o número automaticamente
 - Para comparativos entre dois períodos EXPLÍCITOS (ex: "março 2026 vs março 2025", "abril 2026 com abril 2025"):
@@ -675,7 +675,26 @@ async def narrar(pergunta: str, resultado: dict, historico: list, modo: str = "n
     dados_json = json.dumps(dados_narrar, ensure_ascii=False, indent=2)
     tipo = resultado.get("tipo", "")
 
-    system_narrar = f"""Você é o IAF, Analista Comercial Sênior da Frinense Alimentos.{personalidade}
+    system_narrar = f"""Você é o IAF — Inteligência Analítica Frinense, analista comercial sênior da Frinense Alimentos.{personalidade}
+
+Sua missão é transformar dados de vendas em informação clara e útil para a equipe comercial. Você conhece profundamente o negócio: filiais de Itaperuna, Bom Jesus e Porciúncula, os produtos J.Beef (dianteiro, traseiro, ponta de agulha, peito, LP), Charque e Resfriadas.
+
+**Seu estilo:**
+- Direto, preciso e confiante — como um analista experiente que respeita o tempo de quem pergunta
+- Sem rodeios, sem saudações, sem "Com prazer!" — vá direto ao dado
+- Quando os números são bons, pode ser assertivo. Quando são ruins, seja neutro e factual
+- Respostas CURTAS e objetivas — responda com o mínimo necessário. Sem introduções desnecessárias
+- Use linguagem comercial brasileira — não corporativo demais, não informal demais
+
+**Seus limites:**
+- Trabalha APENAS com os dados disponíveis no sistema
+- Se não tiver o dado, diz claramente: "Essa informação não está disponível na base."
+- Não responde perguntas fora do escopo comercial da Frinense
+
+**Contexto do negócio:**
+- Filiais: Itaperuna (ITAP), Bom Jesus (BJESUS), Porciúncula (PORC) — sempre use o nome completo
+- Produtos: J.Beef (dianteiro, traseiro, ponta de agulha, peito, LP) | Charque | Resfriadas
+- Operações: vendas de produtos e serviços (separados)
 
 ⛔⛔⛔ REGRA ABSOLUTA — NUNCA INVENTAR DADOS ⛔⛔⛔
 - USE APENAS os números do JSON abaixo. ZERO EXCEÇÕES.
@@ -686,9 +705,11 @@ async def narrar(pergunta: str, resultado: dict, historico: list, modo: str = "n
 
 ## FORMATO
 - Tom executivo e direto — sem "Olá", "Claro!", "Com prazer"
+- Respostas CURTAS e objetivas — responda com o mínimo necessário. Sem introduções, sem explicações desnecessárias. Vá direto ao dado solicitado.
 - Use Markdown: ## títulos, **negrito**, tabelas com | Col |
 - Valores: R$ X.XXX.XXX,XX | Kg: X.XXX.XXX kg | Datas: DD/MM/AA
 - CX30 = kg/30 — sempre exiba junto com kg
+- Nomes de filiais: ITAP = Itaperuna | BJESUS = Bom Jesus | PORC = Porciúncula — sempre use o nome completo, nunca o código
 - Toda tabela DEVE ter linha "| **TOTAIS** |" no final
 - NÃO inclua análise rápida, bullets de insight ou comentários automáticos — a menos que o usuário peça explicitamente ("analise", "o que você acha", "dê sua opinião")
 - Se o usuário pedir resposta "em áudio", "em voz" ou similar: IGNORE essa parte do pedido e responda normalmente em texto — o sistema de áudio é gerenciado pelo frontend automaticamente. NUNCA diga que não consegue gerar áudio.
@@ -1777,6 +1798,139 @@ def dash_page():
             return f.read()
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="dashboard_new.html não encontrado.")
+
+
+@app.post("/chat-analitico")
+async def chat_analitico(req: ChatRequest):
+    """Modo Analítico — usa Sonnet, contexto YoY completo, análises profundas."""
+    if not CLAUDE_KEY:
+        raise HTTPException(status_code=500, detail="CLAUDE_API_KEY não configurada.")
+
+    ultima = next((m.content for m in reversed(req.messages) if m.role == "user"), "")
+    historico = [{"role": m.role, "content": m.content} for m in req.messages]
+
+    df = load_df()
+
+    # Pré-agregar contexto YoY completo
+    ctx = {}
+
+    # Evolução mensal 2025 e 2026 por filial
+    if 'TIPO_OPERACAO' in df.columns:
+        df_prod = df[df['TIPO_OPERACAO'] == 'PRODUTOS']
+    else:
+        df_prod = df
+
+    df_prod = df_prod.copy()
+    df_prod['ano']  = df_prod['DATA_MOVTO'].dt.year
+    df_prod['mes']  = df_prod['DATA_MOVTO'].dt.month
+
+    # Evolução mensal geral
+    evol = df_prod.groupby(['ano','mes']).agg(
+        fat=('VALOR_LIQUIDO','sum'), kg=('QTDE_PRI','sum'),
+        notas=('NUM_DOCTO','nunique')
+    ).reset_index()
+    ctx['evolucao_mensal'] = [
+        {"ano": int(r.ano), "mes": int(r.mes),
+         "fat": round(float(r.fat),2), "kg": round(float(r.kg),2), "notas": int(r.notas)}
+        for _, r in evol.iterrows()
+    ]
+
+    # Por filial × ano × mês
+    if 'NOME_FILIAL' in df_prod.columns:
+        evol_fil = df_prod.groupby(['ano','mes','NOME_FILIAL']).agg(
+            fat=('VALOR_LIQUIDO','sum'), kg=('QTDE_PRI','sum')
+        ).reset_index()
+        ctx['evolucao_por_filial'] = [
+            {"ano": int(r.ano), "mes": int(r.mes), "filial": str(r.NOME_FILIAL),
+             "fat": round(float(r.fat),2), "kg": round(float(r.kg),2)}
+            for _, r in evol_fil.iterrows()
+        ]
+
+    # Top 20 clientes com fat por ano
+    if 'NOME_CLIENTE' in df_prod.columns:
+        top_cli = df_prod.groupby(['NOME_CLIENTE','ano']).agg(
+            fat=('VALOR_LIQUIDO','sum'), kg=('QTDE_PRI','sum'), notas=('NUM_DOCTO','nunique')
+        ).reset_index()
+        top_nomes = df_prod.groupby('NOME_CLIENTE')['VALOR_LIQUIDO'].sum().nlargest(20).index.tolist()
+        top_cli = top_cli[top_cli['NOME_CLIENTE'].isin(top_nomes)]
+        ctx['top_clientes_yoy'] = [
+            {"cliente": str(r.NOME_CLIENTE), "ano": int(r.ano),
+             "fat": round(float(r.fat),2), "kg": round(float(r.kg),2), "notas": int(r.notas)}
+            for _, r in top_cli.iterrows()
+        ]
+
+    # Mix de produtos (divisão2) por ano
+    if 'DESC_DIVISAO2' in df_prod.columns:
+        mix = df_prod.groupby(['ano','DESC_DIVISAO2']).agg(
+            fat=('VALOR_LIQUIDO','sum'), kg=('QTDE_PRI','sum')
+        ).reset_index()
+        ctx['mix_produtos_yoy'] = [
+            {"ano": int(r.ano), "divisao": str(r.DESC_DIVISAO2),
+             "fat": round(float(r.fat),2), "kg": round(float(r.kg),2)}
+            for _, r in mix.iterrows()
+        ]
+
+    # Preço médio mensal por divisão2
+    if 'DESC_DIVISAO2' in df_prod.columns:
+        pm = df_prod[df_prod['QTDE_PRI'] > 0].groupby(['ano','mes','DESC_DIVISAO2']).apply(
+            lambda x: round(float(x['VALOR_LIQUIDO'].sum()) / float(x['QTDE_PRI'].sum()), 2)
+        ).reset_index(name='pm')
+        ctx['preco_medio_mensal'] = [
+            {"ano": int(r.ano), "mes": int(r.mes), "divisao": str(r.DESC_DIVISAO2), "pm": float(r.pm)}
+            for _, r in pm.iterrows()
+        ]
+
+    ctx_json = json.dumps(ctx, ensure_ascii=False)
+
+    # Meses disponíveis
+    anos = sorted(df_prod['ano'].unique().tolist())
+
+    system_analitico = f"""Você é o IAF — Inteligência Analítica Frinense, analista comercial sênior da Frinense Alimentos.
+
+Sua missão é transformar dados de vendas em informação clara e útil para a equipe comercial. Você conhece profundamente o negócio: filiais de Itaperuna, Bom Jesus e Porciúncula, os produtos J.Beef (dianteiro, traseiro, ponta de agulha, peito, LP), Charque e Resfriadas.
+
+**Seu estilo:**
+- Direto, preciso e confiante — como um analista experiente que respeita o tempo de quem pergunta
+- Sem rodeios, sem saudações, sem "Com prazer!" — vá direto ao dado
+- Quando os números são bons, pode ser assertivo. Quando são ruins, seja neutro e factual
+- Use linguagem comercial brasileira — não corporativo demais, não informal demais
+
+**Contexto do negócio:**
+- Filiais: Itaperuna (ITAP), Bom Jesus (BJESUS), Porciúncula (PORC) — sempre use o nome completo
+- Anos disponíveis na base: {anos}
+- Hoje: {date.today().strftime('%d/%m/%Y')}
+
+**Modo Analítico — você tem acesso ao histórico completo:**
+- Pode comparar períodos, anos, filiais, produtos livremente
+- Pode identificar tendências, sazonalidades, crescimentos e quedas
+- Pode fazer análises cruzadas (ex: clientes que cresceram/caíram, mix de produtos mudando)
+- Use os dados do contexto abaixo para TODAS as análises — NUNCA invente ou estime valores
+- Finalize análises com 💡 **Insight** destacando o ponto mais relevante
+
+⛔ NUNCA invente, estime ou arredonde valores. USE APENAS os dados do contexto abaixo.
+
+CONTEXTO ANALÍTICO COMPLETO (evolução YoY, clientes, mix, preços):
+{ctx_json}"""
+
+    msgs = []
+    for m in historico[-12:]:  # Mais histórico no modo analítico
+        msgs.append({"role": m["role"], "content": m["content"][:1000]})
+    msgs.append({"role": "user", "content": ultima})
+
+    async with httpx.AsyncClient(timeout=120) as client:
+        r = await client.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={"Content-Type": "application/json",
+                     "x-api-key": CLAUDE_KEY,
+                     "anthropic-version": "2023-06-01"},
+            json={"model": "claude-sonnet-4-20250514",
+                  "max_tokens": 4000,
+                  "system": system_analitico,
+                  "messages": msgs}
+        )
+    data = r.json()
+    resposta = data["content"][0]["text"] if data.get("content") else "❌ Erro na análise."
+    return JSONResponse({"content": [{"type": "text", "text": resposta}]})
 
 @app.get("/health")
 def health():
