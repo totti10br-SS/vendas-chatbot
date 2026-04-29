@@ -1859,24 +1859,35 @@ async def chat_analitico(req: ChatRequest):
             for _, r in top_cli.iterrows()
         ]
 
-    # Mix de produtos (divisão2) por ano
+    # Mix de produtos (divisão2 + divisão3) por ano
     if 'DESC_DIVISAO2' in df_prod.columns:
-        mix = df_prod.groupby(['ano','DESC_DIVISAO2']).agg(
+        grp_mix_cols = ['ano','DESC_DIVISAO2']
+        if 'DESC_DIVISAO3' in df_prod.columns:
+            grp_mix_cols.append('DESC_DIVISAO3')
+        mix = df_prod.groupby(grp_mix_cols).agg(
             fat=('VALOR_LIQUIDO','sum'), kg=('QTDE_PRI','sum')
         ).reset_index()
         ctx['mix_produtos_yoy'] = [
-            {"ano": int(r.ano), "divisao": str(r.DESC_DIVISAO2),
+            {"ano": int(r.ano),
+             "divisao": str(r.DESC_DIVISAO2),
+             "tipo_corte": str(r.DESC_DIVISAO3) if 'DESC_DIVISAO3' in mix.columns else None,
              "fat": round(float(r.fat),2), "kg": round(float(r.kg),2)}
             for _, r in mix.iterrows()
         ]
 
-    # Preço médio mensal por divisão2
+    # Preço médio mensal por divisão2 + divisão3
     if 'DESC_DIVISAO2' in df_prod.columns:
-        pm = df_prod[df_prod['QTDE_PRI'] > 0].groupby(['ano','mes','DESC_DIVISAO2']).apply(
+        grp_pm_cols = ['ano','mes','DESC_DIVISAO2']
+        if 'DESC_DIVISAO3' in df_prod.columns:
+            grp_pm_cols.append('DESC_DIVISAO3')
+        pm = df_prod[df_prod['QTDE_PRI'] > 0].groupby(grp_pm_cols).apply(
             lambda x: round(float(x['VALOR_LIQUIDO'].sum()) / float(x['QTDE_PRI'].sum()), 2)
         ).reset_index(name='pm')
         ctx['preco_medio_mensal'] = [
-            {"ano": int(r.ano), "mes": int(r.mes), "divisao": str(r.DESC_DIVISAO2), "pm": float(r.pm)}
+            {"ano": int(r.ano), "mes": int(r.mes),
+             "divisao": str(r.DESC_DIVISAO2),
+             "tipo_corte": str(r.DESC_DIVISAO3) if 'DESC_DIVISAO3' in pm.columns else None,
+             "pm": float(r.pm)}
             for _, r in pm.iterrows()
         ]
 
