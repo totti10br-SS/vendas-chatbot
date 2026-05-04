@@ -1965,6 +1965,104 @@ CONTEXTO ANALÍTICO COMPLETO (evolução YoY, clientes, mix, preços):
         resposta = "❌ Erro na análise — o modelo não retornou resposta. Tente reformular a pergunta."
     return JSONResponse({"content": [{"type": "text", "text": resposta}]})
 
+
+@app.post("/pdf-analitico")
+async def pdf_analitico(req: starlette.requests.Request):
+    """Gera PDF a partir de texto de análise do modo analítico."""
+    body = await req.json()
+    texto = body.get("texto", "").strip()
+    titulo = body.get("titulo", "ANÁLISE COMERCIAL IAF")
+    if not texto:
+        raise HTTPException(status_code=400, detail="Texto vazio.")
+
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
+    from reportlab.lib.enums import TA_LEFT, TA_CENTER
+    import io, re as _re
+    from datetime import date
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+        leftMargin=2*cm, rightMargin=2*cm,
+        topMargin=2*cm, bottomMargin=2*cm)
+
+    VERM  = colors.HexColor("#CC0000")
+    AMAR  = colors.HexColor("#F5C800")
+    CINZ  = colors.HexColor("#1a1a1a")
+    BRNCO = colors.white
+    TEXTO = colors.HexColor("#e8e8e8")
+
+    s_titulo = ParagraphStyle("titulo", fontName="Helvetica-Bold", fontSize=18,
+        textColor=AMAR, spaceAfter=4, alignment=TA_CENTER)
+    s_sub = ParagraphStyle("sub", fontName="Helvetica", fontSize=10,
+        textColor=colors.HexColor("#aaaaaa"), spaceAfter=12, alignment=TA_CENTER)
+    s_h2 = ParagraphStyle("h2", fontName="Helvetica-Bold", fontSize=13,
+        textColor=AMAR, spaceBefore=14, spaceAfter=6)
+    s_h3 = ParagraphStyle("h3", fontName="Helvetica-Bold", fontSize=11,
+        textColor=colors.HexColor("#ff6666"), spaceBefore=10, spaceAfter=4)
+    s_body = ParagraphStyle("body", fontName="Helvetica", fontSize=10,
+        textColor=colors.HexColor("#333333"), leading=15, spaceAfter=6)
+    s_bullet = ParagraphStyle("bullet", fontName="Helvetica", fontSize=10,
+        textColor=colors.HexColor("#333333"), leading=14, leftIndent=16, spaceAfter=4)
+    s_insight = ParagraphStyle("insight", fontName="Helvetica-Bold", fontSize=10,
+        textColor=VERM, leading=14, spaceAfter=6, leftIndent=8)
+    s_rodape = ParagraphStyle("rodape", fontName="Helvetica", fontSize=8,
+        textColor=colors.HexColor("#999999"), alignment=TA_CENTER)
+
+    story = []
+
+    # Cabeçalho
+    story.append(Paragraph("IAF · INTELIGÊNCIA ANALÍTICA FRINENSE", s_titulo))
+    story.append(Paragraph(f"{titulo} · Gerado em {date.today().strftime('%d/%m/%Y')}", s_sub))
+    story.append(HRFlowable(width="100%", thickness=2, color=VERM))
+    story.append(Spacer(1, 0.4*cm))
+
+    # Processar texto markdown para parágrafos
+    linhas = texto.split("
+")
+    for linha in linhas:
+        linha = linha.rstrip()
+        if not linha:
+            story.append(Spacer(1, 0.2*cm))
+            continue
+        # Remove markdown de negrito/itálico para texto limpo
+        linha_limpa = _re.sub(r'\*\*([^*]+)\*\*', r'', linha)
+        linha_limpa = _re.sub(r'\*([^*]+)\*', r'', linha_limpa)
+        linha_limpa = _re.sub(r'`([^`]+)`', r'', linha_limpa)
+        if linha.startswith("## "):
+            story.append(Paragraph(linha_limpa[3:].upper(), s_h2))
+        elif linha.startswith("# "):
+            story.append(Paragraph(linha_limpa[2:].upper(), s_h2))
+        elif linha.startswith("### "):
+            story.append(Paragraph(linha_limpa[4:], s_h3))
+        elif linha.startswith("- ") or linha.startswith("• "):
+            story.append(Paragraph("• " + linha_limpa[2:], s_bullet))
+        elif linha.startswith("💡"):
+            story.append(Paragraph(linha_limpa, s_insight))
+        elif linha.startswith("|"):
+            # Linha de tabela — pular (não renderiza tabelas markdown no PDF)
+            continue
+        else:
+            story.append(Paragraph(linha_limpa, s_body))
+
+    story.append(Spacer(1, 0.5*cm))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#cccccc")))
+    story.append(Spacer(1, 0.2*cm))
+    story.append(Paragraph("IAF · Inteligência Analítica Frinense Alimentos", s_rodape))
+
+    doc.build(story)
+    buf.seek(0)
+
+    from fastapi.responses import Response
+    return Response(
+        content=buf.read(),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="IAF_Analitico_{date.today().strftime("%Y%m%d")}.pdf"'}
+    )
+
 @app.get("/health")
 def health():
     return {"status": "ok", "sistema": "IAF-v2"}

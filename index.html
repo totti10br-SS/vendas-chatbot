@@ -992,6 +992,34 @@ async function sendMessage(){
           if(lastBtn) speakThis(lastBtn, _autoRaw);
         }, 400);
       }
+      // PDF no modo analítico: gera PDF com o texto da análise
+      const pedidoPDF = /\b(pdf|em pdf|manda.*pdf|gera.*pdf|exporta.*pdf|relatório pdf)\b/i.test(text);
+      const modoAnaliticoAtivo = document.body.classList.contains('modo-analitico');
+      if(pedidoPDF && modoAnaliticoAtivo && replyClean && replyClean.length > 100){
+        setTimeout(async function(){
+          try {
+            // Extrair título do pedido
+            const tituloMatch = text.match(/analise.*?entre\s+([\w\s]+?)(?:\s+e\s+|,|em pdf)/i);
+            const titulo = tituloMatch ? tituloMatch[1].trim().toUpperCase() : 'ANÁLISE COMERCIAL';
+            const resp = await fetch('/pdf-analitico', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({texto: replyClean, titulo: titulo})
+            });
+            if(resp.ok){
+              const blob = await resp.blob();
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = 'IAF_Analitico.pdf';
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              URL.revokeObjectURL(url);
+            }
+          } catch(e){ console.error('PDF analítico erro:', e); }
+        }, 800);
+      }
     }
   }catch(err){typing.remove();addMessage('assistant',`❌ ${err.message}`);}
   document.getElementById('sendBtn').disabled=false;
