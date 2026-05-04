@@ -2021,8 +2021,7 @@ async def pdf_analitico(req: starlette.requests.Request):
     story.append(Spacer(1, 0.4*cm))
 
     # Processar texto markdown para parágrafos
-    linhas = texto.split("
-")
+    linhas = texto.split("\n")
     for linha in linhas:
         linha = linha.rstrip()
         if not linha:
