@@ -99,7 +99,7 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;ba
 .bubble strong{color:var(--yellow);font-weight:700;}
 .bubble p{margin-bottom:8px;color:var(--text);}.bubble p:last-child{margin-bottom:0;}
 .bubble ul{margin:6px 0 6px 17px;}.bubble li{margin-bottom:4px;color:#fff;}
-.bubble table{width:100%;border-collapse:collapse;margin:10px 0;font-size:15px;display:block;overflow-x:auto;}
+.bubble table{width:100%;border-collapse:collapse;margin:10px 0;font-size:13px;display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%;}
 .bubble th{background:rgba(204,0,0,.3);padding:4px 6px;text-align:left;font-family:'Barlow Condensed',sans-serif;font-weight:700;color:var(--yellow);font-size:14px;text-transform:uppercase;border:1px solid rgba(204,0,0,.4);}
 .bubble td{padding:4px 6px;border:1px solid rgba(255,255,255,.1);color:#fff;}
 .bubble td:not(:first-child):not(:nth-child(2)){text-align:right;}
@@ -992,33 +992,41 @@ async function sendMessage(){
           if(lastBtn) speakThis(lastBtn, _autoRaw);
         }, 400);
       }
-      // PDF no modo analítico: gera PDF com o texto da análise
-      const pedidoPDF = /\b(pdf|em pdf|manda.*pdf|gera.*pdf|exporta.*pdf|relatório pdf)\b/i.test(text);
+      // PDF no modo analítico: usa última resposta do histórico, não a resposta atual
+      const pedidoPDF = /\b(pdf|em pdf|manda.*pdf|gera.*pdf|exporta.*pdf|relatório pdf|isso.*pdf|pdf.*isso)\b/i.test(text);
       const modoAnaliticoAtivo = document.body.classList.contains('modo-analitico');
-      if(pedidoPDF && modoAnaliticoAtivo && replyClean && replyClean.length > 100){
-        setTimeout(async function(){
-          try {
-            // Extrair título do pedido
-            const tituloMatch = text.match(/analise.*?entre\s+([\w\s]+?)(?:\s+e\s+|,|em pdf)/i);
-            const titulo = tituloMatch ? tituloMatch[1].trim().toUpperCase() : 'ANÁLISE COMERCIAL';
-            const resp = await fetch('/pdf-analitico', {
-              method: 'POST',
-              headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({texto: replyClean, titulo: titulo})
-            });
-            if(resp.ok){
-              const blob = await resp.blob();
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = 'IAF_Analitico.pdf';
-              document.body.appendChild(a);
-              a.click();
-              document.body.removeChild(a);
-              URL.revokeObjectURL(url);
-            }
-          } catch(e){ console.error('PDF analítico erro:', e); }
-        }, 800);
+      if(pedidoPDF && modoAnaliticoAtivo){
+        // Buscar última resposta do assistente com conteúdo real (>200 chars)
+        let textoParaPDF = '';
+        for(let i = conversationHistory.length - 2; i >= 0; i--){
+          if(conversationHistory[i].role === 'assistant' && conversationHistory[i].content.length > 200){
+            textoParaPDF = conversationHistory[i].content;
+            break;
+          }
+        }
+        if(textoParaPDF){
+          setTimeout(async function(){
+            try {
+              const resp = await fetch('/pdf-analitico', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({texto: textoParaPDF, titulo: 'ANÁLISE COMERCIAL IAF'})
+              });
+              if(resp.ok){
+                const blob = await resp.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'IAF_Analitico.pdf';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                addMessage('assistant', '📄 PDF gerado com sucesso!');
+              }
+            } catch(e){ console.error('PDF analítico erro:', e); }
+          }, 500);
+        }
       }
     }
   }catch(err){typing.remove();addMessage('assistant',`❌ ${err.message}`);}
