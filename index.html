@@ -490,6 +490,7 @@ body.modo-analitico .analitico-btn-voltar { display:inline-block !important; }
     <div style="display:flex;align-items:center;gap:8px;">
       <div class="stat-pill"><div class="stat-dot"></div><span id="totalReg">—</span></div>
       <button onclick="forceReload()" title="Recarregar dados do Drive" style="background:none;border:1px solid rgba(245,200,0,.3);border-radius:5px;padding:3px 8px;cursor:pointer;color:var(--yellow);font-size:10px;font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.5px;transition:all .2s;" onmouseover="this.style.background='rgba(245,200,0,.1)'" onmouseout="this.style.background='none'">↺ ATUALIZAR</button>
+      <button id="fullscreenBtn" onclick="toggleFullscreen()" title="Tela cheia" style="background:none;border:1px solid rgba(245,200,0,.3);border-radius:5px;padding:3px 8px;cursor:pointer;color:var(--yellow);font-size:10px;font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.5px;transition:all .2s;" onmouseover="this.style.background='rgba(245,200,0,.1)'" onmouseout="this.style.background='none'">⛶ FULL</button>
       <button onclick="openVoicePanel()" title="Configurar voz" style="background:none;border:1px solid rgba(245,200,0,.3);border-radius:5px;padding:3px 8px;cursor:pointer;color:var(--yellow);font-size:10px;font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.5px;transition:all .2s;" onmouseover="this.style.background='rgba(245,200,0,.1)'" onmouseout="this.style.background='none'">🔊 VOZ</button>
       <button class="analitico-btn-ativar" onclick="ativarAnalitico()" title="Modo Analítico — análises profundas YoY" style="background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.4);border-radius:5px;padding:3px 8px;cursor:pointer;color:#38bdf8;font-size:10px;font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.5px;transition:all .2s;">🔬 ANALÍTICO</button>
       <button class="analitico-btn-voltar" onclick="desativarAnalitico()" title="Voltar ao modo rápido" style="background:rgba(56,189,248,.15);border:1px solid #38bdf8;border-radius:5px;padding:3px 8px;cursor:pointer;color:#38bdf8;font-size:10px;font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.5px;">← RÁPIDO</button>
@@ -553,6 +554,7 @@ body.modo-analitico .analitico-btn-voltar { display:inline-block !important; }
       <textarea id="userInput" placeholder="Pergunte ao IAF sobre suas vendas..." rows="1"
         onkeydown="handleKey(event)" oninput="autoResize(this)" disabled></textarea>
       <button id="stopSpeakBtn" onclick="stopSpeaking()" title="Parar voz" style="display:none;width:42px;height:42px;flex-shrink:0;background:#1a1a1a;border:1px solid rgba(245,200,0,.5);border-radius:8px;cursor:pointer;font-size:18px;align-items:center;justify-content:center;">⏹️</button>
+      <button id="stopFetchBtn" onclick="stopFetch()" title="Cancelar pergunta" style="display:none;width:42px;height:42px;flex-shrink:0;background:#1a0000;border:1px solid rgba(204,0,0,.6);border-radius:8px;cursor:pointer;font-size:18px;align-items:center;justify-content:center;">✖</button>
       <button id="micBtn" onclick="toggleMic()" disabled title="Falar">🎤</button>
       <button id="sendBtn" onclick="sendMessage()" disabled>
         <svg viewBox="0 0 24 24"><path d="M2 21L23 12 2 3v7l15 2-15 2v7z"/></svg>
@@ -909,6 +911,27 @@ function showWelcome(total){
   el.appendChild(div);
 }
 
+function stopFetch(){
+  if(window._fetchController){ window._fetchController.abort(); }
+  const sb = document.getElementById('stopFetchBtn');
+  if(sb) sb.style.display='none';
+}
+
+function toggleFullscreen(){
+  const btn = document.getElementById('fullscreenBtn');
+  if(!document.fullscreenElement){
+    document.documentElement.requestFullscreen().catch(function(){});
+    if(btn) btn.textContent='⛶ SAIR';
+  } else {
+    document.exitFullscreen();
+    if(btn) btn.textContent='⛶ FULL';
+  }
+}
+document.addEventListener('fullscreenchange', function(){
+  const btn = document.getElementById('fullscreenBtn');
+  if(btn) btn.textContent = document.fullscreenElement ? '⛶ SAIR' : '⛶ FULL';
+});
+
 function ativarAnalitico(){
   document.body.classList.add('modo-analitico');
   localStorage.setItem('iaf_modo','analitico');
@@ -932,10 +955,13 @@ async function sendMessage(){
   addMessage('user',text);
   const typing=addTyping();
   conversationHistory.push({role:'user',content:text});
+  const stopBtn = document.getElementById('stopFetchBtn');
+  if(stopBtn) stopBtn.style.display='flex';
+  window._fetchController = new AbortController();
   try{
     const _modoAnalitico = document.body.classList.contains('modo-analitico');
     const r=await fetch(_modoAnalitico ? '/chat-analitico' : '/chat',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({messages:conversationHistory, modo:modoAtivo})});
+      body:JSON.stringify({messages:conversationHistory, modo:modoAtivo}), signal: window._fetchController.signal});
     const data=await r.json();
     typing.remove();
     if(!r.ok) throw new Error(data.detail||JSON.stringify(data));
@@ -1029,7 +1055,15 @@ async function sendMessage(){
         }
       }
     }
-  }catch(err){typing.remove();addMessage('assistant',`❌ ${err.message}`);}
+  }catch(err){
+    typing.remove();
+    if(err.name !== 'AbortError') addMessage('assistant',`❌ ${err.message}`);
+    else addMessage('assistant','✖ Pergunta cancelada.');
+  } finally {
+    const _sb = document.getElementById('stopFetchBtn');
+    if(_sb) _sb.style.display='none';
+    window._fetchController = null;
+  }
   document.getElementById('sendBtn').disabled=false;
   scrollToBottom();
 }
