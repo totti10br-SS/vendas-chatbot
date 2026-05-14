@@ -57,6 +57,50 @@ FILE_ID       = os.environ.get("DRIVE_FILE_ID", "")
 CLAUDE_KEY    = os.environ.get("CLAUDE_API_KEY", "")
 ELEVENLABS_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
 MEUDANFE_KEY  = "0c1588f4-f90e-4711-8b39-87be9a1581da"
+ADMIN_USER     = os.environ.get("ADMIN_USER", "admin")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
+
+# ── Métricas de uso ──
+import collections
+_metricas = {
+    "sessao_inicio": datetime.now().isoformat(),
+    "consultas": [],          # lista de dicts com cada consulta
+    "tokens_haiku_in": 0,
+    "tokens_haiku_out": 0,
+    "tokens_sonnet_in": 0,
+    "tokens_sonnet_out": 0,
+    "tokens_tts": 0,          # chars enviados ao ElevenLabs
+    "erros": [],
+    "modo_rapido": 0,
+    "modo_analitico": 0,
+}
+_PRECO_HAIKU_IN   = 0.80  / 1_000_000   # $0.80/MTok
+_PRECO_HAIKU_OUT  = 4.00  / 1_000_000   # $4.00/MTok
+_PRECO_SONNET_IN  = 3.00  / 1_000_000   # $3.00/MTok
+_PRECO_SONNET_OUT = 15.00 / 1_000_000   # $15.00/MTok
+_PRECO_TTS        = 0.15  / 1_000       # $0.15/1k chars
+
+def _registrar_uso(modelo: str, input_tok: int, output_tok: int, pergunta: str = "", modo: str = "rapido"):
+    global _metricas
+    _metricas["consultas"].append({
+        "ts": datetime.now().strftime("%d/%m %H:%M"),
+        "modelo": modelo,
+        "input": input_tok,
+        "output": output_tok,
+        "pergunta": pergunta[:80],
+        "modo": modo,
+    })
+    if len(_metricas["consultas"]) > 200:
+        _metricas["consultas"] = _metricas["consultas"][-200:]
+    if "haiku" in modelo.lower():
+        _metricas["tokens_haiku_in"]  += input_tok
+        _metricas["tokens_haiku_out"] += output_tok
+        _metricas["modo_rapido"] += 1
+    else:
+        _metricas["tokens_sonnet_in"]  += input_tok
+        _metricas["tokens_sonnet_out"] += output_tok
+        _metricas["modo_analitico"] += 1
+
 
 FILIAIS_VALIDAS = {"ITAP", "BJESUS", "PORC"}
 
@@ -804,7 +848,10 @@ DADOS CALCULADOS (use SOMENTE estes):
         )
     if r.status_code != 200:
         raise HTTPException(status_code=r.status_code, detail=r.text)
-    return r.json()["content"][0]["text"]
+    rj = r.json()
+    usage = rj.get("usage", {})
+    _registrar_uso("haiku", usage.get("input_tokens",0), usage.get("output_tokens",0))
+    return rj["content"][0]["text"]
 
 # ─────────────────────────────────────────────
 #  MODELOS
@@ -1669,6 +1716,7 @@ async def tts(req: starlette.requests.Request):
         raise HTTPException(status_code=400, detail="Texto vazio.")
     # Limitar texto (ElevenLabs cobra por char)
     texto = texto[:1500]
+    _metricas["tokens_tts"] += len(texto)
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(
             f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
@@ -1958,6 +2006,8 @@ CONTEXTO ANALÍTICO COMPLETO (evolução YoY, clientes, mix, preços):
                   "messages": msgs}
         )
     data = r.json()
+    usage = data.get("usage", {})
+    _registrar_uso("sonnet", usage.get("input_tokens",0), usage.get("output_tokens",0), ultima, "analitico")
     if data.get("content") and len(data["content"]) > 0:
         resposta = data["content"][0]["text"]
     else:
@@ -2061,6 +2111,221 @@ async def pdf_analitico(req: starlette.requests.Request):
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="IAF_Analitico_{date.today().strftime("%Y%m%d")}.pdf"'}
     )
+
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_page():
+    return """<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IAF Admin</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:#0a0a0a;color:#e8e8e8;font-family:'Segoe UI',sans-serif;min-height:100vh;}
+.login-wrap{display:flex;align-items:center;justify-content:center;min-height:100vh;}
+.login-box{background:#141414;border:1px solid rgba(204,0,0,.3);border-radius:12px;padding:32px;width:320px;}
+.login-box h2{color:#F5C800;font-size:20px;margin-bottom:4px;text-align:center;}
+.login-box p{color:#666;font-size:12px;text-align:center;margin-bottom:24px;}
+input{width:100%;background:#1a1a1a;border:1px solid #333;border-radius:6px;padding:10px 14px;color:#e8e8e8;font-size:14px;margin-bottom:12px;outline:none;}
+input:focus{border-color:#CC0000;}
+button{width:100%;background:#CC0000;border:none;border-radius:6px;padding:11px;color:#fff;font-size:14px;font-weight:700;cursor:pointer;}
+button:hover{background:#990000;}
+.err{color:#ff4444;font-size:12px;text-align:center;margin-top:8px;display:none;}
+#painel{display:none;}
+.header{background:linear-gradient(135deg,#1a0000,#0d0d0d);border-bottom:2px solid #CC0000;padding:12px 24px;display:flex;align-items:center;justify-content:space-between;}
+.header h1{color:#fff;font-size:18px;letter-spacing:1px;}.header h1 span{color:#F5C800;}
+.logout{background:none;border:1px solid rgba(245,200,0,.3);border-radius:5px;padding:4px 14px;color:#F5C800;font-size:11px;font-weight:700;cursor:pointer;width:auto;}
+.main{padding:20px 24px;max-width:1200px;margin:0 auto;}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px;}
+.kpi{background:#141414;border:1px solid rgba(204,0,0,.2);border-radius:8px;padding:14px 16px;position:relative;overflow:hidden;}
+.kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#CC0000,#F5C800);}
+.kpi-label{color:#666;font-size:10px;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;}
+.kpi-val{font-size:22px;font-weight:700;color:#fff;}
+.kpi-sub{color:#888;font-size:11px;margin-top:2px;}
+.card{background:#141414;border:1px solid rgba(204,0,0,.2);border-radius:8px;padding:16px 20px;margin-bottom:16px;}
+.card-title{color:#F5C800;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:12px;display:flex;align-items:center;gap:6px;}
+.card-title::before{content:'';display:block;width:3px;height:12px;background:#CC0000;border-radius:2px;}
+table{width:100%;border-collapse:collapse;font-size:12px;}
+th{color:#666;font-size:10px;letter-spacing:1px;text-transform:uppercase;padding:6px 10px;text-align:left;border-bottom:1px solid rgba(204,0,0,.2);}
+td{padding:7px 10px;border-bottom:1px solid rgba(255,255,255,.04);color:#ccc;}
+tr:hover td{background:rgba(255,255,255,.02);}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;letter-spacing:.5px;}
+.badge-haiku{background:rgba(245,200,0,.15);color:#F5C800;}
+.badge-sonnet{background:rgba(56,189,248,.15);color:#38bdf8;}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+@media(max-width:700px){.grid2{grid-template-columns:1fr;}.kpis{grid-template-columns:repeat(2,1fr);}}
+.uptime{color:#22c55e;font-size:11px;}
+</style>
+</head>
+<body>
+<div class="login-wrap" id="loginWrap">
+  <div class="login-box">
+    <h2>IAF <span style="color:#CC0000">Admin</span></h2>
+    <p>Painel administrativo restrito</p>
+    <input type="text" id="usr" placeholder="Usuário" autocomplete="off">
+    <input type="password" id="pwd" placeholder="Senha" onkeydown="if(event.key==='Enter')login()">
+    <button onclick="login()">ENTRAR</button>
+    <div class="err" id="err">Usuário ou senha incorretos</div>
+  </div>
+</div>
+
+<div id="painel">
+  <div class="header">
+    <h1>IAF · <span>PAINEL ADMIN</span></h1>
+    <button class="logout" onclick="logout()">SAIR</button>
+  </div>
+  <div class="main">
+    <div class="kpis" id="kpis"></div>
+    <div class="grid2">
+      <div class="card">
+        <div class="card-title">Custo Estimado (sessão)</div>
+        <div id="custos"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Sistema</div>
+        <div id="sistema"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Últimas Consultas</div>
+      <div style="overflow-x:auto"><table id="tblConsultas">
+        <thead><tr><th>Hora</th><th>Modo</th><th>Modelo</th><th>Input tok</th><th>Output tok</th><th>Pergunta</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+    </div>
+  </div>
+</div>
+
+<script>
+let _token = sessionStorage.getItem('iaf_admin_token');
+if(_token) mostrarPainel();
+
+async function login(){
+  const u = document.getElementById('usr').value;
+  const p = document.getElementById('pwd').value;
+  const r = await fetch('/admin/login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({user:u,password:p})});
+  if(r.ok){
+    const d = await r.json();
+    _token = d.token;
+    sessionStorage.setItem('iaf_admin_token', _token);
+    mostrarPainel();
+  } else {
+    document.getElementById('err').style.display='block';
+  }
+}
+
+function logout(){
+  sessionStorage.removeItem('iaf_admin_token');
+  _token = null;
+  document.getElementById('loginWrap').style.display='flex';
+  document.getElementById('painel').style.display='none';
+}
+
+function mostrarPainel(){
+  document.getElementById('loginWrap').style.display='none';
+  document.getElementById('painel').style.display='block';
+  carregarDados();
+  setInterval(carregarDados, 30000);
+}
+
+function fmt(v){ return 'R$ ' + (v*5.0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function fmtUSD(v){ return '$' + v.toFixed(4); }
+
+async function carregarDados(){
+  const r = await fetch('/admin/data', {headers:{'X-Admin-Token': _token}});
+  if(r.status===401){ logout(); return; }
+  const d = await r.json();
+
+  // KPIs
+  const totalTok = d.tokens_haiku_in + d.tokens_haiku_out + d.tokens_sonnet_in + d.tokens_sonnet_out;
+  const custoUSD = (d.tokens_haiku_in*0.80/1e6) + (d.tokens_haiku_out*4.0/1e6) + (d.tokens_sonnet_in*3.0/1e6) + (d.tokens_sonnet_out*15.0/1e6) + (d.tokens_tts*0.15/1000);
+  document.getElementById('kpis').innerHTML = `
+    <div class="kpi"><div class="kpi-label">Total Consultas</div><div class="kpi-val">${d.total_consultas}</div><div class="kpi-sub">${d.modo_rapido} rápido · ${d.modo_analitico} analítico</div></div>
+    <div class="kpi"><div class="kpi-label">Tokens Haiku</div><div class="kpi-val">${(d.tokens_haiku_in+d.tokens_haiku_out).toLocaleString('pt-BR')}</div><div class="kpi-sub">${d.tokens_haiku_in.toLocaleString()} in · ${d.tokens_haiku_out.toLocaleString()} out</div></div>
+    <div class="kpi"><div class="kpi-label">Tokens Sonnet</div><div class="kpi-val">${(d.tokens_sonnet_in+d.tokens_sonnet_out).toLocaleString('pt-BR')}</div><div class="kpi-sub">${d.tokens_sonnet_in.toLocaleString()} in · ${d.tokens_sonnet_out.toLocaleString()} out</div></div>
+    <div class="kpi"><div class="kpi-label">Chars TTS</div><div class="kpi-val">${d.tokens_tts.toLocaleString('pt-BR')}</div><div class="kpi-sub">ElevenLabs</div></div>
+    <div class="kpi"><div class="kpi-label">Custo Sessão</div><div class="kpi-val" style="color:#F5C800">${fmtUSD(custoUSD)}</div><div class="kpi-sub">${fmt(custoUSD)} aprox</div></div>
+  `;
+
+  // Custos detalhados
+  const cHaikuIn  = d.tokens_haiku_in*0.80/1e6;
+  const cHaikuOut = d.tokens_haiku_out*4.0/1e6;
+  const cSonnetIn  = d.tokens_sonnet_in*3.0/1e6;
+  const cSonnetOut = d.tokens_sonnet_out*15.0/1e6;
+  const cTTS = d.tokens_tts*0.15/1000;
+  document.getElementById('custos').innerHTML = `
+    <table>
+      <tr><td>Haiku input</td><td style="text-align:right;color:#F5C800">${fmtUSD(cHaikuIn)}</td></tr>
+      <tr><td>Haiku output</td><td style="text-align:right;color:#F5C800">${fmtUSD(cHaikuOut)}</td></tr>
+      <tr><td>Sonnet input</td><td style="text-align:right;color:#38bdf8">${fmtUSD(cSonnetIn)}</td></tr>
+      <tr><td>Sonnet output</td><td style="text-align:right;color:#38bdf8">${fmtUSD(cSonnetOut)}</td></tr>
+      <tr><td>ElevenLabs TTS</td><td style="text-align:right;color:#22c55e">${fmtUSD(cTTS)}</td></tr>
+      <tr style="border-top:1px solid rgba(245,200,0,.3)"><td><strong>Total USD</strong></td><td style="text-align:right;color:#F5C800;font-weight:700">${fmtUSD(custoUSD)}</td></tr>
+    </table>`;
+
+  // Sistema
+  document.getElementById('sistema').innerHTML = `
+    <table>
+      <tr><td>Sessão iniciada</td><td style="text-align:right;color:#22c55e" class="uptime">${d.sessao_inicio}</td></tr>
+      <tr><td>Registros CSV</td><td style="text-align:right;color:#F5C800">${d.registros_csv.toLocaleString('pt-BR')}</td></tr>
+      <tr><td>Erros registrados</td><td style="text-align:right;color:${d.total_erros>0?'#ff4444':'#22c55e'}">${d.total_erros}</td></tr>
+      <tr><td>Versão IAF</td><td style="text-align:right;color:#888">v2</td></tr>
+    </table>`;
+
+  // Tabela de consultas
+  const tbody = document.querySelector('#tblConsultas tbody');
+  tbody.innerHTML = '';
+  (d.consultas || []).slice().reverse().forEach(function(c){
+    const badge = c.modelo.includes('haiku') ? 
+      '<span class="badge badge-haiku">HAIKU</span>' : 
+      '<span class="badge badge-sonnet">SONNET</span>';
+    const modoBadge = c.modo === 'analitico' ? 
+      '<span class="badge badge-sonnet">ANALÍTICO</span>' : 
+      '<span class="badge" style="background:rgba(204,0,0,.15);color:#ff6666">RÁPIDO</span>';
+    tbody.innerHTML += `<tr>
+      <td>${c.ts}</td>
+      <td>${modoBadge}</td>
+      <td>${badge}</td>
+      <td style="text-align:right">${c.input.toLocaleString()}</td>
+      <td style="text-align:right">${c.output.toLocaleString()}</td>
+      <td style="color:#888;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.pergunta||'—'}</td>
+    </tr>`;
+  });
+}
+</script>
+</body>
+</html>"""
+
+
+@app.post("/admin/login")
+async def admin_login(req: starlette.requests.Request):
+    body = await req.json()
+    if body.get("user") == ADMIN_USER and body.get("password") == ADMIN_PASSWORD:
+        import hashlib, time
+        token = hashlib.sha256(f"{ADMIN_USER}{ADMIN_PASSWORD}{time.time()}".encode()).hexdigest()[:32]
+        return JSONResponse({"token": token, "ok": True})
+    raise HTTPException(status_code=401, detail="Credenciais inválidas")
+
+
+@app.get("/admin/data")
+async def admin_data(request: starlette.requests.Request):
+    token = request.headers.get("X-Admin-Token","")
+    if not token or not ADMIN_PASSWORD:
+        raise HTTPException(status_code=401)
+    try:
+        df = load_df()
+        reg_csv = len(df)
+    except:
+        reg_csv = 0
+    return JSONResponse({
+        **_metricas,
+        "total_consultas": len(_metricas["consultas"]),
+        "total_erros": len(_metricas["erros"]),
+        "registros_csv": reg_csv,
+        "sessao_inicio": _metricas["sessao_inicio"],
+    })
 
 @app.get("/health")
 def health():
