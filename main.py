@@ -850,7 +850,7 @@ DADOS CALCULADOS (use SOMENTE estes):
         raise HTTPException(status_code=r.status_code, detail=r.text)
     rj = r.json()
     usage = rj.get("usage", {})
-    _registrar_uso("haiku", usage.get("input_tokens",0), usage.get("output_tokens",0), pergunta, "rapido")
+    _registrar_uso("haiku", usage.get("input_tokens",0), usage.get("output_tokens",0))
     return rj["content"][0]["text"]
 
 # ─────────────────────────────────────────────
@@ -2174,7 +2174,10 @@ tr:hover td{background:rgba(255,255,255,.02);}
 <div id="painel">
   <div class="header">
     <h1>IAF · <span>PAINEL ADMIN</span></h1>
-    <button class="logout" onclick="logout()">SAIR</button>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button class="logout" onclick="window.location.href='/iaf'" style="background:rgba(245,200,0,.1);border-color:rgba(245,200,0,.5);">← IAF</button>
+      <button class="logout" onclick="logout()">SAIR</button>
+    </div>
   </div>
   <div class="main">
     <div class="kpis" id="kpis"></div>
@@ -2199,8 +2202,8 @@ tr:hover td{background:rgba(255,255,255,.02);}
 </div>
 
 <script>
-let _token = sessionStorage.getItem('iaf_admin_token');
-if(_token) mostrarPainel();
+let _token = null;
+sessionStorage.removeItem('iaf_admin_token');
 
 async function login(){
   const u = document.getElementById('usr').value;
