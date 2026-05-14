@@ -554,7 +554,7 @@ body.modo-analitico .analitico-btn-voltar { display:inline-block !important; }
       <textarea id="userInput" placeholder="Pergunte ao IAF sobre suas vendas..." rows="1"
         onkeydown="handleKey(event)" oninput="autoResize(this)" disabled></textarea>
       <button id="stopSpeakBtn" onclick="stopSpeaking()" title="Parar voz" style="display:none;width:42px;height:42px;flex-shrink:0;background:#1a1a1a;border:1px solid rgba(245,200,0,.5);border-radius:8px;cursor:pointer;font-size:18px;align-items:center;justify-content:center;">⏹️</button>
-      <button id="stopFetchBtn" onclick="stopFetch()" title="Cancelar pergunta" style="display:none;width:42px;height:42px;flex-shrink:0;background:#1a0000;border:1px solid rgba(204,0,0,.6);border-radius:8px;cursor:pointer;font-size:18px;align-items:center;justify-content:center;">✖</button>
+      <button id="stopFetchBtn" onclick="stopFetch()" title="Cancelar pergunta" style="display:none;width:42px;height:42px;flex-shrink:0;background:#1a0000;border:1px solid rgba(204,0,0,.6);border-radius:8px;cursor:pointer;font-size:16px;color:#ff4444;align-items:center;justify-content:center;line-height:1;">✖</button>
       <button id="micBtn" onclick="toggleMic()" disabled title="Falar">🎤</button>
       <button id="sendBtn" onclick="sendMessage()" disabled>
         <svg viewBox="0 0 24 24"><path d="M2 21L23 12 2 3v7l15 2-15 2v7z"/></svg>
@@ -958,6 +958,7 @@ async function sendMessage(){
   const stopBtn = document.getElementById('stopFetchBtn');
   if(stopBtn) stopBtn.style.display='flex';
   window._fetchController = new AbortController();
+  if(stopBtn){ stopBtn.style.display='flex'; stopBtn.style.alignItems='center'; stopBtn.style.justifyContent='center'; }
   try{
     const _modoAnalitico = document.body.classList.contains('modo-analitico');
     const r=await fetch(_modoAnalitico ? '/chat-analitico' : '/chat',{method:'POST',headers:{'Content-Type':'application/json'},
