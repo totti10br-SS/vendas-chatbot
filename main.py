@@ -80,7 +80,7 @@ _PRECO_SONNET_IN  = 3.00  / 1_000_000   # $3.00/MTok
 _PRECO_SONNET_OUT = 15.00 / 1_000_000   # $15.00/MTok
 _PRECO_TTS        = 0.15  / 1_000       # $0.15/1k chars
 
-def _registrar_uso(modelo: str, input_tok: int, output_tok: int, pergunta: str = "", modo: str = "rapido"):
+def _registrar_uso(modelo: str, input_tok: int, output_tok: int, pergunta: str = "", modo: str = "rapido", erro: bool = False):
     global _metricas
     _metricas["consultas"].append({
         "ts": datetime.now().strftime("%d/%m %H:%M"),
@@ -89,6 +89,7 @@ def _registrar_uso(modelo: str, input_tok: int, output_tok: int, pergunta: str =
         "output": output_tok,
         "pergunta": pergunta[:80],
         "modo": modo,
+        "erro": erro,
     })
     if len(_metricas["consultas"]) > 200:
         _metricas["consultas"] = _metricas["consultas"][-200:]
@@ -244,6 +245,7 @@ REGRAS:
   * data_inicio_b/data_fim_b = período B (mais antigo)
   * comparar_periodo_anterior=false
 - Para comparativo com período imediatamente anterior (ex: "vs mês passado"): comparar_periodo_anterior=true
+- "mesmo dia do mês passado", "até o dia X do mês passado", "até o mesmo dia do mês passado": calcule data_inicio=primeiro dia do mês passado, data_fim=dia X do mês passado (ou mesmo dia do mês atual mas no mês passado). Exemplo: hoje é 14/05 → "até o mesmo dia do mês passado" = data_inicio=01/04/2026, data_fim=14/04/2026
 - tipo_operacao="PRODUTOS" por padrão em TODAS as consultas. Somente use "SERVICOS" se o usuário mencionar explicitamente serviços/serviço. Use "TODOS" apenas se pedir ambos juntos.
 - Se usuário pedir "em PDF", "relatório PDF", "manda em PDF", "exportar PDF": formato="pdf"
 - "últimas vendas", "últimas notas", "histórico de compras": tipo="ultimas_vendas" → mostra itens de notas (data, NF, produto, kg, valor)
@@ -850,7 +852,7 @@ DADOS CALCULADOS (use SOMENTE estes):
         raise HTTPException(status_code=r.status_code, detail=r.text)
     rj = r.json()
     usage = rj.get("usage", {})
-    _registrar_uso("haiku", usage.get("input_tokens",0), usage.get("output_tokens",0))
+    _registrar_uso("haiku", usage.get("input_tokens",0), usage.get("output_tokens",0), pergunta, "rapido")
     return rj["content"][0]["text"]
 
 # ─────────────────────────────────────────────
@@ -2013,6 +2015,8 @@ CONTEXTO ANALÍTICO COMPLETO (evolução YoY, clientes, mix, preços):
     else:
         logging.warning(f"[ANALITICO] resposta vazia: {str(data)[:300]}")
         resposta = "❌ Erro na análise — o modelo não retornou resposta. Tente reformular a pergunta."
+        _registrar_uso("sonnet", usage.get("input_tokens",0), usage.get("output_tokens",0), ultima, "analitico", erro=True)
+        return JSONResponse({"content": [{"type": "text", "text": resposta}]})
     return JSONResponse({"content": [{"type": "text", "text": resposta}]})
 
 
@@ -2194,7 +2198,7 @@ tr:hover td{background:rgba(255,255,255,.02);}
     <div class="card">
       <div class="card-title">Últimas Consultas</div>
       <div style="overflow-x:auto"><table id="tblConsultas">
-        <thead><tr><th>Hora</th><th>Modo</th><th>Modelo</th><th>Input tok</th><th>Output tok</th><th>Pergunta</th></tr></thead>
+        <thead><tr><th>Hora</th><th>Modo</th><th>Modelo</th><th>Input tok</th><th>Output tok</th><th>Status</th><th>Pergunta</th></tr></thead>
         <tbody></tbody>
       </table></div>
     </div>
@@ -2287,12 +2291,16 @@ async function carregarDados(){
     const modoBadge = c.modo === 'analitico' ? 
       '<span class="badge badge-sonnet">ANALÍTICO</span>' : 
       '<span class="badge" style="background:rgba(204,0,0,.15);color:#ff6666">RÁPIDO</span>';
+    const statusBadge = c.erro ? 
+      '<span style="color:#ff4444;font-size:11px;">❌ erro</span>' : 
+      '<span style="color:#22c55e;font-size:11px;">✓ ok</span>';
     tbody.innerHTML += `<tr>
       <td>${c.ts}</td>
       <td>${modoBadge}</td>
       <td>${badge}</td>
       <td style="text-align:right">${c.input.toLocaleString()}</td>
       <td style="text-align:right">${c.output.toLocaleString()}</td>
+      <td style="text-align:center">${statusBadge}</td>
       <td style="color:#888;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.pergunta||'—'}</td>
     </tr>`;
   });
