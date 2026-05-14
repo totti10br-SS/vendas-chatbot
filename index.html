@@ -99,9 +99,9 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;ba
 .bubble strong{color:var(--yellow);font-weight:700;}
 .bubble p{margin-bottom:8px;color:var(--text);}.bubble p:last-child{margin-bottom:0;}
 .bubble ul{margin:6px 0 6px 17px;}.bubble li{margin-bottom:4px;color:#fff;}
-.bubble table{width:100%;border-collapse:collapse;margin:10px 0;font-size:13px;display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%;}
-.bubble th{background:rgba(204,0,0,.3);padding:4px 6px;text-align:left;font-family:'Barlow Condensed',sans-serif;font-weight:700;color:var(--yellow);font-size:14px;text-transform:uppercase;border:1px solid rgba(204,0,0,.4);}
-.bubble td{padding:4px 6px;border:1px solid rgba(255,255,255,.1);color:#fff;}
+.bubble .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:10px 0;border-radius:6px;}.bubble table{width:max-content;min-width:100%;border-collapse:collapse;font-size:13px;display:table;}
+.bubble th{background:rgba(204,0,0,.3);padding:6px 10px;text-align:left;font-family:'Barlow Condensed',sans-serif;font-weight:700;color:var(--yellow);font-size:13px;text-transform:uppercase;border:1px solid rgba(204,0,0,.4);white-space:nowrap;}
+.bubble td{padding:6px 10px;border:1px solid rgba(255,255,255,.1);color:#fff;white-space:nowrap;}
 .bubble td:not(:first-child):not(:nth-child(2)){text-align:right;}
 .bubble tr:nth-child(even) td{background:rgba(255,255,255,.03);}
 .btn-danfe{display:inline-flex;align-items:center;gap:6px;background:#5a5a5a;border:1px solid #888;border-bottom:3px solid #2a2a2a;color:#f0f0f0;font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px;padding:6px 16px 5px;border-radius:5px;cursor:pointer;text-decoration:none;margin-top:10px;transition:all .1s;box-shadow:0 2px 4px rgba(0,0,0,.4);}
@@ -1136,6 +1136,15 @@ function addMessage(role,content){
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
     bubble.innerHTML = rendered;
+    // Envolver tabelas em wrapper com scroll lateral
+    bubble.querySelectorAll('table').forEach(function(t){
+      if(!t.parentElement.classList.contains('table-scroll')){
+        var wrap = document.createElement('div');
+        wrap.className = 'table-scroll';
+        t.parentNode.insertBefore(wrap, t);
+        wrap.appendChild(t);
+      }
+    });
     const speakBtn = document.createElement('div');
     speakBtn.className = 'speak-btn';
     speakBtn.title = 'Ouvir resposta';
