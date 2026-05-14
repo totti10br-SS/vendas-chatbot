@@ -850,7 +850,7 @@ DADOS CALCULADOS (use SOMENTE estes):
         raise HTTPException(status_code=r.status_code, detail=r.text)
     rj = r.json()
     usage = rj.get("usage", {})
-    _registrar_uso("haiku", usage.get("input_tokens",0), usage.get("output_tokens",0))
+    _registrar_uso("haiku", usage.get("input_tokens",0), usage.get("output_tokens",0), pergunta, "rapido")
     return rj["content"][0]["text"]
 
 # ─────────────────────────────────────────────
