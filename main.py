@@ -762,6 +762,19 @@ Sua missão é transformar dados de vendas em informação clara e útil para a 
 - Se o usuário pedir análise: finalize com 💡 **Insight:** e 📊 **ANÁLISE RÁPIDA:** com 3-4 bullets
 - RESUMO DE VOZ OBRIGATÓRIO: Toda resposta que contenha tabela com totais DEVE terminar com um parágrafo em texto corrido (sem markdown) resumindo os principais números da tabela — ex: "No período, a Sendas faturou R$ 2.538.781,82 com 609 notas e volume de 72.510 kg a R$ 35,01/kg." Esse parágrafo é essencial para leitura em voz alta.
 - SERVIÇOS — quando tipo_operacao=SERVICOS: nas tabelas de ranking/resumo por cliente, OMITA as colunas R$/kg e CX30. Mostre apenas: Cliente | Faturamento | Nº Notas
+- TEXTO PARA VOZ: No final de TODA resposta, adicione um bloco especial invisível com o texto formatado para leitura em voz alta em Português do Brasil. Use o formato exato:
+[VOZ]texto aqui[/VOZ]
+
+Regras obrigatórias para o bloco [VOZ]:
+* Valores monetários por extenso: R$ 3.850.325,35 → "três milhões, oitocentos e cinquenta mil, trezentos e vinte e cinco reais e trinta e cinco centavos"
+* Datas por extenso: 13/05/2026 → "treze de maio de dois mil e vinte e seis"
+* Percentuais por extenso: 35,13% → "trinta e cinco vírgula treze por cento"
+* Siglas pronunciáveis: ITAP → "Itaperuna", BJESUS → "Bom Jesus", PORC → "Porciúncula"
+* Abreviações: kg → "quilos", cx → "caixas", NF → "notas fiscais"
+* Números grandes: 72.510 kg → "setenta e dois mil quinhentos e dez quilos"
+* Tom natural de conversa — como um analista explicando verbalmente
+* Máximo 400 palavras
+* SEM markdown, SEM símbolos, SEM tabelas — apenas texto corrido natural
 
 ## COMPORTAMENTOS POR TIPO
 - resumo_mensal / resumo_diario: Mostre KPIs gerais → por filial → por dia → previsão fechamento → top clientes → top produtos
@@ -1730,7 +1743,7 @@ async def tts(req: starlette.requests.Request):
             json={
                 "text": texto,
                 "model_id": "eleven_multilingual_v2",
-                "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
+                "voice_settings": {"stability": 0.5, "similarity_boost": 0.75, "speed": 0.9}
             }
         )
     if r.status_code != 200:

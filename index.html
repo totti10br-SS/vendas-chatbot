@@ -1171,6 +1171,8 @@ function addMessage(role,content){
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
     bubble.innerHTML = rendered;
+    // Ocultar bloco [VOZ] do visual
+    bubble.innerHTML = bubble.innerHTML.replace(/\[VOZ\][\s\S]*?\[\/VOZ\]/g, '');
     // Envolver tabelas em wrapper com scroll lateral
     bubble.querySelectorAll('table').forEach(function(t){
       if(!t.parentElement.classList.contains('table-scroll')){
@@ -1465,7 +1467,75 @@ function renderVoiceList(){
 }
 
 // Limpa texto para leitura — remove tabelas, títulos, markdown
+// Converte números/datas/valores para texto falado (fallback quando não tem bloco [VOZ])
+function _numParaExtenso(n){
+  var unidades=['','um','dois','três','quatro','cinco','seis','sete','oito','nove',
+    'dez','onze','doze','treze','quatorze','quinze','dezesseis','dezessete','dezoito','dezenove'];
+  var dezenas=['','','vinte','trinta','quarenta','cinquenta','sessenta','setenta','oitenta','noventa'];
+  var centenas=['','cem','duzentos','trezentos','quatrocentos','quinhentos','seiscentos','setecentos','oitocentos','novecentos'];
+  if(n===0) return 'zero';
+  if(n<0) return 'menos '+_numParaExtenso(-n);
+  var r='';
+  if(n>=1000000){var m=Math.floor(n/1000000);r+=(m===1?'um milhão':_numParaExtenso(m)+' milhões');n%=1000000;if(n>0)r+=' e ';}
+  if(n>=1000){var k=Math.floor(n/1000);r+=(k===1?'mil':_numParaExtenso(k)+' mil');n%=1000;if(n>0)r+=(n<100?' e ':' ');}
+  if(n>=100){r+=centenas[Math.floor(n/100)];n%=100;if(n>0)r+=' e ';}
+  if(n>=20){r+=dezenas[Math.floor(n/10)];n%=10;if(n>0)r+=' e ';}
+  if(n>0)r+=unidades[n];
+  return r.trim();
+}
+
+function _valorParaVoz(v){
+  // v é número float representando reais
+  var reais=Math.floor(v);
+  var centavos=Math.round((v-reais)*100);
+  var r=_numParaExtenso(reais)+' '+(reais===1?'real':'reais');
+  if(centavos>0) r+=' e '+_numParaExtenso(centavos)+' '+(centavos===1?'centavo':'centavos');
+  return r;
+}
+
+function _dataParaVoz(d){
+  var meses=['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+  var m=d.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if(!m) return d;
+  return _numParaExtenso(parseInt(m[1]))+' de '+meses[parseInt(m[2])-1]+' de '+_numParaExtenso(parseInt(m[3]));
+}
+
+function _percentualParaVoz(p){
+  var m=p.match(/^([\d]+)[,.]([\d]+)%$/);
+  if(m) return _numParaExtenso(parseInt(m[1]))+' vírgula '+_numParaExtenso(parseInt(m[2]))+' por cento';
+  m=p.match(/^([\d]+)%$/);
+  if(m) return _numParaExtenso(parseInt(m[1]))+' por cento';
+  return p;
+}
+
+function _converterParaVoz(texto){
+  // Substituições de siglas
+  texto = texto.replace(/\bITAP\b/g,'Itaperuna')
+               .replace(/\bBJESUS\b/g,'Bom Jesus')
+               .replace(/\bPORC\b/g,'Porciúncula')
+               .replace(/\bNF\b/gi,'notas fiscais')
+               .replace(/\bCX30\b/gi,'caixas de trinta quilos')
+               .replace(/\bcx\b/gi,'caixas')
+               .replace(/\bkg\b/gi,'quilos')
+               .replace(/\bR\$\s*([\d.,]+)/g, function(m,v){
+                 try{ return _valorParaVoz(parseFloat(v.replace(/\./g,'').replace(',','.'))); }
+                 catch(e){ return m; }
+               })
+               .replace(/(\d{1,2})[\/](\d{1,2})[\/](\d{4})/g, function(m){ return _dataParaVoz(m); })
+               .replace(/([\d]+[,.]?[\d]*)%/g, function(m){ return _percentualParaVoz(m); })
+               .replace(/([\d]{1,3}(?:\.\d{3})+)/g, function(m){ 
+                 return _numParaExtenso(parseInt(m.replace(/\./g,''))); 
+               });
+  return texto;
+}
+
 function limparTextoParaVoz(raw){
+  // 1. Prioridade: bloco [VOZ]...[/VOZ] gerado pelo LLM
+  var vozMatch = raw.match(/\[VOZ\]([\s\S]*?)\[\/VOZ\]/);
+  if(vozMatch && vozMatch[1].trim().length > 20){
+    return vozMatch[1].trim().substring(0, 1500);
+  }
+  // 2. Fallback: extrair texto limpo e converter para voz
   var lines = raw.split('\n');
   var clean = [];
   for(var i=0;i<lines.length;i++){
@@ -1473,6 +1543,7 @@ function limparTextoParaVoz(raw){
     if(l.indexOf('|') >= 0) continue;
     if(/^[-|\s]+$/.test(l)) continue;
     if(l.indexOf('```') >= 0) continue;
+    if(/^\[VOZ\]/.test(l)) continue;
     l = l.replace(/^#+\s*/,'')
          .replace(/\*\*([^*]+)\*\*/g,'$1')
          .replace(/\*([^*]+)\*/g,'$1')
@@ -1482,7 +1553,8 @@ function limparTextoParaVoz(raw){
          .trim();
     if(l && l.length > 2) clean.push(l);
   }
-  return clean.join('. ').substring(0, 1200);
+  var textoBase = clean.join('. ').substring(0, 1200);
+  return _converterParaVoz(textoBase);
 }
 
 var _currentAudio = null;
