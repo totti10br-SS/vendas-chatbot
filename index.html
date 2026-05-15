@@ -1490,14 +1490,29 @@ function _numParaExtenso(n){
   var unidades=['','um','dois','três','quatro','cinco','seis','sete','oito','nove',
     'dez','onze','doze','treze','quatorze','quinze','dezesseis','dezessete','dezoito','dezenove'];
   var dezenas=['','','vinte','trinta','quarenta','cinquenta','sessenta','setenta','oitenta','noventa'];
-  var centenas=['','cem','duzentos','trezentos','quatrocentos','quinhentos','seiscentos','setecentos','oitocentos','novecentos'];
+  // centenas: 100 fica "cem" só quando é exato, senão "cento"
   if(n===0) return 'zero';
   if(n<0) return 'menos '+_numParaExtenso(-n);
   var r='';
-  if(n>=1000000){var m=Math.floor(n/1000000);r+=(m===1?'um milhão':_numParaExtenso(m)+' milhões');n%=1000000;if(n>0)r+=' e ';}
-  if(n>=1000){var k=Math.floor(n/1000);r+=(k===1?'mil':_numParaExtenso(k)+' mil');n%=1000;if(n>0)r+=(n<100?' e ':' ');}
-  if(n>=100){r+=centenas[Math.floor(n/100)];n%=100;if(n>0)r+=' e ';}
-  if(n>=20){r+=dezenas[Math.floor(n/10)];n%=10;if(n>0)r+=' e ';}
+  if(n>=1000000){
+    var m=Math.floor(n/1000000);
+    r+=(m===1?'um milhão':_numParaExtenso(m)+' milhões');
+    n%=1000000;
+    if(n>0) r+=(n<100?' e ':' ');
+  }
+  if(n>=1000){
+    var k=Math.floor(n/1000);
+    r+=(k===1?'mil':_numParaExtenso(k)+' mil');
+    n%=1000;
+    if(n>0) r+=(n<100?' e ':' ');
+  }
+  if(n>=100){
+    var c=Math.floor(n/100);
+    n%=100;
+    r+=(n===0&&c===1?'cem':(c===1?'cento':['','','duzentos','trezentos','quatrocentos','quinhentos','seiscentos','setecentos','oitocentos','novecentos'][c]));
+    if(n>0) r+=' e ';
+  }
+  if(n>=20){var d=Math.floor(n/10);n%=10;r+=dezenas[d];if(n>0)r+=' e ';}
   if(n>0)r+=unidades[n];
   return r.trim();
 }
@@ -1534,6 +1549,7 @@ function _converterParaVoz(texto){
                .replace(/\bNF\b/gi,'notas fiscais')
                .replace(/\bCX30\b/gi,'caixas de trinta quilos')
                .replace(/\bcx\b/gi,'caixas')
+               .replace(/\/kg\b/gi,' por quilo')
                .replace(/\bkg\b/gi,'quilos')
                .replace(/\bR\$\s*([\d.,]+)/g, function(m,v){
                  try{ return _valorParaVoz(parseFloat(v.replace(/\./g,'').replace(',','.'))); }
