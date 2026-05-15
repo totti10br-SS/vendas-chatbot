@@ -225,7 +225,6 @@ Retorne JSON com esta estrutura exata:
   "data_fim_b": "YYYY-MM-DD ou null",
   "formato": "normal|pdf",
   "tipo_operacao": "PRODUTOS|SERVICOS|TODOS",
-  "divisao": "nome parcial da divisão/corte (ex: DIANTEIRO, TRASEIRO, P.A., CHARQUE) ou null",
   "observacao": "qualquer detalhe extra relevante ou null"
 }}
 
@@ -248,7 +247,6 @@ REGRAS:
 - Para comparativo com período imediatamente anterior (ex: "vs mês passado"): comparar_periodo_anterior=true
 - "mesmo dia do mês passado", "até o dia X do mês passado", "até o mesmo dia do mês passado": calcule data_inicio=primeiro dia do mês passado, data_fim=dia X do mês passado (ou mesmo dia do mês atual mas no mês passado). Exemplo: hoje é 14/05 → "até o mesmo dia do mês passado" = data_inicio=01/04/2026, data_fim=14/04/2026
 - tipo_operacao="PRODUTOS" por padrão em TODAS as consultas. Somente use "SERVICOS" se o usuário mencionar explicitamente serviços/serviço. Use "TODOS" apenas se pedir ambos juntos.
-- Se o usuário mencionar um tipo de corte/produto específico (ex: "dianteiro", "traseiro", "ponta de agulha", "charque", "resfriada", "P.A."): preencha divisao com o termo em maiúsculas (ex: "DIANTEIRO", "TRASEIRO", "P.A.", "CHARQUE"). Para todos os tipos de consulta incluindo comparativo.
 - Se usuário pedir "em PDF", "relatório PDF", "manda em PDF", "exportar PDF": formato="pdf"
 - "últimas vendas", "últimas notas", "histórico de compras": tipo="ultimas_vendas" → mostra itens de notas (data, NF, produto, kg, valor)
 - "últimos preços", "preço atual", "quanto paga", "tabela de preços": tipo="ultimos_precos" → mostra preço mais recente por produto; se período não especificado: precisa_periodo=false (o sistema assume 90 dias automaticamente)
@@ -337,11 +335,6 @@ def _aplicar_filtros(df: pd.DataFrame, filtro: dict) -> pd.DataFrame:
     # Nota fiscal
     if filtro.get("nr_nota") and 'NUM_DOCTO' in dff.columns:
         dff = dff[dff['NUM_DOCTO'].astype(str).str.strip() == str(filtro["nr_nota"]).strip()]
-
-    # Filtro por divisão/corte (DESC_DIVISAO2)
-    if filtro.get("divisao") and 'DESC_DIVISAO2' in dff.columns:
-        div_busca = filtro["divisao"].upper().strip()
-        dff = dff[dff['DESC_DIVISAO2'].str.upper().str.contains(div_busca, na=False)]
 
     # Tipo de operação — padrão PRODUTOS, override apenas se solicitado
     if 'TIPO_OPERACAO' in dff.columns:
