@@ -50,8 +50,8 @@ from reportlab.lib.enums import TA_RIGHT, TA_CENTER
 app = FastAPI()
 app.add_middleware(CORSMiddleware,
     allow_origins=["https://web-production-91aff.up.railway.app"],
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"])
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type", "X-Admin-Token"])
 
 FILE_ID       = os.environ.get("DRIVE_FILE_ID", "")
 CLAUDE_KEY    = os.environ.get("CLAUDE_API_KEY", "")
@@ -2359,7 +2359,7 @@ async function carregarContatos(){
       '<td style="font-weight:600">' + c.nome + '</td>' +
       '<td style="font-family:monospace;color:#38bdf8">' + c.numero + '</td>' +
       '<td>' + filialBadge + '</td>' +
-      '<td><button class="btn-sm btn-danger" onclick="deletarContato(\'' + c.numero + '\')">REMOVER</button></td>' +
+      '<td><button class="btn-sm btn-danger" data-num="' + c.numero + '" onclick="deletarContato(this.dataset.num)">REMOVER</button></td>' +
     '</tr>';
   });
 }
