@@ -80,6 +80,28 @@ def _save_contatos(lista: list):
     with open(CONTATOS_FILE, "w", encoding="utf-8") as f:
         json.dump(lista, f, ensure_ascii=False, indent=2)
 
+# ── Sequencial de PDFs ──
+_SEQ_FILE = os.environ.get("PDF_SEQ_FILE", "/data/iaf_pdf_seq.json")
+
+def _proximo_seq_pdf() -> str:
+    """Retorna nome sequencial IAF_DDMMAA_XX.pdf e incrementa contador."""
+    hoje = datetime.now()
+    chave = hoje.strftime("%d%m%y")
+    try:
+        with open(_SEQ_FILE, "r") as f:
+            dados = json.load(f)
+    except Exception:
+        dados = {}
+    seq = dados.get(chave, 0) + 1
+    dados[chave] = seq
+    try:
+        os.makedirs(os.path.dirname(_SEQ_FILE), exist_ok=True)
+        with open(_SEQ_FILE, "w") as f:
+            json.dump(dados, f)
+    except Exception:
+        pass
+    return f"IAF_{chave}_{seq:02d}.pdf"
+
 # ── Métricas de uso ──
 import collections
 _metricas = {
@@ -245,6 +267,7 @@ Retorne JSON com esta estrutura exata:
   "data_fim_b": "YYYY-MM-DD ou null",
   "formato": "normal|pdf",
   "tipo_operacao": "PRODUTOS|SERVICOS|TODOS",
+  "busca_produto": "termo parcial do produto ou null",
   "observacao": "qualquer detalhe extra relevante ou null"
 }}
 
@@ -269,7 +292,8 @@ REGRAS:
 - tipo_operacao="PRODUTOS" por padrão em TODAS as consultas. Somente use "SERVICOS" se o usuário mencionar explicitamente serviços/serviço. Use "TODOS" apenas se pedir ambos juntos.
 - Se usuário pedir "em PDF", "relatório PDF", "manda em PDF", "exportar PDF": formato="pdf"
 - "últimas vendas", "últimas notas", "histórico de compras": tipo="ultimas_vendas" → mostra itens de notas (data, NF, produto, kg, valor)
-- "últimos preços", "preço atual", "quanto paga", "tabela de preços": tipo="ultimos_precos" → mostra preço mais recente por produto; se período não especificado: precisa_periodo=false (o sistema assume 90 dias automaticamente)
+- "últimos preços", "preço atual", "quanto paga", "tabela de preços": tipo="ultimos_precos"
+- Se mencionar produto específico (ex: "file mignon", "cupim", "peito"): preencha busca_produto com o termo → mostra preço mais recente por produto; se período não especificado: precisa_periodo=false (o sistema assume 90 dias automaticamente)
 - NUNCA invente dados, apenas interprete a pergunta"""
 
     async with httpx.AsyncClient(timeout=30) as client:
@@ -348,6 +372,16 @@ def _aplicar_filtros(df: pd.DataFrame, filtro: dict) -> pd.DataFrame:
         nome_v = filtro["vendedor"]
         for tam in [20, 10, 5]:
             mask = dff['NOM_VENDEDOR'].str.lower().str.contains(nome_v.lower()[:tam], na=False)
+            if mask.sum() > 0:
+                dff = dff[mask]
+                break
+
+    # Produto (busca parcial no nome)
+    if filtro.get("busca_produto") and 'DESC_PRODUTO' in dff.columns:
+        bp = filtro["busca_produto"]
+        for tam in [len(bp), 10, 5]:
+            tam = min(tam, len(bp))
+            mask = dff['DESC_PRODUTO'].str.lower().str.contains(bp.lower()[:tam], na=False)
             if mask.sum() > 0:
                 dff = dff[mask]
                 break
@@ -1640,14 +1674,31 @@ async def chat(req: ChatRequest):
 
         if tipo_detectado:
             filtro["tipo"] = tipo_detectado
+            palavras_cmd = ["pdf","preço","preco","venda","ranking","último","ultim","relatorio","relatório","quanto","tabela","histórico","historico","notas","manda","gera","exporta","em pdf","analítico","analitico"]
             # Herdar cliente se não veio
             if not filtro.get("cliente") and not filtro.get("cnpj_raiz"):
-                palavras_cmd = ["pdf","preço","preco","venda","ranking","último","ultim","relatorio","relatório","quanto","tabela","histórico","historico","notas","manda","gera","exporta"]
                 for msg in reversed(historico[:-1]):
                     if msg.get("role") == "user":
                         txt = msg.get("content", "").strip()
                         if txt and len(txt) < 60 and not any(p in txt.lower() for p in palavras_cmd):
                             filtro["cliente"] = txt
+                            break
+            # Herdar busca_produto da última pergunta do usuário
+            if not filtro.get("busca_produto"):
+                for msg in reversed(historico[:-1]):
+                    if msg.get("role") == "user":
+                        txt = msg.get("content", "").strip()
+                        if txt and not any(p in txt.lower() for p in palavras_cmd):
+                            # Extrair busca_produto do filtro interpretado anteriormente
+                            # via observacao da última msg do assistente
+                            break
+                # Tentar extrair do histórico recente: última pergunta que não é comando
+                for msg in reversed(historico[:-1]):
+                    if msg.get("role") == "user":
+                        txt = msg.get("content", "").strip().lower()
+                        if txt and not any(p in txt for p in palavras_cmd) and len(txt) < 80:
+                            # Se a pergunta anterior tinha palavra de produto, herda
+                            filtro["busca_produto"] = msg.get("content","").strip()
                             break
             # Se ultimos_precos, garantir 90 dias (o bloco anterior não roda de novo)
             if tipo_detectado == "ultimos_precos":
@@ -1660,18 +1711,7 @@ async def chat(req: ChatRequest):
     if filtro.get("formato") == "pdf":
         try:
             pdf_bytes = gerar_relatorio_pdf(df, filtro, resultado)
-            # Nome amigável: IAF_Abril2026_CAMARA.pdf
-            try:
-                d1_dt = datetime.strptime(filtro.get("data_inicio",""), "%Y-%m-%d")
-                meses_pt = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"]
-                mes_label = meses_pt[d1_dt.month-1] + str(d1_dt.year)
-            except:
-                mes_label = (filtro.get("data_inicio") or datetime.now().strftime("%Y-%m")).replace("-","")
-            cli_label = ""
-            if filtro.get("cliente"):
-                cli_label = "_" + re.sub(r'[^A-Za-z0-9]','',filtro["cliente"])[:15].upper()
-            fil_label = ("_" + filtro["filial"]) if filtro.get("filial") else ""
-            filename = f"IAF_{mes_label}{fil_label}{cli_label}.pdf"
+            filename = _proximo_seq_pdf()
             logging.info(f"[PDF] Gerando: {filename}")
             import base64 as _b64
             pdf_b64 = _b64.b64encode(pdf_bytes).decode()
