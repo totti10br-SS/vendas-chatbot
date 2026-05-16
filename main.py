@@ -60,6 +60,26 @@ MEUDANFE_KEY  = "0c1588f4-f90e-4711-8b39-87be9a1581da"
 ADMIN_USER     = os.environ.get("ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 
+# ── Evolution API (WhatsApp) ──
+EVOLUTION_URL      = os.environ.get("EVOLUTION_URL", "").rstrip("/")
+EVOLUTION_APIKEY   = os.environ.get("EVOLUTION_APIKEY", "")
+EVOLUTION_INSTANCE = os.environ.get("EVOLUTION_INSTANCE", "")
+
+# ── Contatos WhatsApp ── (persistido em JSON local)
+CONTATOS_FILE = os.environ.get("CONTATOS_FILE", "/data/iaf_contatos.json")
+
+def _load_contatos() -> list:
+    try:
+        with open(CONTATOS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+def _save_contatos(lista: list):
+    os.makedirs(os.path.dirname(CONTATOS_FILE), exist_ok=True)
+    with open(CONTATOS_FILE, "w", encoding="utf-8") as f:
+        json.dump(lista, f, ensure_ascii=False, indent=2)
+
 # ── Métricas de uso ──
 import collections
 _metricas = {
@@ -1472,6 +1492,27 @@ async def chat(req: ChatRequest):
     ultima = next((m.content for m in reversed(req.messages) if m.role == "user"), "")
     historico = [{"role": m.role, "content": m.content} for m in req.messages]
 
+    # ── Envio WhatsApp ──
+    _wa_triggers = ["manda no meu whatsapp","manda no whatsapp","envia no whatsapp",
+                    "enviar no whatsapp","manda pelo whatsapp","envia pelo whatsapp",
+                    "manda pro meu zap","manda no zap","envia no zap"]
+    _ultima_lower = ultima.lower()
+    if any(t in _ultima_lower for t in _wa_triggers):
+        # busca a última resposta do assistente
+        ultima_resp = next((m.content for m in reversed(req.messages) if m.role == "assistant"), "")
+        if not ultima_resp:
+            return JSONResponse({"content": [{"type": "text", "text": "Ainda não há uma resposta para enviar. Faça uma consulta primeiro!"}]})
+        # tenta extrair nome após "para" / "pro" / "pra"
+        nome_match = re.search(r"(?:para|pro|pra)\s+([A-Za-zÀ-ú ]{2,30}?)(?:\s*$|,|\?|!)", ultima, re.IGNORECASE)
+        nome_busca = nome_match.group(1).strip() if nome_match else ""
+        if not nome_busca:
+            return JSONResponse({"content": [{"type": "text", "text": "Para quem devo enviar? Me diga o nome cadastrado. Ex: *manda no WhatsApp para João*"}]})
+        resultado = await whatsapp_send_interno(nome_busca, ultima_resp)
+        if resultado["ok"]:
+            return JSONResponse({"content": [{"type": "text", "text": f"Enviado para **{resultado['nome']}** ({resultado['numero']}) via WhatsApp!"}]})
+        else:
+            return JSONResponse({"content": [{"type": "text", "text": f"Não consegui enviar: {resultado['erro']}"}]})
+
     # ── Saudação / Quem sou eu ──
     if ultima.startswith('__QUEM_SOU_EU__') or any(x in ultima.lower() for x in ['quem é você','quem e voce','o que você faz','o que voce faz']):
         try:
@@ -2163,6 +2204,20 @@ tr:hover td{background:rgba(255,255,255,.02);}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
 @media(max-width:700px){.grid2{grid-template-columns:1fr;}.kpis{grid-template-columns:repeat(2,1fr);}}
 .uptime{color:#22c55e;font-size:11px;}
+.tabs{display:flex;gap:2px;margin-bottom:16px;border-bottom:2px solid rgba(204,0,0,.3);}
+.tab{padding:8px 18px;cursor:pointer;font-size:12px;font-weight:700;letter-spacing:.5px;color:#666;border-radius:6px 6px 0 0;background:none;border:none;border-bottom:2px solid transparent;margin-bottom:-2px;}
+.tab.active{color:#F5C800;border-bottom-color:#CC0000;background:rgba(204,0,0,.08);}
+.tab-content{display:none;} .tab-content.active{display:block;}
+.btn-sm{padding:5px 12px;border-radius:5px;border:none;cursor:pointer;font-size:11px;font-weight:700;letter-spacing:.5px;}
+.btn-danger{background:rgba(204,0,0,.2);color:#ff6666;border:1px solid rgba(204,0,0,.3);}
+.btn-danger:hover{background:rgba(204,0,0,.4);}
+.btn-primary{background:#CC0000;color:#fff;border:none;}
+.btn-primary:hover{background:#990000;}
+.form-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:flex-end;}
+.form-row input,.form-row select{background:#1a1a1a;border:1px solid #333;border-radius:6px;padding:8px 12px;color:#e8e8e8;font-size:13px;outline:none;flex:1;min-width:120px;}
+.form-row input:focus,.form-row select:focus{border-color:#CC0000;}
+.msg-ok{color:#22c55e;font-size:12px;margin-top:6px;}
+.msg-err{color:#ff4444;font-size:12px;margin-top:6px;}
 </style>
 </head>
 <body>
@@ -2186,6 +2241,12 @@ tr:hover td{background:rgba(255,255,255,.02);}
     </div>
   </div>
   <div class="main">
+    <div class="tabs">
+      <button class="tab active" onclick="mudarAba('sistema')">📊 Sistema</button>
+      <button class="tab" onclick="mudarAba('contatos')">📱 Contatos WhatsApp</button>
+    </div>
+
+    <div class="tab-content active" id="aba-sistema">
     <div class="kpis" id="kpis"></div>
     <div class="grid2">
       <div class="card">
@@ -2204,6 +2265,36 @@ tr:hover td{background:rgba(255,255,255,.02);}
         <tbody></tbody>
       </table></div>
     </div>
+    </div><!-- /aba-sistema -->
+
+    <div class="tab-content" id="aba-contatos">
+      <div class="card">
+        <div class="card-title">Cadastrar Contato</div>
+        <div class="form-row">
+          <input type="text" id="c-nome" placeholder="Nome completo">
+          <input type="text" id="c-numero" placeholder="Numero (ex: 22999990000)">
+          <select id="c-filial">
+            <option value="">Filial (opcional)</option>
+            <option value="ITAP">ITAP - Itaperuna</option>
+            <option value="BJESUS">BJESUS - Bom Jesus</option>
+            <option value="PORC">PORC - Porciuncula</option>
+          </select>
+          <button class="btn-sm btn-primary" onclick="salvarContato()">SALVAR</button>
+        </div>
+        <div id="msg-contato"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Contatos Cadastrados</div>
+        <div style="overflow-x:auto">
+          <table id="tblContatos">
+            <thead><tr><th>Nome</th><th>Numero</th><th>Filial</th><th>Acao</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div id="msg-del"></div>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -2241,6 +2332,74 @@ function mostrarPainel(){
 
 function fmt(v){ return 'R$ ' + (v*5.0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function fmtUSD(v){ return '$' + v.toFixed(4); }
+
+function mudarAba(aba) {
+  document.querySelectorAll('.tab').forEach(function(t){ t.classList.remove('active'); });
+  document.querySelectorAll('.tab-content').forEach(function(t){ t.classList.remove('active'); });
+  document.getElementById('aba-' + aba).classList.add('active');
+  var tabs = document.querySelectorAll('.tab');
+  var nomes = ['sistema','contatos'];
+  tabs[nomes.indexOf(aba)].classList.add('active');
+  if(aba === 'contatos') carregarContatos();
+}
+
+async function carregarContatos(){
+  var r = await fetch('/admin/contatos', {headers:{'X-Admin-Token': _token}});
+  if(r.status===401){ logout(); return; }
+  var lista = await r.json();
+  var tbody = document.querySelector('#tblContatos tbody');
+  tbody.innerHTML = '';
+  if(!lista.length){
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#555;padding:16px">Nenhum contato cadastrado</td></tr>';
+    return;
+  }
+  lista.forEach(function(c){
+    var filialBadge = c.filial ? '<span class="badge" style="background:rgba(245,200,0,.15);color:#F5C800">'+c.filial+'</span>' : '<span style="color:#555">—</span>';
+    tbody.innerHTML += '<tr>' +
+      '<td style="font-weight:600">' + c.nome + '</td>' +
+      '<td style="font-family:monospace;color:#38bdf8">' + c.numero + '</td>' +
+      '<td>' + filialBadge + '</td>' +
+      '<td><button class="btn-sm btn-danger" onclick="deletarContato(\'' + c.numero + '\')">REMOVER</button></td>' +
+    '</tr>';
+  });
+}
+
+async function salvarContato(){
+  var nome   = document.getElementById('c-nome').value.trim();
+  var numero = document.getElementById('c-numero').value.trim();
+  var filial = document.getElementById('c-filial').value;
+  var msg    = document.getElementById('msg-contato');
+  if(!nome || !numero){ msg.className='msg-err'; msg.textContent='Preencha nome e numero.'; return; }
+  var r = await fetch('/admin/contatos', {
+    method:'POST',
+    headers:{'Content-Type':'application/json','X-Admin-Token':_token},
+    body: JSON.stringify({nome:nome, numero:numero, filial:filial})
+  });
+  var d = await r.json();
+  if(d.ok){
+    msg.className='msg-ok';
+    msg.textContent = d.updated ? 'Contato atualizado com sucesso.' : 'Contato adicionado com sucesso.';
+    document.getElementById('c-nome').value='';
+    document.getElementById('c-numero').value='';
+    document.getElementById('c-filial').value='';
+    carregarContatos();
+  } else {
+    msg.className='msg-err'; msg.textContent='Erro ao salvar.';
+  }
+  setTimeout(function(){ msg.textContent=''; }, 4000);
+}
+
+async function deletarContato(numero){
+  if(!confirm('Remover contato ' + numero + '?')) return;
+  var r = await fetch('/admin/contatos/' + numero, {
+    method:'DELETE',
+    headers:{'X-Admin-Token':_token}
+  });
+  var msg = document.getElementById('msg-del');
+  if(r.ok){ msg.className='msg-ok'; msg.textContent='Contato removido.'; carregarContatos(); }
+  else { msg.className='msg-err'; msg.textContent='Erro ao remover.'; }
+  setTimeout(function(){ msg.textContent=''; }, 3000);
+}
 
 async function carregarDados(){
   const r = await fetch('/admin/data', {headers:{'X-Admin-Token': _token}});
@@ -2339,6 +2498,114 @@ async def admin_data(request: starlette.requests.Request):
         "registros_csv": reg_csv,
         "sessao_inicio": _metricas["sessao_inicio"],
     })
+
+# ─────────────────────────────────────────────
+#  CONTATOS WHATSAPP — CRUD
+# ─────────────────────────────────────────────
+
+@app.get("/admin/contatos")
+async def get_contatos(request: starlette.requests.Request):
+    token = request.headers.get("X-Admin-Token", "")
+    if not token or not ADMIN_PASSWORD:
+        raise HTTPException(status_code=401)
+    return JSONResponse(_load_contatos())
+
+
+@app.post("/admin/contatos")
+async def add_contato(request: starlette.requests.Request):
+    token = request.headers.get("X-Admin-Token", "")
+    if not token or not ADMIN_PASSWORD:
+        raise HTTPException(status_code=401)
+    body = await request.json()
+    nome   = (body.get("nome") or "").strip()
+    numero = re.sub(r"\D", "", body.get("numero") or "")
+    filial = (body.get("filial") or "").strip().upper()
+    if not nome or not numero:
+        raise HTTPException(status_code=400, detail="nome e numero obrigatórios")
+    # garante DDI 55
+    if not numero.startswith("55"):
+        numero = "55" + numero
+    lista = _load_contatos()
+    # atualiza se já existe pelo número
+    for c in lista:
+        if c["numero"] == numero:
+            c["nome"]   = nome
+            c["filial"] = filial
+            _save_contatos(lista)
+            return JSONResponse({"ok": True, "updated": True})
+    lista.append({"nome": nome, "numero": numero, "filial": filial, "ativo": True})
+    _save_contatos(lista)
+    return JSONResponse({"ok": True, "updated": False})
+
+
+@app.delete("/admin/contatos/{numero}")
+async def del_contato(numero: str, request: starlette.requests.Request):
+    token = request.headers.get("X-Admin-Token", "")
+    if not token or not ADMIN_PASSWORD:
+        raise HTTPException(status_code=401)
+    lista = _load_contatos()
+    nova  = [c for c in lista if c["numero"] != numero]
+    if len(nova) == len(lista):
+        raise HTTPException(status_code=404, detail="Contato não encontrado")
+    _save_contatos(nova)
+    return JSONResponse({"ok": True})
+
+
+# ─────────────────────────────────────────────
+#  ENVIO WHATSAPP
+# ─────────────────────────────────────────────
+
+async def whatsapp_send_interno(nome_busca: str, texto: str) -> dict:
+    lista = _load_contatos()
+    contato = next(
+        (c for c in lista if nome_busca.lower() in c["nome"].lower() and c.get("ativo", True)),
+        None
+    )
+    if not contato:
+        return {"ok": False, "erro": f"Contato '{nome_busca}' nao encontrado. Peca ao administrador para cadastra-lo."}
+    resultado = await _enviar_whatsapp(contato["numero"], texto)
+    if resultado["ok"]:
+        return {"ok": True, "nome": contato["nome"], "numero": contato["numero"]}
+    return {"ok": False, "erro": resultado["erro"]}
+
+
+async def _enviar_whatsapp(numero: str, mensagem: str) -> dict:
+    """Envia mensagem de texto via Evolution API."""
+    if not EVOLUTION_URL or not EVOLUTION_APIKEY or not EVOLUTION_INSTANCE:
+        return {"ok": False, "erro": "Evolution API não configurada"}
+    url = f"{EVOLUTION_URL}/message/sendText/{EVOLUTION_INSTANCE}"
+    payload = {"number": numero, "text": mensagem}
+    headers = {"apikey": EVOLUTION_APIKEY, "Content-Type": "application/json"}
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post(url, json=payload, headers=headers)
+        if r.status_code in (200, 201):
+            return {"ok": True}
+        return {"ok": False, "erro": f"HTTP {r.status_code}: {r.text[:200]}"}
+    except Exception as e:
+        return {"ok": False, "erro": str(e)}
+
+
+@app.post("/whatsapp-send")
+async def whatsapp_send(request: starlette.requests.Request):
+    """Envia última resposta do IAF para um contato cadastrado."""
+    body = await request.json()
+    nome_busca = (body.get("nome") or "").strip().lower()
+    texto      = (body.get("texto") or "").strip()
+    if not nome_busca or not texto:
+        raise HTTPException(status_code=400, detail="nome e texto obrigatórios")
+    lista = _load_contatos()
+    contato = next(
+        (c for c in lista if nome_busca in c["nome"].lower() and c.get("ativo", True)),
+        None
+    )
+    if not contato:
+        return JSONResponse({"ok": False, "erro": f"Contato '{nome_busca}' não encontrado. Peça ao administrador para cadastrá-lo."})
+    resultado = await _enviar_whatsapp(contato["numero"], texto)
+    if resultado["ok"]:
+        return JSONResponse({"ok": True, "nome": contato["nome"], "numero": contato["numero"]})
+    return JSONResponse({"ok": False, "erro": resultado["erro"]})
+
 
 @app.get("/health")
 def health():
