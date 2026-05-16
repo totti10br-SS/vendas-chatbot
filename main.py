@@ -1497,19 +1497,35 @@ async def chat(req: ChatRequest):
                     "enviar no whatsapp","manda pelo whatsapp","envia pelo whatsapp",
                     "manda pro meu zap","manda no zap","envia no zap"]
     _ultima_lower = ultima.lower()
+
+    # Verifica se assistente acabou de pedir o nome (resposta anterior foi pergunta de nome)
+    _msgs_ass = [m.content for m in req.messages if m.role == "assistant"]
+    _ultima_ass = _msgs_ass[-1] if _msgs_ass else ""
+    _pediu_nome = "para quem devo enviar" in _ultima_ass.lower() or "me diga o nome cadastrado" in _ultima_ass.lower()
+
+    if _pediu_nome and not any(t in _ultima_lower for t in _wa_triggers):
+        # usuario respondeu com o nome — buscar a resposta que estava antes da pergunta
+        _resps_ass = [m.content for m in req.messages if m.role == "assistant"]
+        ultima_resp = _resps_ass[-2] if len(_resps_ass) >= 2 else ""
+        nome_busca = ultima.strip()
+        if ultima_resp and nome_busca:
+            resultado = await whatsapp_send_interno(nome_busca, ultima_resp)
+            if resultado["ok"]:
+                return JSONResponse({"content": [{"type": "text", "text": f"Enviado para **{resultado['nome']}** ({resultado['numero']}) via WhatsApp! ✅"}]})
+            else:
+                return JSONResponse({"content": [{"type": "text", "text": f"Não consegui enviar: {resultado['erro']}"}]})
+
     if any(t in _ultima_lower for t in _wa_triggers):
-        # busca a última resposta do assistente
         ultima_resp = next((m.content for m in reversed(req.messages) if m.role == "assistant"), "")
         if not ultima_resp:
             return JSONResponse({"content": [{"type": "text", "text": "Ainda não há uma resposta para enviar. Faça uma consulta primeiro!"}]})
-        # tenta extrair nome após "para" / "pro" / "pra"
-        nome_match = re.search(r"(?:para|pro|pra)\s+([A-Za-zÀ-ú ]{2,30}?)(?:\s*$|,|\?|!)", ultima, re.IGNORECASE)
+        nome_match = re.search(r"(?:para|pro|pra)\s+([A-Za-z\u00C0-\u00FF ]{2,30}?)(?:\s*$|,|\?|!)", ultima, re.IGNORECASE)
         nome_busca = nome_match.group(1).strip() if nome_match else ""
         if not nome_busca:
             return JSONResponse({"content": [{"type": "text", "text": "Para quem devo enviar? Me diga o nome cadastrado. Ex: *manda no WhatsApp para João*"}]})
         resultado = await whatsapp_send_interno(nome_busca, ultima_resp)
         if resultado["ok"]:
-            return JSONResponse({"content": [{"type": "text", "text": f"Enviado para **{resultado['nome']}** ({resultado['numero']}) via WhatsApp!"}]})
+            return JSONResponse({"content": [{"type": "text", "text": f"Enviado para **{resultado['nome']}** ({resultado['numero']}) via WhatsApp! ✅"}]})
         else:
             return JSONResponse({"content": [{"type": "text", "text": f"Não consegui enviar: {resultado['erro']}"}]})
 
@@ -1901,6 +1917,41 @@ async def chat_analitico(req: ChatRequest):
 
     ultima = next((m.content for m in reversed(req.messages) if m.role == "user"), "")
     historico = [{"role": m.role, "content": m.content} for m in req.messages]
+
+    # ── Envio WhatsApp (modo analítico) ──
+    _wa_triggers = ["manda no meu whatsapp","manda no whatsapp","envia no whatsapp",
+                    "enviar no whatsapp","manda pelo whatsapp","envia pelo whatsapp",
+                    "manda pro meu zap","manda no zap","envia no zap"]
+    _ultima_lower = ultima.lower()
+
+    _msgs_ass = [m.content for m in req.messages if m.role == "assistant"]
+    _ultima_ass = _msgs_ass[-1] if _msgs_ass else ""
+    _pediu_nome = "para quem devo enviar" in _ultima_ass.lower() or "me diga o nome cadastrado" in _ultima_ass.lower()
+
+    if _pediu_nome and not any(t in _ultima_lower for t in _wa_triggers):
+        _resps_ass = [m.content for m in req.messages if m.role == "assistant"]
+        ultima_resp = _resps_ass[-2] if len(_resps_ass) >= 2 else ""
+        nome_busca = ultima.strip()
+        if ultima_resp and nome_busca:
+            resultado = await whatsapp_send_interno(nome_busca, ultima_resp)
+            if resultado["ok"]:
+                return JSONResponse({"content": [{"type": "text", "text": f"Enviado para **{resultado['nome']}** ({resultado['numero']}) via WhatsApp! ✅"}]})
+            else:
+                return JSONResponse({"content": [{"type": "text", "text": f"Não consegui enviar: {resultado['erro']}"}]})
+
+    if any(t in _ultima_lower for t in _wa_triggers):
+        ultima_resp = next((m.content for m in reversed(req.messages) if m.role == "assistant"), "")
+        if not ultima_resp:
+            return JSONResponse({"content": [{"type": "text", "text": "Ainda não há uma resposta para enviar. Faça uma consulta primeiro!"}]})
+        nome_match = re.search(r"(?:para|pro|pra)\s+([A-Za-z\u00C0-\u00FF ]{2,30}?)(?:\s*$|,|\?|!)", ultima, re.IGNORECASE)
+        nome_busca = nome_match.group(1).strip() if nome_match else ""
+        if not nome_busca:
+            return JSONResponse({"content": [{"type": "text", "text": "Para quem devo enviar? Me diga o nome cadastrado. Ex: *manda no WhatsApp para João*"}]})
+        resultado = await whatsapp_send_interno(nome_busca, ultima_resp)
+        if resultado["ok"]:
+            return JSONResponse({"content": [{"type": "text", "text": f"Enviado para **{resultado['nome']}** ({resultado['numero']}) via WhatsApp! ✅"}]})
+        else:
+            return JSONResponse({"content": [{"type": "text", "text": f"Não consegui enviar: {resultado['erro']}"}]})
 
     df = load_df()
 
