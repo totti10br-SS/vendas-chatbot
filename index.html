@@ -575,6 +575,8 @@ body.modo-analitico .analitico-btn-voltar { display:inline-block !important; }
 
 <script>
 let conversationHistory=[];
+let _lastPdfB64 = null;
+let _lastPdfNome = null;
 
 // ─── VOZ ────────────────────────────────────────────────
 let voiceEnabled = false;
@@ -949,6 +951,50 @@ async function sendMessage(){
   const input=document.getElementById('userInput');
   const text=input.value.trim();
   if(!text) return;
+
+  // ── Detecção de intenção WhatsApp ──
+  try{
+    const ri = await fetch('/detectar-intencao',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({mensagem:text})});
+    const di = await ri.json();
+    if(di.enviar_whatsapp){
+      input.value=''; input.style.height='auto';
+      document.getElementById('sendBtn').disabled=true;
+      const w=document.getElementById('welcome'); if(w) w.remove();
+      addMessage('user',text);
+      const typing=addTyping();
+      // Pegar última resposta do assistente como texto
+      const ultimaResp = conversationHistory.filter(m=>m.role==='assistant').slice(-1)[0]?.content || '';
+      let nome = di.nome;
+      if(!nome){
+        // Perguntar o nome
+        typing.remove();
+        document.getElementById('sendBtn').disabled=false;
+        addMessage('assistant','Para quem devo enviar? Me diga o nome cadastrado. Ex: *manda no WhatsApp para João*');
+        conversationHistory.push({role:'assistant',content:'Para quem devo enviar? Me diga o nome cadastrado. Ex: *manda no WhatsApp para João*'});
+        return;
+      }
+      // Enviar
+      const payload = {nome: nome, texto: ultimaResp};
+      if(_lastPdfB64){ payload.pdf_b64 = _lastPdfB64; payload.pdf_nome = _lastPdfNome || 'relatorio_iaf.pdf'; }
+      const rw = await fetch('/whatsapp-send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      const dw = await rw.json();
+      typing.remove();
+      document.getElementById('sendBtn').disabled=false;
+      if(dw.ok){
+        const msg = _lastPdfB64
+          ? 'Texto e PDF enviados para **'+dw.nome+'** via WhatsApp! ✅'
+          : 'Enviado para **'+dw.nome+'** via WhatsApp! ✅';
+        addMessage('assistant', msg);
+        conversationHistory.push({role:'assistant',content:msg});
+      } else {
+        addMessage('assistant','Não consegui enviar: '+dw.erro);
+        conversationHistory.push({role:'assistant',content:'Não consegui enviar: '+dw.erro});
+      }
+      return;
+    }
+  }catch(e){ console.warn('detectar-intencao erro:', e); }
+
   input.value=''; input.style.height='auto';
   document.getElementById('sendBtn').disabled=true;
   const w=document.getElementById('welcome'); if(w) w.remove();
@@ -975,6 +1021,8 @@ async function sendMessage(){
     if(pdfMatch){
       const pdfB64  = pdfMatch[1];
       const pdfName = pdfMatch[2];
+      _lastPdfB64  = pdfB64;
+      _lastPdfNome = pdfName;
       // Converte base64 para blob e cria card de download
       const pdfBytes = Uint8Array.from(atob(pdfB64), c => c.charCodeAt(0));
       const blob = new Blob([pdfBytes], {type:'application/pdf'});
