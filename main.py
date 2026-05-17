@@ -367,7 +367,8 @@ REGRAS:
 - Se período não especificado e tipo for resumo: use o último mês disponível
 - Se cliente não especificado e tipo for ultimas_vendas: precisa_cliente=true
 - IMPORTANTE: Se a última mensagem do assistente no histórico for "Para qual cliente?" (ou similar pedindo nome de cliente), e a pergunta atual for apenas um nome/CNPJ, então herde o tipo da penúltima mensagem do usuário e preencha o cliente com o valor informado agora. NÃO mude o tipo. Se não conseguir identificar o tipo anterior, use tipo="ultimas_vendas".
-- Se nr_nota mencionado: tipo="detalhe_nota"
+- Se nr_nota mencionado: tipo="detalhe_nota" — isso inclui qualquer variação como "me manda a NE 123", "cópia da nota 123", "cópia da NE 123", "quero a NE 123", "preciso da nota 123", "me passa a NF 123", "nota fiscal 123", "NF-e 123", "documento 123". SEMPRE que houver um número junto de NE/NF/nota/documento, use tipo="detalhe_nota" e nr_nota=esse número.
+- IMPORTANTE: "me manda a NE 123" NÃO é pedido de WhatsApp — é pedido de cópia de nota fiscal. Use tipo="detalhe_nota".
 - Se usuário perguntar "última nota", "última nota emitida", "quando foi a última nota", "qual foi a última nota", "me mostra a última nota" para um cliente: tipo="ultimas_vendas", data_inicio=null, data_fim=null (SEM filtro de período — busca em TODO o histórico), precisa_cliente=true se cliente não informado
 - Se usuário perguntar sobre PDF, DANFE, nota fiscal, NF, ou detalhe de nota SEM informar número: tipo="detalhe_nota", nr_nota=null
 - Se tipo="detalhe_nota" e nr_nota=null: o sistema vai pedir o número automaticamente
@@ -2762,7 +2763,10 @@ async def detectar_intencao(request: starlette.requests.Request):
     prompt = f'''Analise a mensagem e responda APENAS com JSON, sem texto extra.
 Mensagem: "{mensagem}"
 JSON: {{"enviar_whatsapp": true/false, "nome": "nome ou null"}}
-- enviar_whatsapp true se quer enviar algo via WhatsApp/zap/celular
+- enviar_whatsapp TRUE somente se quer enviar algo via WhatsApp/zap/celular/numero
+- enviar_whatsapp FALSE se a mensagem for sobre nota fiscal, NE, NF, DANFE, copia de nota, relatorio — mesmo que contenha "manda" ou "me manda"
+- Exemplos FALSE: "me manda a NE 123", "manda a copia da nota", "preciso da NF 456", "me manda o DANFE"
+- Exemplos TRUE: "manda no meu whats", "envia no zap", "manda pro meu numero"
 - nome: quem recebe (após "para"/"pro"/"pra"), ou null'''
     headers = {"x-api-key": CLAUDE_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"}
     payload = {"model": "claude-haiku-4-5-20251001", "max_tokens": 80,
