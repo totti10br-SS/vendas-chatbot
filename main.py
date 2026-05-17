@@ -720,29 +720,30 @@ def calcular(df: pd.DataFrame, filtro: dict) -> dict:
             # Normalizar NUM_DOCTO como string sem espaços
             dff = dff.copy()
             dff['NUM_DOCTO'] = dff['NUM_DOCTO'].astype(str).str.strip()
-            grp = dff.groupby(['DATA_MOVTO','NUM_DOCTO']).agg(
+            # Incluir NOME_FILIAL e NOM_VENDEDOR direto no groupby para garantir preenchimento
+            grp_cols = ['DATA_MOVTO','NUM_DOCTO']
+            if 'NOME_FILIAL' in dff.columns: grp_cols.append('NOME_FILIAL')
+            if 'NOM_VENDEDOR' in dff.columns: grp_cols.append('NOM_VENDEDOR')
+            grp = dff.groupby(grp_cols).agg(
                 kg=('QTDE_PRI','sum'),
                 fat=('VALOR_LIQUIDO','sum'),
                 n_itens=('COD_PRODUTO','count') if 'COD_PRODUTO' in dff.columns else ('VALOR_LIQUIDO','count'),
+                chave=('CHAVE_ACESSO','first') if 'CHAVE_ACESSO' in dff.columns else ('VALOR_LIQUIDO','count'),
             ).reset_index().sort_values('DATA_MOVTO', ascending=False).head(50)
-            extras = {}
-            for col in ['NOME_FILIAL','NOM_VENDEDOR','CHAVE_ACESSO']:
-                if col in dff.columns:
-                    extras[col] = dff.groupby('NUM_DOCTO')[col].first()
             resumo_notas = []
             for _, r in grp.iterrows():
                 nr = str(r['NUM_DOCTO']).strip()
                 resumo_notas.append({
                     "data":     r['DATA_MOVTO'].strftime('%d/%m/%Y') if hasattr(r['DATA_MOVTO'],'strftime') else str(r['DATA_MOVTO']),
                     "nr_nota":  nr,
-                    "filial":   str(extras['NOME_FILIAL'].get(nr,'')) if 'NOME_FILIAL' in extras else '',
-                    "vendedor": str(extras['NOM_VENDEDOR'].get(nr,'')) if 'NOM_VENDEDOR' in extras else '',
+                    "filial":   str(r.get('NOME_FILIAL','')),
+                    "vendedor": str(r.get('NOM_VENDEDOR','')),
                     "kg":       round(float(r['kg']),2),
                     "cx30":     int(round(float(r['kg'])/30,0)),
                     "fat":      round(float(r['fat']),2),
                     "pm":       round(float(r['fat'])/float(r['kg']),2) if float(r['kg']) > 0 else 0,
                     "n_itens":  int(r['n_itens']),
-                    "chave":    str(extras['CHAVE_ACESSO'].get(nr,'')) if 'CHAVE_ACESSO' in extras else '',
+                    "chave":    str(r.get('chave','')),
                 })
             d["resumo_notas"] = resumo_notas
 
@@ -1700,11 +1701,16 @@ async def chat(req: ChatRequest):
             "Para qual cliente? Pode informar o nome ou CNPJ raiz (8 dígitos)."}]})
 
     # ultimas_vendas sem período → sempre perguntar período (mesmo quando cliente já informado)
+    # Só passa se vier do fluxo de "última nota" (sem data intencional) ou se tiver data explícita
+    _eh_ultima_nota = any(
+        x in ultima.lower() for x in ["última nota","ultima nota","última nf","ultimo docto","último documento"]
+    ) if ultima else False
     if (filtro.get("tipo") == "ultimas_vendas"
             and not filtro.get("data_inicio")
-            and not filtro.get("data_fim")):
+            and not filtro.get("data_fim")
+            and not _eh_ultima_nota):
         return JSONResponse({"content": [{"type": "text", "text":
-            "Qual período você quer analisar? Ex: março 2026, esta semana, últimos 30 dias...\n\nSe quiser o resultado em PDF, é só pedir! 📄"}]})
+            "Qual período você quer analisar? Ex: abril 2026, esta semana, últimos 30 dias...\n\nSe quiser o resultado em PDF, é só pedir! 📄"}]})
 
     # ultimos_precos sem período → assume últimos 90 dias automaticamente
     if filtro.get("tipo") == "ultimos_precos" and not filtro.get("data_inicio"):
