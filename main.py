@@ -1717,6 +1717,14 @@ async def chat(req: ChatRequest):
             filtro["cliente_exato"] = _opcoes[_idx]
             filtro.pop("cliente", None)
             logging.info(f"[DESAMBIG] cliente escolhido: {_opcoes[_idx]}")
+            # Herdar tipo e demais campos da penúltima msg do usuário
+            msgs_user = [m for m in req.messages if m.role == "user"]
+            if len(msgs_user) >= 2:
+                penultima_user = msgs_user[-2].content.lower()
+                # Se pediu "última nota", não pedir período
+                if any(x in penultima_user for x in ["última nota","ultima nota","última nf","last nota"]):
+                    filtro["tipo"] = "ultimas_vendas"
+                    filtro["_ultima_nota"] = True  # flag para não pedir período
 
     assist_pediu_cliente = any(
         m.get("role") == "assistant" and "Para qual cliente" in str(m.get("content",""))
@@ -1746,7 +1754,8 @@ async def chat(req: ChatRequest):
             and not filtro.get("data_inicio")
             and not filtro.get("data_fim")
             and not _eh_ultima_nota
-            and filtro.get("cliente")):  # só bloqueia se já tem cliente (evita loop)
+            and not filtro.get("_ultima_nota")
+            and (filtro.get("cliente") or filtro.get("cliente_exato"))):
         return JSONResponse({"content": [{"type": "text", "text":
             "Qual período você quer analisar? Ex: abril 2026, esta semana, últimos 30 dias...\n\nSe quiser o resultado em PDF, é só pedir! 📄"}]})
 
@@ -1825,8 +1834,7 @@ async def chat(req: ChatRequest):
                 break
         clientes_distintos = sorted(dff_pre['NOME_CLIENTE'].dropna().unique().tolist())
         if len(clientes_distintos) > 1:
-            lista = "\n".join([f"{i+1} - {c}" for i, c in enumerate(clientes_distintos[:10])])
-            # Salvar lista no histórico via resposta especial
+            lista = "\n\n".join([f"**{i+1}** - {c}" for i, c in enumerate(clientes_distintos[:10])])
             msg = (f"Encontrei **{len(clientes_distintos)}** empresas com \"{nome}\" na razão social. "
                    f"Qual você precisa?\n\n{lista}\n\n"
                    f"Digite o número correspondente.")
