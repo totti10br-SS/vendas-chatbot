@@ -715,23 +715,26 @@ def calcular(df: pd.DataFrame, filtro: dict) -> dict:
         if 'NOME_CLIENTE' in dff.columns:
             d["cliente_encontrado"] = dff['NOME_CLIENTE'].iloc[0]
 
-        # Resumo por nota (agrupado)
+        # Resumo por nota (agrupado) — 1 linha por nota
         if 'NUM_DOCTO' in dff.columns:
+            # Normalizar NUM_DOCTO como string sem espaços
+            dff = dff.copy()
+            dff['NUM_DOCTO'] = dff['NUM_DOCTO'].astype(str).str.strip()
             grp = dff.groupby(['DATA_MOVTO','NUM_DOCTO']).agg(
                 kg=('QTDE_PRI','sum'),
                 fat=('VALOR_LIQUIDO','sum'),
                 n_itens=('COD_PRODUTO','count') if 'COD_PRODUTO' in dff.columns else ('VALOR_LIQUIDO','count'),
-            ).reset_index().sort_values('DATA_MOVTO', ascending=False).head(30)
+            ).reset_index().sort_values('DATA_MOVTO', ascending=False).head(50)
             extras = {}
             for col in ['NOME_FILIAL','NOM_VENDEDOR','CHAVE_ACESSO']:
                 if col in dff.columns:
                     extras[col] = dff.groupby('NUM_DOCTO')[col].first()
             resumo_notas = []
             for _, r in grp.iterrows():
-                nr = r['NUM_DOCTO']
+                nr = str(r['NUM_DOCTO']).strip()
                 resumo_notas.append({
                     "data":     r['DATA_MOVTO'].strftime('%d/%m/%Y') if hasattr(r['DATA_MOVTO'],'strftime') else str(r['DATA_MOVTO']),
-                    "nr_nota":  str(nr),
+                    "nr_nota":  nr,
                     "filial":   str(extras['NOME_FILIAL'].get(nr,'')) if 'NOME_FILIAL' in extras else '',
                     "vendedor": str(extras['NOM_VENDEDOR'].get(nr,'')) if 'NOM_VENDEDOR' in extras else '',
                     "kg":       round(float(r['kg']),2),
@@ -1696,9 +1699,12 @@ async def chat(req: ChatRequest):
         return JSONResponse({"content": [{"type": "text", "text":
             "Para qual cliente? Pode informar o nome ou CNPJ raiz (8 dígitos)."}]})
 
-    # ultimas_vendas sem período → sempre perguntar período
-    if filtro.get("tipo") == "ultimas_vendas" and not filtro.get("data_inicio") and not filtro.get("precisa_periodo"):
-        filtro["precisa_periodo"] = True
+    # ultimas_vendas sem período → sempre perguntar período (mesmo quando cliente já informado)
+    if (filtro.get("tipo") == "ultimas_vendas"
+            and not filtro.get("data_inicio")
+            and not filtro.get("data_fim")):
+        return JSONResponse({"content": [{"type": "text", "text":
+            "Qual período você quer analisar? Ex: março 2026, esta semana, últimos 30 dias...\n\nSe quiser o resultado em PDF, é só pedir! 📄"}]})
 
     # ultimos_precos sem período → assume últimos 90 dias automaticamente
     if filtro.get("tipo") == "ultimos_precos" and not filtro.get("data_inicio"):
