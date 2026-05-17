@@ -2728,6 +2728,35 @@ async def _enviar_pdf_whatsapp(numero: str, pdf_b64: str, filename: str, caption
         return {"ok": False, "erro": str(e)}
 
 
+def _limpar_texto_wa(texto: str) -> str:
+    """Converte markdown/tabela para texto limpo legivel no WhatsApp."""
+    import re as _re
+    # Remove base64 gigante
+    texto = _re.sub(r"RELATORIO_PDF_BASE64:[A-Za-z0-9+/=]+:FILENAME:\S+", "", texto)
+    # Remove linhas separador de tabela markdown
+    texto = _re.sub(r"^\|[-| :]+\|?\s*$", "", texto, flags=_re.MULTILINE)
+    linhas = texto.split("\n")
+    resultado = []
+    for linha in linhas:
+        linha = linha.strip()
+        if not linha:
+            resultado.append("")
+            continue
+        if linha.startswith("|") and linha.endswith("|"):
+            cols = [c.strip() for c in linha.strip("|").split("|")]
+            cols = [c for c in cols if c]
+            if cols:
+                resultado.append("  ".join(cols))
+        else:
+            linha = _re.sub(r"\*\*(.+?)\*\*", r"\1", linha)
+            linha = _re.sub(r"\*(.+?)\*", r"\1", linha)
+            linha = _re.sub(r"^#{1,3}\s*", "", linha)
+            resultado.append(linha)
+    texto_limpo = "\n".join(resultado)
+    texto_limpo = _re.sub(r"\n{3,}", "\n\n", texto_limpo).strip()
+    return texto_limpo
+
+
 @app.post("/whatsapp-send")
 async def whatsapp_send(request: starlette.requests.Request):
     """Envia texto e/ou PDF para um contato cadastrado."""
@@ -2745,19 +2774,26 @@ async def whatsapp_send(request: starlette.requests.Request):
         None
     )
     if not contato:
-        return JSONResponse({"ok": False, "erro": f"Contato '{nome_busca}' nao encontrado. Peca ao administrador para cadastra-lo."})
+        return JSONResponse({"ok": False, "erro": (
+            f"Infelizmente, o nome '{nome_busca}' não está cadastrado como WhatsApp autorizado "
+            "para receber essas informações. Por favor, entre em contato com a T.I. da Frinense "
+            "para providenciar a inclusão! Obrigado!"
+        )})
 
     erros = []
-    # Envia texto se houver
-    if texto:
-        r = await _enviar_whatsapp(contato["numero"], texto)
-        if not r["ok"]:
-            erros.append(f"texto: {r['erro']}")
-    # Envia PDF se houver
+    # Se tem PDF: envia só o PDF (sem texto, evita base64 no chat)
     if pdf_b64:
-        r = await _enviar_pdf_whatsapp(contato["numero"], pdf_b64, pdf_nome, "📊 Relatório IAF")
+        r = await _enviar_pdf_whatsapp(contato["numero"], pdf_b64, pdf_nome, "📊 Relatório IAF · Frinense Alimentos")
         if not r["ok"]:
             erros.append(f"pdf: {r['erro']}")
+    else:
+        # Sem PDF: envia texto limpo
+        if texto:
+            texto_limpo = _limpar_texto_wa(texto)
+            if texto_limpo:
+                r = await _enviar_whatsapp(contato["numero"], texto_limpo)
+                if not r["ok"]:
+                    erros.append(f"texto: {r['erro']}")
 
     if erros:
         return JSONResponse({"ok": False, "erro": " | ".join(erros)})
