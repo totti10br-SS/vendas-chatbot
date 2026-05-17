@@ -104,37 +104,71 @@ def _proximo_seq_pdf() -> str:
 
 # ── Métricas de uso ──
 import collections
+import sqlite3
+# ── SQLite persistente para logs ──
+IAF_DB = os.environ.get("IAF_DB", "/data/iaf.db")
+
+def _db_connect():
+    os.makedirs(os.path.dirname(IAF_DB), exist_ok=True)
+    return sqlite3.connect(IAF_DB)
+
+def _db_init():
+    """Cria tabelas se não existirem."""
+    with _db_connect() as con:
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS consultas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                modelo TEXT,
+                input_tok INTEGER DEFAULT 0,
+                output_tok INTEGER DEFAULT 0,
+                pergunta TEXT,
+                modo TEXT,
+                erro INTEGER DEFAULT 0
+            )
+        """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS erros (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                tipo TEXT,
+                detalhe TEXT
+            )
+        """)
+        con.commit()
+
+_db_init()
+
+# Métricas em memória (contadores da sessão atual — somados ao histórico do banco)
 _metricas = {
     "sessao_inicio": datetime.now().isoformat(),
-    "consultas": [],          # lista de dicts com cada consulta
     "tokens_haiku_in": 0,
     "tokens_haiku_out": 0,
     "tokens_sonnet_in": 0,
     "tokens_sonnet_out": 0,
-    "tokens_tts": 0,          # chars enviados ao ElevenLabs
-    "erros": [],
+    "tokens_tts": 0,
     "modo_rapido": 0,
     "modo_analitico": 0,
 }
-_PRECO_HAIKU_IN   = 0.80  / 1_000_000   # $0.80/MTok
-_PRECO_HAIKU_OUT  = 4.00  / 1_000_000   # $4.00/MTok
-_PRECO_SONNET_IN  = 3.00  / 1_000_000   # $3.00/MTok
-_PRECO_SONNET_OUT = 15.00 / 1_000_000   # $15.00/MTok
-_PRECO_TTS        = 0.15  / 1_000       # $0.15/1k chars
+
+_PRECO_HAIKU_IN   = 0.80  / 1_000_000
+_PRECO_HAIKU_OUT  = 4.00  / 1_000_000
+_PRECO_SONNET_IN  = 3.00  / 1_000_000
+_PRECO_SONNET_OUT = 15.00 / 1_000_000
+_PRECO_TTS        = 0.15  / 1_000
 
 def _registrar_uso(modelo: str, input_tok: int, output_tok: int, pergunta: str = "", modo: str = "rapido", erro: bool = False):
     global _metricas
-    _metricas["consultas"].append({
-        "ts": datetime.now().strftime("%d/%m %H:%M"),
-        "modelo": modelo,
-        "input": input_tok,
-        "output": output_tok,
-        "pergunta": pergunta[:80],
-        "modo": modo,
-        "erro": erro,
-    })
-    if len(_metricas["consultas"]) > 200:
-        _metricas["consultas"] = _metricas["consultas"][-200:]
+    ts = datetime.now().strftime("%d/%m/%Y %H:%M")
+    try:
+        with _db_connect() as con:
+            con.execute(
+                "INSERT INTO consultas (ts,modelo,input_tok,output_tok,pergunta,modo,erro) VALUES (?,?,?,?,?,?,?)",
+                (ts, modelo, input_tok, output_tok, pergunta[:120], modo, int(erro))
+            )
+            con.commit()
+    except Exception as e:
+        logging.error(f"[DB] erro ao registrar consulta: {e}")
     if "haiku" in modelo.lower():
         _metricas["tokens_haiku_in"]  += input_tok
         _metricas["tokens_haiku_out"] += output_tok
@@ -143,6 +177,38 @@ def _registrar_uso(modelo: str, input_tok: int, output_tok: int, pergunta: str =
         _metricas["tokens_sonnet_in"]  += input_tok
         _metricas["tokens_sonnet_out"] += output_tok
         _metricas["modo_analitico"] += 1
+
+def _registrar_erro(tipo: str, detalhe: str):
+    ts = datetime.now().strftime("%d/%m/%Y %H:%M")
+    try:
+        with _db_connect() as con:
+            con.execute("INSERT INTO erros (ts,tipo,detalhe) VALUES (?,?,?)", (ts, tipo, detalhe[:500]))
+            con.commit()
+    except Exception as e:
+        logging.error(f"[DB] erro ao registrar erro: {e}")
+
+def _db_stats() -> dict:
+    """Retorna totais históricos do banco."""
+    try:
+        with _db_connect() as con:
+            total_c = con.execute("SELECT COUNT(*) FROM consultas").fetchone()[0]
+            total_e = con.execute("SELECT COUNT(*) FROM erros").fetchone()[0]
+            ultimas = con.execute(
+                "SELECT ts,modelo,input_tok,output_tok,pergunta,modo,erro FROM consultas ORDER BY id DESC LIMIT 200"
+            ).fetchall()
+            ultimos_erros = con.execute(
+                "SELECT ts,tipo,detalhe FROM erros ORDER BY id DESC LIMIT 50"
+            ).fetchall()
+        consultas_list = [
+            {"ts":r[0],"modelo":r[1],"input":r[2],"output":r[3],"pergunta":r[4],"modo":r[5],"erro":bool(r[6])}
+            for r in ultimas
+        ]
+        erros_list = [{"ts":r[0],"tipo":r[1],"detalhe":r[2]} for r in ultimos_erros]
+        return {"total_consultas": total_c, "total_erros": total_e,
+                "consultas": consultas_list, "erros": erros_list}
+    except Exception as e:
+        logging.error(f"[DB] erro ao ler stats: {e}")
+        return {"total_consultas": 0, "total_erros": 0, "consultas": [], "erros": []}
 
 
 FILIAIS_VALIDAS = {"ITAP", "BJESUS", "PORC"}
@@ -2510,10 +2576,13 @@ async def admin_data(request: starlette.requests.Request):
         reg_csv = len(df)
     except:
         reg_csv = 0
+    stats = _db_stats()
     return JSONResponse({
         **_metricas,
-        "total_consultas": len(_metricas["consultas"]),
-        "total_erros": len(_metricas["erros"]),
+        "total_consultas": stats["total_consultas"],
+        "total_erros": stats["total_erros"],
+        "consultas": stats["consultas"],
+        "erros": stats["erros"],
         "registros_csv": reg_csv,
         "sessao_inicio": _metricas["sessao_inicio"],
     })
