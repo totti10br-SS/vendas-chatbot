@@ -446,7 +446,7 @@ def _aplicar_filtros(df: pd.DataFrame, filtro: dict) -> pd.DataFrame:
         dff = dff[dff['UF'].str.upper() == filtro["uf"].upper()]
 
     # Cliente por nome
-    if filtro.get("cliente") and 'NOME_CLIENTE' in dff.columns:
+    if filtro.get("cliente") and not filtro.get("cliente_exato") and 'NOME_CLIENTE' in dff.columns:
         nome = filtro["cliente"]
         # Match progressivo: 20 chars → 10 → 5
         for tam in [20, 10, 5]:
@@ -454,6 +454,16 @@ def _aplicar_filtros(df: pd.DataFrame, filtro: dict) -> pd.DataFrame:
             if mask.sum() > 0:
                 dff = dff[mask]
                 break
+        # Verificar se encontrou múltiplas razões sociais distintas
+        if 'NOME_CLIENTE' in dff.columns:
+            clientes_distintos = dff['NOME_CLIENTE'].dropna().unique().tolist()
+            if len(clientes_distintos) > 1:
+                # Retornar flag especial para desambiguação
+                dff.attrs['multiplos_clientes'] = clientes_distintos
+
+    # Cliente por nome exato (após desambiguação)
+    if filtro.get("cliente_exato") and 'NOME_CLIENTE' in dff.columns:
+        dff = dff[dff['NOME_CLIENTE'] == filtro["cliente_exato"]]
 
     # Cliente por CNPJ raiz
     if filtro.get("cnpj_raiz") and 'CPF_CGC' in dff.columns:
@@ -1691,6 +1701,25 @@ async def chat(req: ChatRequest):
                     filtro["chave_acesso_override"] = m_chave.group(1)
                 break
 
+    # ── Desambiguação: usuário escolheu número da lista? ──
+    _assist_listou = next(
+        (m for m in reversed(req.messages)
+         if m.get("role") == "assistant" and "Qual você precisa?" in str(m.get("content",""))
+         and any(f"{i+1} -" in str(m.get("content","")) for i in range(10))),
+        None
+    )
+    if _assist_listou and ultima.strip().isdigit():
+        # Extrair lista da resposta anterior
+        import re as _re2
+        _linhas = str(_assist_listou.get("content","")).split("\n")
+        _opcoes = [l.split(" - ",1)[1].strip() for l in _linhas if _re2.match(r"^\d+ - ", l.strip())]
+        _idx = int(ultima.strip()) - 1
+        if 0 <= _idx < len(_opcoes):
+            # Substituir cliente pelo exato e reprocessar
+            filtro["cliente_exato"] = _opcoes[_idx]
+            filtro.pop("cliente", None)
+            logging.info(f"[DESAMBIG] cliente escolhido: {_opcoes[_idx]}")
+
     assist_pediu_cliente = any(
         m.get("role") == "assistant" and "Para qual cliente" in str(m.get("content",""))
         for m in ultimas_msgs
@@ -1786,6 +1815,28 @@ async def chat(req: ChatRequest):
         else:
             return JSONResponse({"content": [{"type": "text",
                 "text": f"❌ Chave de acesso da nota {nr} não encontrada ou inválida."}]})
+
+    # ── Pré-verificação: múltiplos clientes? ──
+    if filtro.get("cliente") and not filtro.get("cliente_exato") and 'NOME_CLIENTE' in df.columns:
+        nome = filtro["cliente"]
+        dff_pre = df.copy()
+        for tam in [20, 10, 5]:
+            mask = dff_pre['NOME_CLIENTE'].str.lower().str.contains(nome.lower()[:tam], na=False)
+            if mask.sum() > 0:
+                dff_pre = dff_pre[mask]
+                break
+        clientes_distintos = sorted(dff_pre['NOME_CLIENTE'].dropna().unique().tolist())
+        if len(clientes_distintos) > 1:
+            lista = "\n".join([f"{i+1} - {c}" for i, c in enumerate(clientes_distintos[:10])])
+            # Salvar lista no histórico via resposta especial
+            msg = (f"Encontrei **{len(clientes_distintos)}** empresas com \"{nome}\" na razão social. "
+                   f"Qual você precisa?\n\n{lista}\n\n"
+                   f"Digite o número correspondente.")
+            # Guardar lista para próxima mensagem
+            import json as _json
+            return JSONResponse({"content": [{"type": "text", "text": msg}],
+                                 "_clientes_lista": clientes_distintos[:10],
+                                 "_filtro_pendente": _json.dumps(filtro)})
 
     # ETAPA 2 — Calcular
     try:
