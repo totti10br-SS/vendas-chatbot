@@ -922,25 +922,26 @@ Sua missão é transformar dados de vendas em informação clara e útil para a 
   Sem totais. Sem análise automática.
 
 - ultimas_vendas:
-  Use "itens_detalhados" do JSON — cada linha é um item de nota fiscal.
+  REGRA PRINCIPAL: use "resumo_notas" do JSON — cada linha é UMA NOTA FISCAL resumida.
   
   ## ÚLTIMAS VENDAS · [cliente_encontrado]
   
-  | DATA | NR NOTA | FILIAL | COD PRODUTO | PRODUTO | KG | CX | VL UNIT | R$/kg |
-  |------|---------|--------|-------------|---------|----|----|---------|-------|
-  [uma linha por item de itens_detalhados, decrescente por DATA_MOVTO]
+  | DATA | NR NOTA | FILIAL | KG | CX30 | FATURAMENTO | R$/kg |
+  |------|---------|--------|----|------|-------------|-------|
+  [uma linha por nota de resumo_notas, decrescente por data]
   
-  Campos: DATA_MOVTO=data, NUM_DOCTO=NR NOTA, NOME_FILIAL=filial, COD_PRODUTO=cod, DESC_PRODUTO=produto, QTDE_PRI=kg, QTDE_AUX=cx, VALOR_UNITARIO=vl unit, calcule R$/kg = VALOR_LIQUIDO/QTDE_PRI
+  Campos: data=DATA, nr_nota=NR NOTA, filial=FILIAL, kg=KG, cx30=CX30, fat=FATURAMENTO (formato R$ X.XXX,XX), pm=R$/kg
   
   Sem linha de totais. Sem análise automática.
   
-  CASO ESPECIAL — ÚLTIMA NOTA: Se "resumo_notas" tiver exatamente 1 nota (ou o usuário perguntar "última nota", "quando foi a última nota"), exiba apenas o resumo dessa nota:
+  Ao final, em texto simples (sem markdown):
+  "Deseja o relatório em PDF? É só pedir!"
+  
+  CASO ESPECIAL — ÚLTIMA NOTA: Se "resumo_notas" tiver exatamente 1 nota (ou o usuário perguntar "última nota"), exiba:
   **Nota [nr_nota]** · [data] · [filial]
   **Cliente:** [cliente_encontrado] | **Vendedor:** [vendedor]
   **Faturamento:** R$ [fat] | **Volume:** [kg] kg | **Itens:** [n_itens]
-  
-  E finalize com a pergunta (em texto corrido, sem markdown):
-  "Deseja que eu gere o PDF (DANFE) desta nota? Responda sim para receber o arquivo."
+  E pergunte: "Deseja o PDF (DANFE) desta nota?"
 - ranking_clientes: Tabela com posição, nome, kg, cx30, faturamento, R$/kg
 - ranking_vendedores: Tabela com cod, nome, kg, cx30, faturamento, notas
 - comparativo: 
@@ -1695,6 +1696,10 @@ async def chat(req: ChatRequest):
         return JSONResponse({"content": [{"type": "text", "text":
             "Para qual cliente? Pode informar o nome ou CNPJ raiz (8 dígitos)."}]})
 
+    # ultimas_vendas sem período → sempre perguntar período
+    if filtro.get("tipo") == "ultimas_vendas" and not filtro.get("data_inicio") and not filtro.get("precisa_periodo"):
+        filtro["precisa_periodo"] = True
+
     # ultimos_precos sem período → assume últimos 90 dias automaticamente
     if filtro.get("tipo") == "ultimos_precos" and not filtro.get("data_inicio"):
         from datetime import date, timedelta
@@ -1706,7 +1711,7 @@ async def chat(req: ChatRequest):
     # Se período indefinido para resumo
     if filtro.get("precisa_periodo") and not filtro.get("data_inicio"):
         return JSONResponse({"content": [{"type": "text", "text":
-            "Qual período você quer analisar? Ex: março 2026, esta semana, últimos 30 dias..."}]})
+            "Qual período você quer analisar? Ex: março 2026, esta semana, últimos 30 dias...\n\nSe quiser o resultado em PDF, é só pedir! 📄"}]})
 
     # Nota: pede número se não informado
     if filtro.get("tipo") == "detalhe_nota" and not filtro.get("nr_nota"):
