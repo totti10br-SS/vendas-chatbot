@@ -367,8 +367,12 @@ REGRAS:
 - Se período não especificado e tipo for resumo: use o último mês disponível
 - Se cliente não especificado e tipo for ultimas_vendas: precisa_cliente=true
 - IMPORTANTE: Se a última mensagem do assistente no histórico for "Para qual cliente?" (ou similar pedindo nome de cliente), e a pergunta atual for apenas um nome/CNPJ, então herde o tipo da penúltima mensagem do usuário e preencha o cliente com o valor informado agora. NÃO mude o tipo. Se não conseguir identificar o tipo anterior, use tipo="ultimas_vendas".
-- Se nr_nota mencionado: tipo="detalhe_nota" — isso inclui qualquer variação como "me manda a NE 123", "cópia da nota 123", "cópia da NE 123", "quero a NE 123", "preciso da nota 123", "me passa a NF 123", "nota fiscal 123", "NF-e 123", "documento 123". SEMPRE que houver um número junto de NE/NF/nota/documento, use tipo="detalhe_nota" e nr_nota=esse número.
-- IMPORTANTE: "me manda a NE 123" NÃO é pedido de WhatsApp — é pedido de cópia de nota fiscal. Use tipo="detalhe_nota".
+- Se nr_nota mencionado: tipo="detalhe_nota" — SEMPRE que houver número junto de NE/NF/nota/documento.
+- IMPORTANTE: "me manda a NE 123" NÃO é pedido de WhatsApp — é pedido de DANFE. Use tipo="detalhe_nota".
+- DISTINÇÃO CRÍTICA para detalhe_nota:
+  * "me manda a NE 123", "manda a NE 123", "cópia da NE 123", "quero a NE 123", "preciso da NF 123", "me passa a NF 123", "DANFE da nota 123": formato="danfe" → gera PDF via MeuDanfe e envia pelo WhatsApp
+  * "me manda o CONTEÚDO da NE 123", "detalhe da nota 123", "itens da NF 123", "o que tem na nota 123", "mostra a nota 123": formato="conteudo" → mostra tabela no chat
+  * Se não ficou claro: formato="danfe" por padrão quando pedir NE/NF com número
 - Se usuário perguntar "última nota", "última nota emitida", "quando foi a última nota", "qual foi a última nota", "me mostra a última nota" para um cliente: tipo="ultimas_vendas", data_inicio=null, data_fim=null (SEM filtro de período — busca em TODO o histórico), precisa_cliente=true se cliente não informado
 - Se usuário perguntar sobre PDF, DANFE, nota fiscal, NF, ou detalhe de nota SEM informar número: tipo="detalhe_nota", nr_nota=null
 - Se tipo="detalhe_nota" e nr_nota=null: o sistema vai pedir o número automaticamente
@@ -1744,6 +1748,44 @@ async def chat(req: ChatRequest):
             if encontrou == 0:
                 return JSONResponse({"content": [{"type": "text", "text":
                     f"❌ Nota **{filtro['nr_nota']}** não encontrada nos dados disponíveis."}]})
+
+    # ── Fluxo DANFE automático ──
+    # Se formato="danfe", busca chave_acesso e gera PDF via MeuDanfe
+    if filtro.get("tipo") == "detalhe_nota" and filtro.get("formato") == "danfe":
+        nr = str(filtro.get("nr_nota","")).strip()
+        chave = filtro.get("chave_acesso_override","")
+        if not chave and nr and 'NUM_DOCTO' in df.columns:
+            dff_nota = df[df['NUM_DOCTO'].astype(str).str.strip() == nr]
+            if 'CHAVE_ACESSO' in dff_nota.columns and len(dff_nota) > 0:
+                chave = str(dff_nota['CHAVE_ACESSO'].dropna().iloc[0]).strip() if len(dff_nota['CHAVE_ACESSO'].dropna()) > 0 else ""
+        if chave and re.match(r'^\d{44}$', chave):
+            try:
+                import asyncio as _asyncio
+                BASE = "https://api.meudanfe.com.br/v2"
+                headers_md = {"Api-Key": MEUDANFE_KEY}
+                async with httpx.AsyncClient(timeout=60) as client:
+                    r = await client.get(f"{BASE}/fd/get/da/{chave}", headers=headers_md)
+                    if r.status_code == 404 or len(r.content) == 0:
+                        r2 = await client.put(f"{BASE}/fd/add/{chave}", headers=headers_md)
+                        for _ in range(10):
+                            await _asyncio.sleep(2)
+                            r = await client.get(f"{BASE}/fd/get/da/{chave}", headers=headers_md)
+                            if r.status_code == 200 and len(r.content) > 100:
+                                break
+                if r.status_code == 200 and len(r.content) > 100:
+                    import base64 as _b64
+                    pdf_b64 = _b64.b64encode(r.content).decode()
+                    pdf_nome = _proximo_seq_pdf()
+                    resposta_txt = f"📄 DANFE da NE {nr} gerado com sucesso!"
+                    return JSONResponse({"content": [{"type": "text",
+                        "text": f"RELATORIO_PDF_BASE64:{pdf_b64}:FILENAME:{pdf_nome}\n{resposta_txt}"}]})
+            except Exception as e:
+                logging.error(f"[DANFE-AUTO] erro: {e}")
+                return JSONResponse({"content": [{"type": "text",
+                    "text": f"❌ Não consegui gerar o DANFE da nota {nr}: {e}"}]})
+        else:
+            return JSONResponse({"content": [{"type": "text",
+                "text": f"❌ Chave de acesso da nota {nr} não encontrada ou inválida."}]})
 
     # ETAPA 2 — Calcular
     try:
