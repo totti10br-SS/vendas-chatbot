@@ -378,7 +378,7 @@ REGRAS:
   * comparar_periodo_anterior=false
 - Para comparativo com período imediatamente anterior (ex: "vs mês passado"): comparar_periodo_anterior=true
 - "mesmo dia do mês passado", "até o dia X do mês passado", "até o mesmo dia do mês passado": calcule data_inicio=primeiro dia do mês passado, data_fim=dia X do mês passado (ou mesmo dia do mês atual mas no mês passado). Exemplo: hoje é 14/05 → "até o mesmo dia do mês passado" = data_inicio=01/04/2026, data_fim=14/04/2026
-- tipo_operacao="PRODUTOS" por padrão em TODAS as consultas. Somente use "SERVICOS" se o usuário mencionar explicitamente serviços/serviço. Use "TODOS" apenas se pedir ambos juntos.
+- tipo_operacao="TODOS" por padrão em TODAS as consultas (inclui produtos e serviços). Somente use "SERVICOS" se o usuário mencionar explicitamente apenas serviços. Somente use "PRODUTOS" se o usuário mencionar explicitamente apenas produtos.
 - Se usuário pedir "em PDF", "relatório PDF", "manda em PDF", "exportar PDF": formato="pdf"
 - "últimas vendas", "últimas notas", "histórico de compras": tipo="ultimas_vendas" → mostra itens de notas (data, NF, produto, kg, valor)
 - "últimos preços", "preço atual", "quanto paga", "tabela de preços": tipo="ultimos_precos"
@@ -481,7 +481,7 @@ def _aplicar_filtros(df: pd.DataFrame, filtro: dict) -> pd.DataFrame:
 
     # Tipo de operação — padrão PRODUTOS, override apenas se solicitado
     if 'TIPO_OPERACAO' in dff.columns:
-        tp = filtro.get("tipo_operacao", "PRODUTOS").upper()
+        tp = filtro.get("tipo_operacao", "TODOS").upper()
         if tp == "SERVICOS":
             dff = dff[dff['TIPO_OPERACAO'] == 'SERVICOS']
         elif tp != "TODOS":
@@ -859,7 +859,7 @@ async def narrar(pergunta: str, resultado: dict, historico: list, modo: str = "n
     if "resumo_notas" in dados_narrar and len(dados_narrar["resumo_notas"]) > 30:
         dados_narrar["resumo_notas"] = dados_narrar["resumo_notas"][:30]
     # Passar tipo_operacao para o narrador
-    tipo_operacao = resultado.get("filtro_aplicado", {}).get("tipo_operacao", "PRODUTOS")
+    tipo_operacao = resultado.get("filtro_aplicado", {}).get("tipo_operacao", "TODOS")
     dados_narrar["_tipo_operacao"] = tipo_operacao
     dados_json = json.dumps(dados_narrar, ensure_ascii=False, indent=2)
     tipo = resultado.get("tipo", "")
