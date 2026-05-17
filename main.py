@@ -187,6 +187,29 @@ def _registrar_erro(tipo: str, detalhe: str):
     except Exception as e:
         logging.error(f"[DB] erro ao registrar erro: {e}")
 
+def _db_token_totals() -> dict:
+    """Soma todos os tokens registrados no banco (histórico completo)."""
+    try:
+        with _db_connect() as con:
+            r = con.execute("""
+                SELECT
+                    SUM(CASE WHEN modelo LIKE '%haiku%' THEN input_tok  ELSE 0 END) as haiku_in,
+                    SUM(CASE WHEN modelo LIKE '%haiku%' THEN output_tok ELSE 0 END) as haiku_out,
+                    SUM(CASE WHEN modelo NOT LIKE '%haiku%' THEN input_tok  ELSE 0 END) as sonnet_in,
+                    SUM(CASE WHEN modelo NOT LIKE '%haiku%' THEN output_tok ELSE 0 END) as sonnet_out
+                FROM consultas
+            """).fetchone()
+        return {
+            "haiku_in":  int(r[0] or 0),
+            "haiku_out": int(r[1] or 0),
+            "sonnet_in": int(r[2] or 0),
+            "sonnet_out":int(r[3] or 0),
+        }
+    except Exception as e:
+        logging.error(f"[DB] erro ao somar tokens: {e}")
+        return {"haiku_in":0,"haiku_out":0,"sonnet_in":0,"sonnet_out":0}
+
+
 def _db_stats() -> dict:
     """Retorna totais históricos do banco."""
     try:
@@ -2544,15 +2567,15 @@ async function carregarDados(){
   if(r.status===401){ logout(); return; }
   const d = await r.json();
 
-  // KPIs
+  // KPIs — usa totais acumulados do banco (já somados no backend)
   const totalTok = d.tokens_haiku_in + d.tokens_haiku_out + d.tokens_sonnet_in + d.tokens_sonnet_out;
   const custoUSD = (d.tokens_haiku_in*0.80/1e6) + (d.tokens_haiku_out*4.0/1e6) + (d.tokens_sonnet_in*3.0/1e6) + (d.tokens_sonnet_out*15.0/1e6) + (d.tokens_tts*0.15/1000);
   document.getElementById('kpis').innerHTML = `
-    <div class="kpi"><div class="kpi-label">Total Consultas</div><div class="kpi-val">${d.total_consultas}</div><div class="kpi-sub">${d.modo_rapido} rápido · ${d.modo_analitico} analítico</div></div>
+    <div class="kpi"><div class="kpi-label">Total Consultas</div><div class="kpi-val">${d.total_consultas.toLocaleString('pt-BR')}</div><div class="kpi-sub">${d.modo_rapido} rápido · ${d.modo_analitico} analítico</div></div>
     <div class="kpi"><div class="kpi-label">Tokens Haiku</div><div class="kpi-val">${(d.tokens_haiku_in+d.tokens_haiku_out).toLocaleString('pt-BR')}</div><div class="kpi-sub">${d.tokens_haiku_in.toLocaleString()} in · ${d.tokens_haiku_out.toLocaleString()} out</div></div>
     <div class="kpi"><div class="kpi-label">Tokens Sonnet</div><div class="kpi-val">${(d.tokens_sonnet_in+d.tokens_sonnet_out).toLocaleString('pt-BR')}</div><div class="kpi-sub">${d.tokens_sonnet_in.toLocaleString()} in · ${d.tokens_sonnet_out.toLocaleString()} out</div></div>
     <div class="kpi"><div class="kpi-label">Chars TTS</div><div class="kpi-val">${d.tokens_tts.toLocaleString('pt-BR')}</div><div class="kpi-sub">ElevenLabs</div></div>
-    <div class="kpi"><div class="kpi-label">Custo Sessão</div><div class="kpi-val" style="color:#F5C800">${fmtUSD(custoUSD)}</div><div class="kpi-sub">${fmt(custoUSD)} aprox</div></div>
+    <div class="kpi"><div class="kpi-label">Custo Total ▸</div><div class="kpi-val" style="color:#F5C800">${fmtUSD(custoUSD)}</div><div class="kpi-sub">${fmt(custoUSD)} aprox</div></div>
   `;
 
   // Custos detalhados
@@ -2580,27 +2603,29 @@ async function carregarDados(){
       <tr><td>Versão IAF</td><td style="text-align:right;color:#888">v2</td></tr>
     </table>`;
 
-  // Tabela de consultas
+  // Tabela de consultas — scroll lateral habilitado, pergunta completa
+  const tblWrap = document.querySelector('#tblConsultas').parentElement;
+  if(tblWrap) tblWrap.style.overflowX = 'auto';
   const tbody = document.querySelector('#tblConsultas tbody');
   tbody.innerHTML = '';
   (d.consultas || []).slice().reverse().forEach(function(c){
-    const badge = c.modelo.includes('haiku') ? 
-      '<span class="badge badge-haiku">HAIKU</span>' : 
+    const badge = c.modelo.includes('haiku') ?
+      '<span class="badge badge-haiku">HAIKU</span>' :
       '<span class="badge badge-sonnet">SONNET</span>';
-    const modoBadge = c.modo === 'analitico' ? 
-      '<span class="badge badge-sonnet">ANALÍTICO</span>' : 
+    const modoBadge = c.modo === 'analitico' ?
+      '<span class="badge badge-sonnet">ANALÍTICO</span>' :
       '<span class="badge" style="background:rgba(204,0,0,.15);color:#ff6666">RÁPIDO</span>';
-    const statusBadge = c.erro ? 
-      '<span style="color:#ff4444;font-size:11px;">❌ erro</span>' : 
+    const statusBadge = c.erro ?
+      '<span style="color:#ff4444;font-size:11px;">❌ erro</span>' :
       '<span style="color:#22c55e;font-size:11px;">✓ ok</span>';
     tbody.innerHTML += `<tr>
-      <td>${c.ts}</td>
+      <td style="white-space:nowrap">${c.ts}</td>
       <td>${modoBadge}</td>
       <td>${badge}</td>
-      <td style="text-align:right">${c.input.toLocaleString()}</td>
-      <td style="text-align:right">${c.output.toLocaleString()}</td>
+      <td style="text-align:right;white-space:nowrap">${c.input.toLocaleString()}</td>
+      <td style="text-align:right;white-space:nowrap">${c.output.toLocaleString()}</td>
       <td style="text-align:center">${statusBadge}</td>
-      <td style="color:#888;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.pergunta||'—'}</td>
+      <td style="color:#ccc;min-width:300px;white-space:nowrap">${c.pergunta||'—'}</td>
     </tr>`;
   });
 }
@@ -2630,8 +2655,15 @@ async def admin_data(request: starlette.requests.Request):
     except:
         reg_csv = 0
     stats = _db_stats()
+    # Somar tokens históricos do banco com contadores da sessão atual
+    tok_hist = _db_token_totals()
     return JSONResponse({
         **_metricas,
+        # Totais acumulados (banco + sessão)
+        "tokens_haiku_in":  tok_hist["haiku_in"]  + _metricas["tokens_haiku_in"],
+        "tokens_haiku_out": tok_hist["haiku_out"] + _metricas["tokens_haiku_out"],
+        "tokens_sonnet_in":  tok_hist["sonnet_in"]  + _metricas["tokens_sonnet_in"],
+        "tokens_sonnet_out": tok_hist["sonnet_out"] + _metricas["tokens_sonnet_out"],
         "total_consultas": stats["total_consultas"],
         "total_erros": stats["total_erros"],
         "consultas": stats["consultas"],
