@@ -1881,6 +1881,7 @@ def debug_nota(nr: str):
         for _, row in dff.iterrows():
             linhas.append({
                 "NUM_DOCTO":    str(row.get('NUM_DOCTO','')),
+                "CHAVE_FATO":   repr(row.get('CHAVE_FATO','')),  # repr mostra espaços/nulos
                 "DATA_MOVTO":   str(row.get('DATA_MOVTO','')),
                 "NOME_FILIAL":  str(row.get('NOME_FILIAL','')),
                 "NOME_CLIENTE": str(row.get('NOME_CLIENTE',''))[:40],
