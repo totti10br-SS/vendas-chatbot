@@ -1704,18 +1704,16 @@ async def chat(req: ChatRequest):
     # ── Desambiguação: usuário escolheu número da lista? ──
     _assist_listou = next(
         (m for m in reversed(req.messages)
-         if m.get("role") == "assistant" and "Qual você precisa?" in str(m.get("content",""))
-         and any(f"{i+1} -" in str(m.get("content","")) for i in range(10))),
+         if m.role == "assistant" and "Qual você precisa?" in str(m.content)
+         and any(f"{i+1} -" in str(m.content) for i in range(10))),
         None
     )
     if _assist_listou and ultima.strip().isdigit():
-        # Extrair lista da resposta anterior
         import re as _re2
-        _linhas = str(_assist_listou.get("content","")).split("\n")
+        _linhas = str(_assist_listou.content).split("\n")
         _opcoes = [l.split(" - ",1)[1].strip() for l in _linhas if _re2.match(r"^\d+ - ", l.strip())]
         _idx = int(ultima.strip()) - 1
         if 0 <= _idx < len(_opcoes):
-            # Substituir cliente pelo exato e reprocessar
             filtro["cliente_exato"] = _opcoes[_idx]
             filtro.pop("cliente", None)
             logging.info(f"[DESAMBIG] cliente escolhido: {_opcoes[_idx]}")
