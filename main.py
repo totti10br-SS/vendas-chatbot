@@ -366,7 +366,7 @@ REGRAS:
 - "esta semana" = segunda-feira até hoje
 - Se período não especificado e tipo for resumo: use o último mês disponível
 - Se cliente não especificado e tipo for ultimas_vendas: precisa_cliente=true
-- IMPORTANTE: Se a última mensagem do assistente no histórico for "Para qual cliente?" (ou similar pedindo nome de cliente), e a pergunta atual for apenas um nome/CNPJ, então herde o tipo da penúltima mensagem do usuário e preencha o cliente com o valor informado agora. NÃO mude o tipo.
+- IMPORTANTE: Se a última mensagem do assistente no histórico for "Para qual cliente?" (ou similar pedindo nome de cliente), e a pergunta atual for apenas um nome/CNPJ, então herde o tipo da penúltima mensagem do usuário e preencha o cliente com o valor informado agora. NÃO mude o tipo. Se não conseguir identificar o tipo anterior, use tipo="ultimas_vendas".
 - Se nr_nota mencionado: tipo="detalhe_nota"
 - Se usuário perguntar "última nota", "última nota emitida", "quando foi a última nota", "qual foi a última nota", "me mostra a última nota" para um cliente: tipo="ultimas_vendas", data_inicio=null, data_fim=null (SEM filtro de período — busca em TODO o histórico), precisa_cliente=true se cliente não informado
 - Se usuário perguntar sobre PDF, DANFE, nota fiscal, NF, ou detalhe de nota SEM informar número: tipo="detalhe_nota", nr_nota=null
@@ -380,7 +380,7 @@ REGRAS:
 - "mesmo dia do mês passado", "até o dia X do mês passado", "até o mesmo dia do mês passado": calcule data_inicio=primeiro dia do mês passado, data_fim=dia X do mês passado (ou mesmo dia do mês atual mas no mês passado). Exemplo: hoje é 14/05 → "até o mesmo dia do mês passado" = data_inicio=01/04/2026, data_fim=14/04/2026
 - tipo_operacao="TODOS" por padrão em TODAS as consultas (inclui produtos e serviços). Somente use "SERVICOS" se o usuário mencionar explicitamente apenas serviços. Somente use "PRODUTOS" se o usuário mencionar explicitamente apenas produtos.
 - Se usuário pedir "em PDF", "relatório PDF", "manda em PDF", "exportar PDF": formato="pdf"
-- "últimas vendas", "últimas notas", "histórico de compras": tipo="ultimas_vendas" → mostra itens de notas (data, NF, produto, kg, valor)
+- "últimas vendas", "últimas notas", "histórico de compras", "relatório de notas", "notas emitidas", "relatório de vendas de um cliente", "notas faturadas": tipo="ultimas_vendas", precisa_cliente=true se cliente não informado, precisa_periodo=true se período não informado
 - "últimos preços", "preço atual", "quanto paga", "tabela de preços": tipo="ultimos_precos"
 - Se mencionar produto específico (ex: "file mignon", "cupim", "peito"): preencha busca_produto com o termo → mostra preço mais recente por produto; se período não especificado: precisa_periodo=false (o sistema assume 90 dias automaticamente)
 - NUNCA invente dados, apenas interprete a pergunta"""
@@ -1709,10 +1709,12 @@ async def chat(req: ChatRequest):
     _eh_ultima_nota = any(
         x in ultima.lower() for x in ["última nota","ultima nota","última nf","ultimo docto","último documento"]
     ) if ultima else False
+    # Só pede período se não veio data nenhuma E não é pedido de "última nota"
     if (filtro.get("tipo") == "ultimas_vendas"
             and not filtro.get("data_inicio")
             and not filtro.get("data_fim")
-            and not _eh_ultima_nota):
+            and not _eh_ultima_nota
+            and filtro.get("cliente")):  # só bloqueia se já tem cliente (evita loop)
         return JSONResponse({"content": [{"type": "text", "text":
             "Qual período você quer analisar? Ex: abril 2026, esta semana, últimos 30 dias...\n\nSe quiser o resultado em PDF, é só pedir! 📄"}]})
 
