@@ -1827,6 +1827,59 @@ def debug_csv():
     except Exception as e:
         return JSONResponse({"erro": str(e)})
 
+@app.get("/debug-nota/{nr}")
+def debug_nota(nr: str):
+    """Diagnóstico: mostra todas as linhas do CSV para uma nota específica."""
+    try:
+        df = load_df()
+        # Busca flexível: string e sem espaços
+        mask = df['NUM_DOCTO'].astype(str).str.strip() == nr.strip()
+        dff = df[mask]
+        if len(dff) == 0:
+            # Tenta busca parcial
+            mask2 = df['NUM_DOCTO'].astype(str).str.contains(nr.strip(), na=False)
+            dff = df[mask2]
+            modo = "parcial"
+        else:
+            modo = "exato"
+
+        if len(dff) == 0:
+            # Mostra amostras de como NUM_DOCTO aparece no CSV
+            amostras = df['NUM_DOCTO'].astype(str).head(20).tolist()
+            return JSONResponse({"encontrado": False, "amostras_num_docto": amostras})
+
+        total_fat = round(float(dff['VALOR_LIQUIDO'].sum()), 2)
+        por_filial = {}
+        if 'NOME_FILIAL' in dff.columns:
+            for fil, grp in dff.groupby('NOME_FILIAL'):
+                por_filial[fil] = round(float(grp['VALOR_LIQUIDO'].sum()), 2)
+
+        linhas = []
+        for _, row in dff.iterrows():
+            linhas.append({
+                "NUM_DOCTO":    str(row.get('NUM_DOCTO','')),
+                "DATA_MOVTO":   str(row.get('DATA_MOVTO','')),
+                "NOME_FILIAL":  str(row.get('NOME_FILIAL','')),
+                "NOME_CLIENTE": str(row.get('NOME_CLIENTE',''))[:40],
+                "DESC_PRODUTO": str(row.get('DESC_PRODUTO',''))[:40],
+                "QTDE_PRI":     round(float(row.get('QTDE_PRI', 0)), 3),
+                "VALOR_UNITARIO": round(float(row.get('VALOR_UNITARIO', 0)), 2),
+                "VALOR_LIQUIDO":  round(float(row.get('VALOR_LIQUIDO', 0)), 2),
+                "TIPO_OPERACAO":  str(row.get('TIPO_OPERACAO','')),
+            })
+
+        return JSONResponse({
+            "nota": nr,
+            "modo_busca": modo,
+            "total_linhas": len(dff),
+            "total_faturamento": total_fat,
+            "por_filial": por_filial,
+            "linhas": linhas
+        })
+    except Exception as e:
+        return JSONResponse({"erro": str(e)})
+
+
 @app.get("/cache/invalidar")
 def invalidar():
     invalidar_cache()
