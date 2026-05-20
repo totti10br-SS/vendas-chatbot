@@ -1792,9 +1792,19 @@ async def chat(req: ChatRequest):
         chave = filtro.get("chave_acesso_override","")
         if not chave and nr and 'NUM_DOCTO' in df.columns:
             dff_nota = df[df['NUM_DOCTO'].astype(str).str.strip() == nr]
+            logging.info(f"[DANFE] Buscando nota {nr}: encontradas {len(dff_nota)} linhas")
             if 'CHAVE_ACESSO' in dff_nota.columns and len(dff_nota) > 0:
-                chave = str(dff_nota['CHAVE_ACESSO'].dropna().iloc[0]).strip() if len(dff_nota['CHAVE_ACESSO'].dropna()) > 0 else ""
-        if chave and re.match(r'^\d{44}$', chave):
+                chave_raw = dff_nota['CHAVE_ACESSO'].dropna()
+                if len(chave_raw) > 0:
+                    # Limpar chave: remover espaços, pontos, traços e nan
+                    chave = str(chave_raw.iloc[0]).strip()
+                    chave = re.sub(r'[^0-9]', '', chave)  # só dígitos
+                    logging.info(f"[DANFE] Chave encontrada: '{chave}' (len={len(chave)})")
+                else:
+                    chave = ""
+                    logging.warning(f"[DANFE] CHAVE_ACESSO vazia para nota {nr}")
+        import re as _re2
+        if chave and _re2.match(r'^\d{44}$', chave):
             try:
                 import asyncio as _asyncio
                 BASE = "https://api.meudanfe.com.br/v2"
@@ -1820,8 +1830,9 @@ async def chat(req: ChatRequest):
                 return JSONResponse({"content": [{"type": "text",
                     "text": f"❌ Não consegui gerar o DANFE da nota {nr}: {e}"}]})
         else:
+            logging.warning(f"[DANFE] Chave inválida para nota {nr}: '{chave}' (len={len(chave) if chave else 0})")
             return JSONResponse({"content": [{"type": "text",
-                "text": f"❌ Chave de acesso da nota {nr} não encontrada ou inválida."}]})
+                "text": f"❌ Não encontrei a chave de acesso da nota {nr} no histórico. Verifique se o número está correto ou informe a chave de acesso manualmente."}]})
 
     # ── Pré-verificação: múltiplos clientes? ──
     if filtro.get("cliente") and not filtro.get("cliente_exato") and 'NOME_CLIENTE' in df.columns:
