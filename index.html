@@ -591,45 +591,86 @@ function toggleVoice(){ /* legado */ }
 
 function speak(text){ /* legado - nao usado */ }
 
+let _micSilenceTimer = null;
+const MIC_SILENCE_MS = 900; // ms de silêncio para encerrar automaticamente
+
+function _micFinalizar(transcript) {
+  if(_micSilenceTimer){ clearTimeout(_micSilenceTimer); _micSilenceTimer = null; }
+  recognition && recognition.stop();
+  const inp = document.getElementById('userInput');
+  if(transcript) { inp.value = transcript; autoResize(inp); }
+  // sendMessage é chamado no onend para garantir ordem
+}
+
 function toggleMic(){
   if(!SpeechRecognition){
     alert('Seu browser não suporta reconhecimento de voz. Use Chrome ou Edge.');
     return;
   }
   if(isRecording){
-    recognition && recognition.stop();
+    _micFinalizar(document.getElementById('userInput').value.trim());
     return;
   }
   recognition = new SpeechRecognition();
   recognition.lang = 'pt-BR';
-  recognition.continuous = false;
-  recognition.interimResults = false;
+  recognition.continuous = true;      // mantém aberto enquanto fala
+  recognition.interimResults = true;  // retorna texto parcial imediatamente
+  recognition.maxAlternatives = 1;
+
+  let _finalTranscript = '';
+
   recognition.onstart = () => {
     isRecording = true;
+    _finalTranscript = '';
     const btn = document.getElementById('micBtn');
     btn.classList.add('recording');
     btn.textContent = '🔴';
   };
+
   recognition.onresult = (e) => {
-    const transcript = e.results[0][0].transcript;
-    document.getElementById('userInput').value = transcript;
-    autoResize(document.getElementById('userInput'));
+    let interim = '';
+    for(let i = e.resultIndex; i < e.results.length; i++){
+      if(e.results[i].isFinal){
+        _finalTranscript += e.results[i][0].transcript;
+      } else {
+        interim += e.results[i][0].transcript;
+      }
+    }
+    // Mostra texto parcial no campo enquanto fala
+    const inp = document.getElementById('userInput');
+    inp.value = _finalTranscript + interim;
+    autoResize(inp);
+
+    // Reinicia timer de silêncio a cada palavra nova
+    if(_micSilenceTimer) clearTimeout(_micSilenceTimer);
+    _micSilenceTimer = setTimeout(() => {
+      // Silêncio detectado — usar o melhor texto disponível
+      if(!_finalTranscript && interim) _finalTranscript = interim;
+      recognition && recognition.stop();
+    }, MIC_SILENCE_MS);
   };
+
   recognition.onend = () => {
+    if(_micSilenceTimer){ clearTimeout(_micSilenceTimer); _micSilenceTimer = null; }
     isRecording = false;
     const btn = document.getElementById('micBtn');
     btn.classList.remove('recording');
     btn.textContent = '🎤';
-    // Envia automaticamente se capturou algo
-    const val = document.getElementById('userInput').value.trim();
-    if(val) sendMessage();
+    const val = (_finalTranscript || document.getElementById('userInput').value).trim();
+    if(val){
+      document.getElementById('userInput').value = val;
+      sendMessage();
+    }
   };
+
   recognition.onerror = (e) => {
+    if(_micSilenceTimer){ clearTimeout(_micSilenceTimer); _micSilenceTimer = null; }
     isRecording = false;
     document.getElementById('micBtn').classList.remove('recording');
     document.getElementById('micBtn').textContent = '🎤';
     if(e.error !== 'no-speech') console.warn('Mic erro:', e.error);
   };
+
   recognition.start();
 }
 // ────────────────────────────────────────────────────────
