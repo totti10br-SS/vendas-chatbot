@@ -9,6 +9,7 @@ import calendar
 import threading
 
 os.environ.setdefault('TZ', 'America/Sao_Paulo')
+IAF_VERSION = "2.2.0-desambig-cnpj"  # agrupamento CNPJ raiz — deploy 21/05/2026
 try:
     import time; time.tzset()
 except AttributeError:
@@ -1890,6 +1891,7 @@ async def chat(req: ChatRequest):
                 dff_pre = dff_pre[mask]
                 break
 
+        logging.info(f"[DESAMBIG-v2.2] iniciando agrupamento | IAF_VERSION={IAF_VERSION} | nome={nome}")
         # ── Agrupar por CNPJ raiz (8 dígitos) ──
         # Estratégia: monta DataFrame com NOME + raiz, agrupa por raiz → conta CNPJs distintos
         _tem_cnpj = 'CPF_CGC' in dff_pre.columns
@@ -3161,7 +3163,7 @@ async def whatsapp_send(request: starlette.requests.Request):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "sistema": "IAF-v2"}
+    return {"status": "ok", "sistema": "IAF-v2", "versao": IAF_VERSION}
 
 # ─────────────────────────────────────────────
 #  IA3 — preservado integralmente
