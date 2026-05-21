@@ -1855,14 +1855,16 @@ async def chat(req: ChatRequest):
             logging.warning(f"[DANFE] Chave inválida: '{chave}' (len={len(chave) if chave else 0})")
 
         # 4. Retornar: texto na tela + PDF do DANFE se disponível
+        # Texto da nota na tela + PDF do DANFE separado
+        danfe_content = [{"type": "text", "text": resposta_texto}]
         if pdf_b64:
-            texto_final = f"{resposta_texto}\nRELATORIO_PDF_BASE64:{pdf_b64}:FILENAME:{pdf_nome}"
+            danfe_content.append({"type": "text", "text": f"RELATORIO_PDF_BASE64:{pdf_b64}:FILENAME:{pdf_nome}"})
         else:
-            texto_final = resposta_texto + f"\n\n⚠️ Não foi possível gerar o DANFE (chave de acesso inválida ou não cadastrada no MeuDanfe)."
+            danfe_content[0]["text"] += "\n\n⚠️ Não foi possível gerar o DANFE (chave não encontrada no MeuDanfe)."
 
         return JSONResponse({
             "id": "iaf-response", "type": "message", "role": "assistant",
-            "content": [{"type": "text", "text": texto_final}],
+            "content": danfe_content,
             "model": "iaf-v2", "stop_reason": "end_turn"
         })
 
@@ -1996,33 +1998,33 @@ async def chat(req: ChatRequest):
         "resumo_diario", "resumo_mensal", "ultimas_vendas",
         "ultimos_precos", "ranking_clientes", "ranking_produtos",
         "ranking_vendedores", "periodo_livre"
-        # detalhe_nota NUNCA entra aqui — sempre usa MeuDanfe
     }
     tipo_resultado = resultado.get("tipo", "")
     _pedir_pdf = any(p in ultima.lower() for p in ["em pdf","no pdf","como pdf","gera pdf","gerar pdf"])
     _ja_tem_pdf = "RELATORIO_PDF_BASE64" in resposta_texto
 
+    # Retornar narração na tela sempre
+    # PDF vai como mensagem separada embutida no content (frontend já sabe processar)
+    content_list = [{"type": "text", "text": resposta_texto}]
+
     if tipo_resultado in _tipos_com_pdf and not _ja_tem_pdf and not _pedir_pdf:
         try:
             import base64 as _b64
-            # Garantir que o filtro tem o tipo correto para o PDF
             filtro_pdf = {**filtro, "tipo": tipo_resultado}
             pdf_bytes = gerar_relatorio_pdf(df, filtro_pdf, resultado)
             pdf_nome  = _proximo_seq_pdf()
             pdf_b64   = _b64.b64encode(pdf_bytes).decode()
-            texto_final = f"{resposta_texto}\nRELATORIO_PDF_BASE64:{pdf_b64}:FILENAME:{pdf_nome}"
+            # PDF como segundo item no content — frontend renderiza separado
+            content_list.append({"type": "text", "text": f"RELATORIO_PDF_BASE64:{pdf_b64}:FILENAME:{pdf_nome}"})
             logging.info(f"[PDF-AUTO] Gerado: {pdf_nome} tipo={tipo_resultado} cliente={filtro.get('cliente','')}")
         except Exception as e:
             logging.error(f"[PDF-AUTO] erro: {e}")
-            texto_final = resposta_texto
-    else:
-        texto_final = resposta_texto
 
     return JSONResponse({
         "id": "iaf-response",
         "type": "message",
         "role": "assistant",
-        "content": [{"type": "text", "text": texto_final}],
+        "content": content_list,
         "model": "iaf-v2",
         "stop_reason": "end_turn"
     })
