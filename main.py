@@ -2109,17 +2109,33 @@ async def chat(req: ChatRequest):
                         if txt and len(txt) < 60 and not any(p in txt.lower() for p in palavras_cmd):
                             filtro["cliente"] = txt
                             break
-            # Herdar busca_produto: busca nos logs de FILTRO do histórico
+            # Herdar busca_produto: extrai do título da última resposta do assistente
+            # ex: "NOTAS FISCAIS COM PICANHA - ABRIL/2026" → busca_produto="picanha"
+            if not filtro.get("busca_produto") and ultima_resp_assist:
+                import re as _re_bp2
+                _m_titulo = _re_bp2.search(
+                    r'(?:notas fiscais com|relatório de vendas[- ·]+|vendas[- ·]+|relatório de vendas · )([a-záàâãéêíóôõúç\w\s]+?)(?:\s*[-··]|\s*\n|\s*$)',
+                    ultima_resp_assist
+                )
+                if _m_titulo:
+                    _prod = _m_titulo.group(1).strip().rstrip("-·· ")
+                    if 2 < len(_prod) < 40:
+                        filtro["busca_produto"] = _prod
+                        logging.warning(f"[PDF] busca_produto do título: {_prod!r}")
+            # Fallback: procura nos msgs do usuário no histórico
             if not filtro.get("busca_produto"):
                 import re as _re_bp2
+                _ignorar = {"nota","notas","venda","vendas","abril","maio","marco","março","janeiro","fevereiro","2026","2025","relatorio","relatório","fiscal","fiscais","mes","mês","periodo","período","pdf","manda","envia"}
                 for msg in reversed(historico[:-1]):
-                    _c = str(msg.get("content",""))
-                    # Procura padrão JSON do filtro logado pelo sistema
-                    _m = _re_bp2.search(r'"busca_produto":\s*"([^"null][^"]*)"', _c)
+                    if msg.get("role") != "user": continue
+                    _c = msg.get("content","").lower()
+                    _m = _re_bp2.search(r'(?:de|com|vendemos)\s+([a-záàâãéêíóôõúç]{4,30})', _c)
                     if _m:
-                        filtro["busca_produto"] = _m.group(1)
-                        logging.warning(f"[PDF] busca_produto herdado: {filtro['busca_produto']}")
-                        break
+                        _prod = _m.group(1).strip()
+                        if _prod not in _ignorar:
+                            filtro["busca_produto"] = _prod
+                            logging.warning(f"[PDF] busca_produto do histórico user: {_prod!r}")
+                            break
             # Se ultimos_precos, garantir 90 dias (o bloco anterior não roda de novo)
             if tipo_detectado == "ultimos_precos":
                 hoje = date.today()
