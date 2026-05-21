@@ -730,9 +730,9 @@ def calcular(df: pd.DataFrame, filtro: dict) -> dict:
         d["itens_nota"] = itens
         d["chave_acesso"] = str(dff['CHAVE_ACESSO'].dropna().iloc[0]).strip() if 'CHAVE_ACESSO' in dff.columns and len(dff) > 0 else None
 
-    # ── Últimas vendas de cliente ──
-    if tipo == "ultimas_vendas" and filtro.get("cliente"):
-        if 'NOME_CLIENTE' in dff.columns:
+    # ── Últimas vendas de cliente (ou por produto sem cliente) ──
+    if tipo == "ultimas_vendas" and (filtro.get("cliente") or filtro.get("cliente_exato") or filtro.get("cnpj_raiz") or filtro.get("busca_produto")):
+        if 'NOME_CLIENTE' in dff.columns and (filtro.get("cliente") or filtro.get("cliente_exato") or filtro.get("cnpj_raiz")):
             d["cliente_encontrado"] = dff['NOME_CLIENTE'].iloc[0]
 
         # Resumo por nota (agrupado) — 1 linha por nota
