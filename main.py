@@ -392,6 +392,7 @@ REGRAS:
 - "últimas vendas", "últimas notas", "histórico de compras", "relatório de notas", "notas emitidas", "relatório de vendas de um cliente", "notas faturadas": tipo="ultimas_vendas", precisa_cliente=true se cliente não informado, precisa_periodo=true se período não informado
 - "últimos preços", "preço atual", "quanto paga", "tabela de preços": tipo="ultimos_precos"
 - Se mencionar produto específico (ex: "file mignon", "cupim", "peito"): preencha busca_produto com o termo → mostra preço mais recente por produto; se período não especificado: precisa_periodo=false (o sistema assume 90 dias automaticamente)
+- DISTINÇÃO busca_produto: se a pergunta for sobre "notas fiscais", "relatório de notas", "quando vendemos X", "notas com X", "quais notas tem X" → tipo="ultimas_vendas" + busca_produto. Se for sobre preço/valor do produto → tipo="ultimos_precos" + busca_produto
 - NUNCA invente dados, apenas interprete a pergunta"""
 
     async with httpx.AsyncClient(timeout=30) as client:
