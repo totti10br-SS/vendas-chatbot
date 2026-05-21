@@ -1692,12 +1692,42 @@ async def chat(req: ChatRequest):
     if _assist_listou and ultima.strip().isdigit():
         import re as _re2
         _linhas = str(_assist_listou.content).split("\n")
-        _opcoes = [l.split(" - ",1)[1].strip() for l in _linhas if _re2.match(r"^\d+ - ", l.strip())]
+        # Extrair labels das opções (texto após "N - ")
+        _opcoes_labels = [l.split(" - ",1)[1].strip() for l in _linhas if _re2.match(r"^\d+ - ", l.strip())]
         _idx = int(ultima.strip()) - 1
-        if 0 <= _idx < len(_opcoes):
-            filtro["cliente_exato"] = _opcoes[_idx]
-            filtro.pop("cliente", None)
-            logging.info(f"[DESAMBIG] cliente escolhido: {_opcoes[_idx]}")
+        if 0 <= _idx < len(_opcoes_labels):
+            label_escolhido = _opcoes_labels[_idx]
+            # Extrair CNPJ raiz do label se estiver presente (formato "NOME · 12345678")
+            _cnpj_no_label = _re2.search(r'·\s*(\d{8})', label_escolhido)
+            _cnpj_raiz_do_label = _cnpj_no_label.group(1) if _cnpj_no_label else None
+            # Remover sufixo " · CNPJ" e " (N filiais)" para recuperar nome real
+            label_limpo = _re2.sub(r'\s*·\s*\d{8}.*$', '', label_escolhido).strip()
+            label_limpo = _re2.sub(r'\s*\(\d+ filia[li]s\)\s*$', '', label_limpo).strip()
+
+            # Usar CNPJ raiz do label (mais confiável); fallback: buscar no CSV
+            _cnpj_raiz_escolhido = _cnpj_raiz_do_label
+            if not _cnpj_raiz_escolhido and 'CPF_CGC' in df.columns and 'NOME_CLIENTE' in df.columns:
+                _mask_nome = df['NOME_CLIENTE'].str.lower().str.contains(label_limpo.lower()[:20], na=False)
+                _df_match = df[_mask_nome]
+                if len(_df_match) > 0:
+                    _raiz_serie = _df_match['CPF_CGC'].astype(str).str.replace(r'\D','',regex=True).str[:8]
+                    _raizes = _raiz_serie.dropna().unique()
+                    if len(_raizes) == 1 and len(_raizes[0]) == 8:
+                        _cnpj_raiz_escolhido = _raizes[0]
+
+            # Se " filiais" aparece no label → agrupar por CNPJ raiz
+            _e_grupo = "filiai" in label_escolhido.lower() and _cnpj_raiz_escolhido
+
+            if _e_grupo:
+                filtro["cnpj_raiz"] = _cnpj_raiz_escolhido
+                filtro.pop("cliente", None)
+                filtro.pop("cliente_exato", None)
+                logging.info(f"[DESAMBIG] grupo escolhido: {label_limpo} → cnpj_raiz={_cnpj_raiz_escolhido}")
+            else:
+                filtro["cliente_exato"] = label_limpo
+                filtro.pop("cliente", None)
+                logging.info(f"[DESAMBIG] cliente exato escolhido: {label_limpo}")
+
             # Herdar tipo e demais campos da penúltima msg do usuário
             msgs_user = [m for m in req.messages if m.role == "user"]
             if len(msgs_user) >= 2:
@@ -1859,16 +1889,71 @@ async def chat(req: ChatRequest):
             if mask.sum() > 0:
                 dff_pre = dff_pre[mask]
                 break
-        clientes_distintos = sorted(dff_pre['NOME_CLIENTE'].dropna().unique().tolist())
-        if len(clientes_distintos) > 1:
-            lista = "\n\n".join([f"**{i+1}** - {c}" for i, c in enumerate(clientes_distintos[:10])])
-            msg = (f"Encontrei **{len(clientes_distintos)}** empresas com \"{nome}\" na razão social. "
+
+        # ── Agrupar por razão social idêntica OU CNPJ raiz igual ──
+        # Monta mapa: nome_cliente → cnpj_raiz (8 dígitos)
+        _tem_cnpj = 'CPF_CGC' in dff_pre.columns
+        if _tem_cnpj:
+            _raiz_map = (
+                dff_pre[['NOME_CLIENTE','CPF_CGC']].dropna(subset=['NOME_CLIENTE'])
+                .assign(raiz=lambda x: x['CPF_CGC'].astype(str).str.replace(r'\D','',regex=True).str[:8])
+                .groupby('NOME_CLIENTE')['raiz'].first()
+                .to_dict()
+            )
+        else:
+            _raiz_map = {}
+
+        # Agrupa: chave = (nome_normalizado, cnpj_raiz) → lista de nomes exatos
+        _grupos = {}  # chave → {"nomes": [...], "cnpj_raiz": str}
+        for nome_cli in dff_pre['NOME_CLIENTE'].dropna().unique():
+            raiz = _raiz_map.get(nome_cli, "")
+            # Chave de agrupamento: mesmo nome OU mesmo CNPJ raiz (se raiz não-vazia)
+            chave_grp = raiz if raiz else nome_cli
+            if chave_grp not in _grupos:
+                _grupos[chave_grp] = {"nomes": [], "cnpj_raiz": raiz}
+            _grupos[chave_grp]["nomes"].append(nome_cli)
+
+        # Monta lista de opções agrupadas
+        _opcoes_agrupadas = []  # cada item: {"label": str, "cnpj_raiz": str, "nome_exato": str|None, "n_filiais": int}
+        for chave_grp, grp in _grupos.items():
+            nomes_unicos = sorted(set(grp["nomes"]))
+            raiz = grp["cnpj_raiz"]
+            raiz_fmt = f" · {raiz}" if raiz else ""
+            # Se todos os nomes são idênticos → mesma razão social, filiais diferentes
+            n = len(nomes_unicos)
+            if n == 1:
+                label_nome = nomes_unicos[0]
+                n_fil = len(grp["nomes"])
+                filiais_fmt = f" ({n_fil} filiais)" if n_fil > 1 else ""
+                label = f"{label_nome}{raiz_fmt}{filiais_fmt}"
+                _opcoes_agrupadas.append({
+                    "label": label,
+                    "label_nome": label_nome,
+                    "cnpj_raiz": raiz,
+                    "nome_exato": nomes_unicos[0],
+                    "n_filiais": n_fil
+                })
+            else:
+                # Nomes diferentes mas mesmo CNPJ raiz — lista todos
+                for nome_u in nomes_unicos:
+                    _opcoes_agrupadas.append({
+                        "label": f"{nome_u}{raiz_fmt}",
+                        "label_nome": nome_u,
+                        "cnpj_raiz": raiz,
+                        "nome_exato": nome_u,
+                        "n_filiais": 1
+                    })
+
+        _opcoes_agrupadas = sorted(_opcoes_agrupadas, key=lambda x: x["label"])[:10]
+
+        if len(_opcoes_agrupadas) > 1:
+            lista = "\n\n".join([f"**{i+1}** - {o['label']}" for i, o in enumerate(_opcoes_agrupadas)])
+            msg = (f"Encontrei **{len(_opcoes_agrupadas)}** opções com \"{nome}\" na razão social. "
                    f"Qual você precisa?\n\n{lista}\n\n"
                    f"Digite o número correspondente.")
-            # Guardar lista para próxima mensagem
             import json as _json
             return JSONResponse({"content": [{"type": "text", "text": msg}],
-                                 "_clientes_lista": clientes_distintos[:10],
+                                 "_opcoes_agrupadas": _opcoes_agrupadas,
                                  "_filtro_pendente": _json.dumps(filtro)})
 
     # ETAPA 2 — Calcular
