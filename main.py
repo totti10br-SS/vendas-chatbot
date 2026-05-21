@@ -391,7 +391,11 @@ REGRAS:
 - Se usuário pedir "em PDF", "relatório PDF", "manda em PDF", "exportar PDF": formato="pdf"
 - "últimas vendas", "últimas notas", "histórico de compras", "relatório de notas", "notas emitidas", "relatório de vendas de um cliente", "notas faturadas": tipo="ultimas_vendas", precisa_cliente=true se cliente não informado, precisa_periodo=true se período não informado
 - "últimos preços", "preço atual", "quanto paga", "tabela de preços": tipo="ultimos_precos"
-- Se mencionar produto específico (ex: "file mignon", "cupim", "peito"): preencha busca_produto com o termo → mostra preço mais recente por produto; se período não especificado: precisa_periodo=false (o sistema assume 90 dias automaticamente)
+- Se mencionar produto específico (ex: "file mignon", "cupim", "peito", "picanha"):
+  * Se contexto for PREÇO ("quanto paga", "preço do", "tabela de", "último preço"): tipo="ultimos_precos", busca_produto=<termo>
+  * Se contexto for NOTAS/RELATÓRIO ("notas com", "notas que tenham", "notas de", "relatório de notas com", "notas faturadas de", "vendas de"): tipo="ultimas_vendas", busca_produto=<termo>, precisa_periodo=true se período não informado
+  * Se contexto for PEDIDO DIRETO DE PDF ("me manda em PDF notas que tenham", "relatório em PDF de"): tipo="ultimas_vendas", busca_produto=<termo>, formato="pdf"
+  * Se dúvida: tipo="ultimas_vendas", busca_produto=<termo>
 - NUNCA invente dados, apenas interprete a pergunta"""
 
     async with httpx.AsyncClient(timeout=30) as client:
@@ -1248,11 +1252,36 @@ def gerar_relatorio_pdf(df: pd.DataFrame, filtro: dict, resultado: dict) -> byte
     notas = int(dff["NUM_DOCTO"].nunique()) if "NUM_DOCTO" in dff.columns else 0
     pm    = round(fat / kg, 2) if kg > 0 else 0
 
+    # ── Filtro por produto no PDF ──
+    produto_label = None
+    if filtro.get("busca_produto") and "DESC_PRODUTO" in dff.columns:
+        bp = filtro["busca_produto"]
+        for tam in [len(bp), 10, 5]:
+            tam = min(tam, len(bp))
+            mask = dff["DESC_PRODUTO"].str.lower().str.contains(bp.lower()[:tam], na=False)
+            if mask.sum() > 0:
+                dff = dff[mask]
+                produto_label = bp.upper()
+                logging.warning(f"[PDF-PRODUTO] filtrado por '{bp}': {len(dff)} linhas")
+                break
+
+    if len(dff) == 0:
+        raise Exception(f"Sem dados para o produto '{filtro.get('busca_produto')}' no período solicitado.")
+
+    # Recalcular KPIs após filtro de produto
+    if produto_label:
+        fat   = round(float(dff["VALOR_LIQUIDO"].sum()), 2)
+        kg    = round(float(dff["QTDE_PRI"].sum()), 2) if "QTDE_PRI" in dff.columns else 0
+        cx    = int(round(kg / 30, 0))
+        notas = int(dff["NUM_DOCTO"].nunique()) if "NUM_DOCTO" in dff.columns else 0
+        pm    = round(fat / kg, 2) if kg > 0 else 0
+
     # ── Labels do cabeçalho ──
     filial_label = filtro.get("filial") or "Todas as Filiais"
     subtitulo_parts = [filial_label]
     if cliente_label: subtitulo_parts.append(f"Cliente: {str(cliente_label)[:40]}")
     if vendedor_label: subtitulo_parts.append(f"Vendedor: {str(vendedor_label)[:30]}")
+    if produto_label: subtitulo_parts.append(f"Produto: {produto_label}")
     subtitulo = " · ".join(subtitulo_parts)
 
     # ── Título do relatório por tipo ──
@@ -2085,6 +2114,11 @@ async def chat(req: ChatRequest):
                 "mês anterior", "mes anterior", "período anterior"]):
             tipo_detectado = "comparativo"
 
+        # Se tipo_detectado não identificado mas filtro já tem busca_produto → forçar ultimas_vendas
+        if not tipo_detectado and filtro.get("busca_produto") and filtro.get("tipo") in ("periodo_livre", "indefinido", None):
+            tipo_detectado = "ultimas_vendas"
+            logging.warning(f"[PDF] busca_produto detectado sem tipo → forçando ultimas_vendas | produto={filtro.get('busca_produto')}")
+
         if tipo_detectado:
             filtro["tipo"] = tipo_detectado
             palavras_cmd = ["pdf","preço","preco","venda","ranking","último","ultim","relatorio","relatório","quanto","tabela","histórico","historico","notas","manda","gera","exporta","em pdf","analítico","analitico"]
@@ -2096,23 +2130,17 @@ async def chat(req: ChatRequest):
                         if txt and len(txt) < 60 and not any(p in txt.lower() for p in palavras_cmd):
                             filtro["cliente"] = txt
                             break
-            # Herdar busca_produto da última pergunta do usuário
+            # Herdar busca_produto: 1) do filtro JSON logado, 2) dos logs do Railway
             if not filtro.get("busca_produto"):
+                import re as _re_prod
+                # Procurar busca_produto nos logs do assistente (formato [FILTRO] {...})
                 for msg in reversed(historico[:-1]):
-                    if msg.get("role") == "user":
-                        txt = msg.get("content", "").strip()
-                        if txt and not any(p in txt.lower() for p in palavras_cmd):
-                            # Extrair busca_produto do filtro interpretado anteriormente
-                            # via observacao da última msg do assistente
-                            break
-                # Tentar extrair do histórico recente: última pergunta que não é comando
-                for msg in reversed(historico[:-1]):
-                    if msg.get("role") == "user":
-                        txt = msg.get("content", "").strip().lower()
-                        if txt and not any(p in txt for p in palavras_cmd) and len(txt) < 80:
-                            # Se a pergunta anterior tinha palavra de produto, herda
-                            filtro["busca_produto"] = msg.get("content","").strip()
-                            break
+                    _c = str(msg.get("content",""))
+                    _m = _re_prod.search(r'"busca_produto":\s*"([^"]+)"', _c)
+                    if _m and _m.group(1).lower() not in ("null","none",""):
+                        filtro["busca_produto"] = _m.group(1)
+                        logging.warning(f"[PDF] busca_produto herdado do histórico: {filtro['busca_produto']}")
+                        break
             # Se ultimos_precos, garantir 90 dias (o bloco anterior não roda de novo)
             if tipo_detectado == "ultimos_precos":
                 hoje = date.today()
