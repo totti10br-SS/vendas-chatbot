@@ -1772,9 +1772,16 @@ async def chat(req: ChatRequest):
             "Qual período você quer analisar? Ex: março 2026, esta semana, últimos 30 dias...\n\nSe quiser o resultado em PDF, é só pedir! 📄"}]})
 
     # Nota: pede número se não informado
+    # Tentar extrair nr_nota direto da pergunta se Haiku não preencheu
     if filtro.get("tipo") == "detalhe_nota" and not filtro.get("nr_nota"):
-        return JSONResponse({"content": [{"type": "text", "text":
-            "📄 Claro! Qual o **número da nota fiscal** que deseja consultar?\n\nSe preferir, pode informar também o nome do cliente para eu localizar mais rápido."}]})
+        import re as _re_nr
+        m_nr = _re_nr.search(r'\b(1[0-9]{5,6})\b', ultima)  # número 6-7 dígitos
+        if m_nr:
+            filtro["nr_nota"] = m_nr.group(1)
+            logging.info(f"[DETALHE] nr_nota extraído da pergunta: {filtro['nr_nota']}")
+        else:
+            return JSONResponse({"content": [{"type": "text", "text":
+                "📄 Claro! Qual o **número da nota fiscal** que deseja consultar?\n\nSe preferir, pode informar também o nome do cliente para eu localizar mais rápido."}]})
 
     # Nota não encontrada
     if filtro.get("nr_nota"):
