@@ -1890,58 +1890,63 @@ async def chat(req: ChatRequest):
                 dff_pre = dff_pre[mask]
                 break
 
-        # ── Agrupar por razão social idêntica OU CNPJ raiz igual ──
-        # Monta mapa: nome_cliente → cnpj_raiz (8 dígitos)
+        # ── Agrupar por CNPJ raiz (8 dígitos) ──
+        # Estratégia: monta DataFrame com NOME + raiz, agrupa por raiz → conta CNPJs distintos
         _tem_cnpj = 'CPF_CGC' in dff_pre.columns
         if _tem_cnpj:
-            _raiz_map = (
-                dff_pre[['NOME_CLIENTE','CPF_CGC']].dropna(subset=['NOME_CLIENTE'])
-                .assign(raiz=lambda x: x['CPF_CGC'].astype(str).str.replace(r'\D','',regex=True).str[:8])
-                .groupby('NOME_CLIENTE')['raiz'].first()
-                .to_dict()
+            _df_grp = (
+                dff_pre[['NOME_CLIENTE','CPF_CGC']].dropna(subset=['NOME_CLIENTE']).copy()
             )
+            _df_grp['_raiz'] = _df_grp['CPF_CGC'].astype(str).str.replace(r'\D','',regex=True).str[:8]
+            # Para cada combinação única (NOME, raiz) conta quantos CNPJs completos existem
+            _df_grp['_cnpj14'] = _df_grp['CPF_CGC'].astype(str).str.replace(r'\D','',regex=True).str[:14]
+            # Tabela: uma linha por (nome, raiz) com contagem de CNPJs distintos
+            _resumo = (
+                _df_grp.groupby(['NOME_CLIENTE','_raiz'])
+                .agg(n_cnpjs=('_cnpj14', 'nunique'))
+                .reset_index()
+            )
+            # Agora agrupar por raiz — junta nomes com mesma raiz
+            _por_raiz = {}
+            for _, row in _resumo.iterrows():
+                r = row['_raiz']
+                if r not in _por_raiz:
+                    _por_raiz[r] = {'nomes': [], 'n_cnpjs': 0}
+                _por_raiz[r]['nomes'].append(row['NOME_CLIENTE'])
+                _por_raiz[r]['n_cnpjs'] += int(row['n_cnpjs'])
         else:
-            _raiz_map = {}
-
-        # Agrupa: chave = (nome_normalizado, cnpj_raiz) → lista de nomes exatos
-        _grupos = {}  # chave → {"nomes": [...], "cnpj_raiz": str}
-        for nome_cli in dff_pre['NOME_CLIENTE'].dropna().unique():
-            raiz = _raiz_map.get(nome_cli, "")
-            # Chave de agrupamento: mesmo nome OU mesmo CNPJ raiz (se raiz não-vazia)
-            chave_grp = raiz if raiz else nome_cli
-            if chave_grp not in _grupos:
-                _grupos[chave_grp] = {"nomes": [], "cnpj_raiz": raiz}
-            _grupos[chave_grp]["nomes"].append(nome_cli)
+            # Sem CNPJ: agrupa por nome exato apenas
+            _por_raiz = {}
+            for n_cli in dff_pre['NOME_CLIENTE'].dropna().unique():
+                _por_raiz[n_cli] = {'nomes': [n_cli], 'n_cnpjs': 1}
 
         # Monta lista de opções agrupadas
-        _opcoes_agrupadas = []  # cada item: {"label": str, "cnpj_raiz": str, "nome_exato": str|None, "n_filiais": int}
-        for chave_grp, grp in _grupos.items():
-            nomes_unicos = sorted(set(grp["nomes"]))
-            raiz = grp["cnpj_raiz"]
-            raiz_fmt = f" · {raiz}" if raiz else ""
-            # Se todos os nomes são idênticos → mesma razão social, filiais diferentes
-            n = len(nomes_unicos)
-            if n == 1:
+        _opcoes_agrupadas = []
+        for raiz, grp in _por_raiz.items():
+            nomes_unicos = sorted(set(grp['nomes']))
+            raiz_fmt = f" · {raiz}" if _tem_cnpj and len(raiz) == 8 else ""
+            n_cnpjs = grp['n_cnpjs']
+            if len(nomes_unicos) == 1:
+                # Nome único para esta raiz — pode ter várias filiais (CNPJs distintos)
                 label_nome = nomes_unicos[0]
-                n_fil = len(grp["nomes"])
-                filiais_fmt = f" ({n_fil} filiais)" if n_fil > 1 else ""
+                filiais_fmt = f" ({n_cnpjs} filiais)" if n_cnpjs > 1 else ""
                 label = f"{label_nome}{raiz_fmt}{filiais_fmt}"
                 _opcoes_agrupadas.append({
                     "label": label,
                     "label_nome": label_nome,
-                    "cnpj_raiz": raiz,
-                    "nome_exato": nomes_unicos[0],
-                    "n_filiais": n_fil
+                    "cnpj_raiz": raiz if _tem_cnpj else "",
+                    "nome_exato": label_nome,
+                    "n_filiais": n_cnpjs,
                 })
             else:
-                # Nomes diferentes mas mesmo CNPJ raiz — lista todos
+                # Nomes diferentes com mesma raiz — lista separado
                 for nome_u in nomes_unicos:
                     _opcoes_agrupadas.append({
                         "label": f"{nome_u}{raiz_fmt}",
                         "label_nome": nome_u,
-                        "cnpj_raiz": raiz,
+                        "cnpj_raiz": raiz if _tem_cnpj else "",
                         "nome_exato": nome_u,
-                        "n_filiais": 1
+                        "n_filiais": 1,
                     })
 
         _opcoes_agrupadas = sorted(_opcoes_agrupadas, key=lambda x: x["label"])[:10]
