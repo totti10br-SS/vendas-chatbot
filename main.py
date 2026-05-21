@@ -1783,20 +1783,24 @@ async def chat(req: ChatRequest):
             return JSONResponse({"content": [{"type": "text", "text":
                 "📄 Claro! Qual o **número da nota fiscal** que deseja consultar?\n\nSe preferir, pode informar também o nome do cliente para eu localizar mais rápido."}]})
 
-    # Nota não encontrada
-    if filtro.get("nr_nota"):
+    # Nota não encontrada — bloquear antes do DANFE
+    if filtro.get("tipo") == "detalhe_nota" and filtro.get("nr_nota"):
         if 'NUM_DOCTO' in df.columns:
             encontrou = (df['NUM_DOCTO'].astype(str).str.strip() == str(filtro["nr_nota"]).strip()).sum()
             if encontrou == 0:
                 return JSONResponse({"content": [{"type": "text", "text":
                     f"❌ Nota **{filtro['nr_nota']}** não encontrada nos dados disponíveis."}]})
+    elif filtro.get("nr_nota") and 'NUM_DOCTO' in df.columns:
+        encontrou = (df['NUM_DOCTO'].astype(str).str.strip() == str(filtro["nr_nota"]).strip()).sum()
+        if encontrou == 0:
+            return JSONResponse({"content": [{"type": "text", "text":
+                f"❌ Nota **{filtro['nr_nota']}** não encontrada nos dados disponíveis."}]})
 
-    # ── Fluxo DANFE automático ──
-    # Se formato="danfe", busca chave_acesso e gera PDF via MeuDanfe
-    # formato=danfe é o padrão para detalhe_nota (gera DANFE via MeuDanfe)
-    _formato_nota = filtro.get("formato", "danfe")  # default danfe
-    if filtro.get("tipo") == "detalhe_nota" and _formato_nota == "danfe":
+    # ── Fluxo detalhe_nota: mostra na tela + gera DANFE via MeuDanfe ──
+    if filtro.get("tipo") == "detalhe_nota":
         nr = str(filtro.get("nr_nota","")).strip()
+
+        # 1. Buscar chave de acesso no CSV
         chave = filtro.get("chave_acesso_override","")
         if not chave and nr and 'NUM_DOCTO' in df.columns:
             dff_nota = df[df['NUM_DOCTO'].astype(str).str.strip() == nr]
@@ -1804,13 +1808,27 @@ async def chat(req: ChatRequest):
             if 'CHAVE_ACESSO' in dff_nota.columns and len(dff_nota) > 0:
                 chave_raw = dff_nota['CHAVE_ACESSO'].dropna()
                 if len(chave_raw) > 0:
-                    # Limpar chave: remover espaços, pontos, traços e nan
-                    chave = str(chave_raw.iloc[0]).strip()
-                    chave = re.sub(r'[^0-9]', '', chave)  # só dígitos
-                    logging.info(f"[DANFE] Chave encontrada: '{chave}' (len={len(chave)})")
+                    chave = re.sub(r'[^0-9]', '', str(chave_raw.iloc[0]).strip())
+                    logging.info(f"[DANFE] Chave: '{chave}' (len={len(chave)})")
                 else:
-                    chave = ""
                     logging.warning(f"[DANFE] CHAVE_ACESSO vazia para nota {nr}")
+
+        # 2. Calcular detalhe e narrar na tela
+        try:
+            resultado = calcular(df, filtro)
+        except Exception as e:
+            logging.error(f"[CALCULAR detalhe_nota] erro: {e}")
+            resultado = {"tipo": "detalhe_nota", "dados": {}, "sem_dados": True}
+
+        try:
+            resposta_texto = await narrar(ultima, resultado, historico[:-1], req.modo)
+        except Exception as e:
+            logging.error(f"[NARRAR detalhe_nota] erro: {e}")
+            resposta_texto = f"Nota {nr} localizada no sistema."
+
+        # 3. Tentar gerar DANFE via MeuDanfe e anexar ao retorno
+        pdf_b64 = ""
+        pdf_nome = ""
         import re as _re2
         if chave and _re2.match(r'^\d{44}$', chave):
             try:
@@ -1820,7 +1838,7 @@ async def chat(req: ChatRequest):
                 async with httpx.AsyncClient(timeout=60) as client:
                     r = await client.get(f"{BASE}/fd/get/da/{chave}", headers=headers_md)
                     if r.status_code == 404 or len(r.content) == 0:
-                        r2 = await client.put(f"{BASE}/fd/add/{chave}", headers=headers_md)
+                        await client.put(f"{BASE}/fd/add/{chave}", headers=headers_md)
                         for _ in range(10):
                             await _asyncio.sleep(2)
                             r = await client.get(f"{BASE}/fd/get/da/{chave}", headers=headers_md)
@@ -1830,17 +1848,23 @@ async def chat(req: ChatRequest):
                     import base64 as _b64
                     pdf_b64 = _b64.b64encode(r.content).decode()
                     pdf_nome = _proximo_seq_pdf()
-                    resposta_txt = f"📄 DANFE da NE {nr} gerado com sucesso!"
-                    return JSONResponse({"content": [{"type": "text",
-                        "text": f"RELATORIO_PDF_BASE64:{pdf_b64}:FILENAME:{pdf_nome}\n{resposta_txt}"}]})
+                    logging.info(f"[DANFE] PDF gerado: {pdf_nome}")
             except Exception as e:
-                logging.error(f"[DANFE-AUTO] erro: {e}")
-                return JSONResponse({"content": [{"type": "text",
-                    "text": f"❌ Não consegui gerar o DANFE da nota {nr}: {e}"}]})
+                logging.error(f"[DANFE] erro: {e}")
         else:
-            logging.warning(f"[DANFE] Chave inválida para nota {nr}: '{chave}' (len={len(chave) if chave else 0})")
-            return JSONResponse({"content": [{"type": "text",
-                "text": f"❌ Não encontrei a chave de acesso da nota {nr} no histórico. Verifique se o número está correto ou informe a chave de acesso manualmente."}]})
+            logging.warning(f"[DANFE] Chave inválida: '{chave}' (len={len(chave) if chave else 0})")
+
+        # 4. Retornar: texto na tela + PDF do DANFE se disponível
+        if pdf_b64:
+            texto_final = f"RELATORIO_PDF_BASE64:{pdf_b64}:FILENAME:{pdf_nome}\n{resposta_texto}"
+        else:
+            texto_final = resposta_texto + f"\n\n⚠️ Não foi possível gerar o DANFE (chave de acesso inválida ou não cadastrada no MeuDanfe)."
+
+        return JSONResponse({
+            "id": "iaf-response", "type": "message", "role": "assistant",
+            "content": [{"type": "text", "text": texto_final}],
+            "model": "iaf-v2", "stop_reason": "end_turn"
+        })
 
     # ── Pré-verificação: múltiplos clientes? ──
     if filtro.get("cliente") and not filtro.get("cliente_exato") and 'NOME_CLIENTE' in df.columns:
@@ -1972,6 +1996,7 @@ async def chat(req: ChatRequest):
         "resumo_diario", "resumo_mensal", "ultimas_vendas",
         "ultimos_precos", "ranking_clientes", "ranking_produtos",
         "ranking_vendedores", "periodo_livre"
+        # detalhe_nota NUNCA entra aqui — sempre usa MeuDanfe
     }
     tipo_resultado = resultado.get("tipo", "")
     _pedir_pdf = any(p in ultima.lower() for p in ["em pdf","no pdf","como pdf","gera pdf","gerar pdf"])
