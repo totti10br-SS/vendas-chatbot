@@ -9,7 +9,6 @@ import calendar
 import threading
 
 os.environ.setdefault('TZ', 'America/Sao_Paulo')
-IAF_VERSION = "2.1.0-desambig-cnpj"  # versão com agrupamento por CNPJ raiz
 try:
     import time; time.tzset()
 except AttributeError:
@@ -1891,7 +1890,6 @@ async def chat(req: ChatRequest):
                 dff_pre = dff_pre[mask]
                 break
 
-        logging.info(f"[DESAMBIG-v2] agrupamento por CNPJ raiz ativo | IAF_VERSION={IAF_VERSION}")
         # ── Agrupar por CNPJ raiz (8 dígitos) ──
         # Estratégia: monta DataFrame com NOME + raiz, agrupa por raiz → conta CNPJs distintos
         _tem_cnpj = 'CPF_CGC' in dff_pre.columns
@@ -1908,6 +1906,8 @@ async def chat(req: ChatRequest):
                 .agg(n_cnpjs=('_cnpj14', 'nunique'))
                 .reset_index()
             )
+            # LOG: mostrar o que foi encontrado no CSV para debug
+            logging.info(f"[DESAMBIG-v2] _resumo (nome+raiz únicos): {_resumo[['NOME_CLIENTE','_raiz','n_cnpjs']].to_dict('records')}")
             # Agora agrupar por raiz — junta nomes com mesma raiz
             _por_raiz = {}
             for _, row in _resumo.iterrows():
@@ -1916,6 +1916,7 @@ async def chat(req: ChatRequest):
                     _por_raiz[r] = {'nomes': [], 'n_cnpjs': 0}
                 _por_raiz[r]['nomes'].append(row['NOME_CLIENTE'])
                 _por_raiz[r]['n_cnpjs'] += int(row['n_cnpjs'])
+            logging.info(f"[DESAMBIG-v2] _por_raiz resultante: { {k: v for k,v in _por_raiz.items()} }")
         else:
             # Sem CNPJ: agrupa por nome exato apenas
             _por_raiz = {}
@@ -3160,7 +3161,7 @@ async def whatsapp_send(request: starlette.requests.Request):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "sistema": "IAF-v2", "versao": IAF_VERSION}
+    return {"status": "ok", "sistema": "IAF-v2"}
 
 # ─────────────────────────────────────────────
 #  IA3 — preservado integralmente
