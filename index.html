@@ -1205,6 +1205,21 @@ function abrirDanfe(chave) {
 }
 
 function abrirDanfeModal(chave) {
+  // Download direto do PDF via fetch + blob
+  var nomeArq = 'DANFE_' + chave.substring(25,34) + '.pdf';
+  fetch('/danfe/' + chave)
+    .then(function(r){ return r.blob(); })
+    .then(function(blob){
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = nomeArq;
+      a.click();
+      URL.revokeObjectURL(url);
+    })
+    .catch(function(err){ alert('Erro ao baixar DANFE: ' + err.message); });
+  return;
+  // (código do modal abaixo mantido como fallback mas não executado)
   var overlay = document.getElementById('danfeOverlay');
   var iframe  = document.getElementById('danfeIframe');
   var loading = document.getElementById('danfeLoading');
