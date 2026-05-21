@@ -1960,11 +1960,37 @@ async def chat(req: ChatRequest):
         logging.error(f"[NARRAR] erro: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao narrar: {e}")
 
+    # ── PDF automático para tipos de relatório ──
+    _tipos_com_pdf = {
+        "resumo_diario", "resumo_mensal", "ultimas_vendas",
+        "ultimos_precos", "ranking_clientes", "ranking_produtos",
+        "ranking_vendedores", "periodo_livre"
+    }
+    tipo_resultado = resultado.get("tipo", "")
+    _pedir_pdf = any(p in ultima.lower() for p in ["em pdf","no pdf","como pdf","gera pdf","gerar pdf"])
+    _ja_tem_pdf = "RELATORIO_PDF_BASE64" in resposta_texto
+
+    if tipo_resultado in _tipos_com_pdf and not _ja_tem_pdf and not _pedir_pdf:
+        try:
+            import base64 as _b64
+            # Garantir que o filtro tem o tipo correto para o PDF
+            filtro_pdf = {**filtro, "tipo": tipo_resultado}
+            pdf_bytes = gerar_relatorio_pdf(df, filtro_pdf, resultado)
+            pdf_nome  = _proximo_seq_pdf()
+            pdf_b64   = _b64.b64encode(pdf_bytes).decode()
+            texto_final = f"RELATORIO_PDF_BASE64:{pdf_b64}:FILENAME:{pdf_nome}\n{resposta_texto}"
+            logging.info(f"[PDF-AUTO] Gerado: {pdf_nome} tipo={tipo_resultado} cliente={filtro.get('cliente','')}")
+        except Exception as e:
+            logging.error(f"[PDF-AUTO] erro: {e}")
+            texto_final = resposta_texto
+    else:
+        texto_final = resposta_texto
+
     return JSONResponse({
         "id": "iaf-response",
         "type": "message",
         "role": "assistant",
-        "content": [{"type": "text", "text": resposta_texto}],
+        "content": [{"type": "text", "text": texto_final}],
         "model": "iaf-v2",
         "stop_reason": "end_turn"
     })
