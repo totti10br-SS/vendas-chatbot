@@ -963,7 +963,6 @@ Sua missão é transformar dados de vendas em informação clara e útil para a 
   CASO ESPECIAL — ÚLTIMA NOTA: Se "resumo_notas" tiver exatamente 1 nota:
   **Nota [nr_nota]** · [data] · [filial]
   **Faturamento:** R$ [fat] | **Volume:** [kg] kg | **Itens:** [n_itens]
-  Pergunte: "Deseja o PDF (DANFE) desta nota?"
 - ranking_clientes: Tabela com posição, nome, kg, cx30, faturamento, R$/kg
 - ranking_vendedores: Tabela com cod, nome, kg, cx30, faturamento, notas
 - comparativo: 
@@ -990,6 +989,7 @@ Sua missão é transformar dados de vendas em informação clara e útil para a 
 | **TOTAIS** | | | | [soma] | [soma] | [soma] | [pm] |
 
 Se chave_acesso disponível: adicione linha em branco + "DANFE:[chave]"
+Não pergunte se o usuário quer o PDF — o DANFE já é gerado automaticamente.
 
 DADOS CALCULADOS (use SOMENTE estes):
 {dados_json}"""
@@ -1680,25 +1680,7 @@ async def chat(req: ChatRequest):
     # Se o assistente acabou de pedir o cliente e o tipo voltou errado, corrigir pelo histórico
     ultimas_msgs = historico[-4:] if len(historico) >= 4 else historico
     # Se assistente ofereceu PDF da nota e usuário respondeu "sim"
-    assist_ofereceu_danfe = any(
-        m.get("role") == "assistant" and "DANFE" in str(m.get("content","")) and "Deseja" in str(m.get("content",""))
-        for m in ultimas_msgs
-    )
     ultima_lower = ultima.lower().strip()
-    if assist_ofereceu_danfe and ultima_lower in ("sim", "sim.", "yes", "pode", "pode sim", "quero", "quero sim", "gera", "gera sim"):
-        # Buscar nr_nota e chave_acesso da última resposta do assistente
-        for msg in reversed(historico[:-1]):
-            if msg.get("role") == "assistant":
-                txt = msg.get("content","")
-                import re as _re
-                m_nota = _re.search(r'Nota\s+(\d+)', txt)
-                m_chave = _re.search(r'DANFE:(\d{44})', txt)
-                if m_nota:
-                    filtro["tipo"] = "detalhe_nota"
-                    filtro["nr_nota"] = m_nota.group(1)
-                if m_chave:
-                    filtro["chave_acesso_override"] = m_chave.group(1)
-                break
 
     # ── Desambiguação: usuário escolheu número da lista? ──
     _assist_listou = next(
