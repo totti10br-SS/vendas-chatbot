@@ -1401,6 +1401,75 @@ def gerar_relatorio_pdf(df: pd.DataFrame, filtro: dict, resultado: dict) -> byte
           <tbody>{linhas_v}<tr class="total-row"><td colspan="2"><strong>TOTAIS</strong></td><td class="valor">{kg:,.2f}</td><td class="valor">{cx:,}</td><td class="valor">{fmt_brl(fat)}</td><td class="valor">{fmt_brl(pm)}</td><td class="valor">{notas}</td></tr></tbody>
         </table>"""
 
+    # ── COMPARATIVO entre dois períodos ──
+    elif tipo_rel == "comparativo":
+        comp = resultado.get("dados", {}).get("comparativo", {})
+        if comp:
+            pa = comp.get("periodo_a", {})
+            pb = comp.get("periodo_b", {})
+            ini_a = comp.get("periodo_a_ini", ""); fim_a = comp.get("periodo_a_fim", "")
+            ini_b = comp.get("periodo_b_ini", ""); fim_b = comp.get("periodo_b_fim", "")
+
+            def _var_html(v):
+                if v is None: return "<td>—</td>"
+                cor = "#27ae60" if v >= 0 else "#e74c3c"
+                seta = "↑" if v >= 0 else "↓"
+                return f'<td style="text-align:right;color:{cor};font-weight:bold">{v:+.1f}% {seta}</td>'
+
+            metricas = [
+                ("Volume (kg)",  f"{pa.get('kg',0):,.2f}",  f"{pb.get('kg',0):,.2f}",  comp.get("var_kg_pct")),
+                ("CX30",         f"{pa.get('cx30',0):,}",   f"{pb.get('cx30',0):,}",   comp.get("var_kg_pct")),
+                ("Faturamento",  fmt_brl(pa.get("faturamento",0)), fmt_brl(pb.get("faturamento",0)), comp.get("var_fat_pct")),
+                ("Preço Médio",  fmt_brl(pa.get("pm",0)),   fmt_brl(pb.get("pm",0)),   comp.get("var_pm_pct")),
+                ("Notas",        f"{pa.get('notas',0):,}",  f"{pb.get('notas',0):,}",  comp.get("var_notas_pct")),
+            ]
+            linhas_comp = ""
+            for label, va, vb, var in metricas:
+                linhas_comp += f"<tr><td><strong>{_h.escape(label)}</strong></td><td style='text-align:right'>{_h.escape(va)}</td><td style='text-align:right'>{_h.escape(vb)}</td>{_var_html(var)}</tr>"
+
+            filial_a_map = {f["filial"]: f for f in pa.get("por_filial", [])}
+            filial_b_map = {f["filial"]: f for f in pb.get("por_filial", [])}
+            todas_filiais = sorted(set(list(filial_a_map.keys()) + list(filial_b_map.keys())))
+            linhas_filial = ""
+            for fil in todas_filiais:
+                fa = filial_a_map.get(fil, {}); fb = filial_b_map.get(fil, {})
+                kg_a = fa.get("kg", 0); kg_b = fb.get("kg", 0)
+                fat_a = fa.get("faturamento", 0); fat_b = fb.get("faturamento", 0)
+                try:
+                    vkg  = round((kg_a  - kg_b)  / kg_b  * 100, 1) if kg_b  != 0 else None
+                    vfat = round((fat_a - fat_b) / fat_b * 100, 1) if fat_b != 0 else None
+                except Exception:
+                    vkg = vfat = None
+                a_str = f"{kg_a:,.2f} kg / {fmt_brl(fat_a)}" if fa else "—"
+                b_str = f"{kg_b:,.2f} kg / {fmt_brl(fat_b)}" if fb else "—"
+                linhas_filial += (f"<tr><td><strong>{_h.escape(str(fil))}</strong></td>"
+                                  f"<td style='text-align:right'>{_h.escape(a_str)}</td>"
+                                  f"<td style='text-align:right'>{_h.escape(b_str)}</td>"
+                                  f"{_var_html(vkg)}{_var_html(vfat)}</tr>")
+
+            ini_a_s = _h.escape(str(ini_a)); fim_a_s = _h.escape(str(fim_a))
+            ini_b_s = _h.escape(str(ini_b)); fim_b_s = _h.escape(str(fim_b))
+            corpo_html = (
+                f'<div class="grupo-header" style="margin-bottom:4px">'
+                f'<span class="grupo-tipo">COMPARATIVO GERAL</span>'
+                f'<span class="grupo-stats">{ini_a_s} \u2013 {fim_a_s} &nbsp;vs&nbsp; {ini_b_s} \u2013 {fim_b_s}</span></div>'
+                f'<table><thead><tr><th>MÉTRICA</th>'
+                f'<th style="text-align:right">{ini_a_s} \u2013 {fim_a_s}</th>'
+                f'<th style="text-align:right">{ini_b_s} \u2013 {fim_b_s}</th>'
+                f'<th style="text-align:right">VAR %</th></tr></thead>'
+                f'<tbody>{linhas_comp}</tbody></table>'
+                f'<div class="grupo-header" style="margin-top:16px;margin-bottom:4px">'
+                f'<span class="grupo-tipo">COMPARATIVO POR FILIAL</span></div>'
+                f'<table><thead><tr><th>FILIAL</th>'
+                f'<th style="text-align:right">{ini_a_s} \u2013 {fim_a_s}</th>'
+                f'<th style="text-align:right">{ini_b_s} \u2013 {fim_b_s}</th>'
+                f'<th style="text-align:right">VAR KG</th>'
+                f'<th style="text-align:right">VAR FAT</th></tr></thead>'
+                f'<tbody>{linhas_filial}</tbody></table>'
+            )
+        else:
+            corpo_html = "<p>Dados comparativos não disponíveis. Tente refazer a consulta.</p>"
+
     # ── PADRÃO: relatório de faturamento por tipo de movimento ──
     else:
         if "DESC_TIPO_MV" in dff.columns:
@@ -2010,6 +2079,11 @@ async def chat(req: ChatRequest):
             tipo_detectado = "ranking_vendedores"
         elif "ranking de produtos" in ultima_resp_assist or "ranking produtos" in ultima_resp_assist:
             tipo_detectado = "ranking_produtos"
+        elif any(p in ultima_resp_assist for p in [
+                "comparativo", "vs ", " x ", "período a", "período b",
+                "var %", "var kg", "var fat", "comparar", "comparação",
+                "mês anterior", "mes anterior", "período anterior"]):
+            tipo_detectado = "comparativo"
 
         if tipo_detectado:
             filtro["tipo"] = tipo_detectado
@@ -2044,6 +2118,37 @@ async def chat(req: ChatRequest):
                 hoje = date.today()
                 filtro["data_inicio"] = (hoje - timedelta(days=90)).strftime("%Y-%m-%d")
                 filtro["data_fim"]    = hoje.strftime("%Y-%m-%d")
+
+            # Se comparativo, herdar datas e flags do filtro anterior no histórico
+            if tipo_detectado == "comparativo":
+                # Buscar no histórico o último filtro com datas de comparativo
+                for msg in reversed(historico[:-1]):
+                    if msg.get("role") == "assistant":
+                        _c = str(msg.get("content", ""))
+                        # Tentar extrair datas do assistente pelo padrão dd/mm - dd/mm
+                        import re as _re_pdf
+                        _m = _re_pdf.search(r'(\d{2}/\d{2}/\d{4})\s*[a-z\s]*?(\d{2}/\d{2}/\d{4})', _c)
+                        if _m:
+                            break
+                # Herdar comparar_periodo_anterior se não tem período B explícito
+                if not filtro.get("data_inicio_b"):
+                    filtro["comparar_periodo_anterior"] = True
+                # Se não tem datas no filtro atual, tentar recuperar do histórico de filtros
+                if not filtro.get("data_inicio"):
+                    for msg in reversed(historico[:-1]):
+                        _obs = str(msg.get("content",""))
+                        _m2 = __import__('re').search(r'"data_inicio":\s*"(\d{4}-\d{2}-\d{2})"', _obs)
+                        _m3 = __import__('re').search(r'"data_fim":\s*"(\d{4}-\d{2}-\d{2})"', _obs)
+                        _m4 = __import__('re').search(r'"data_inicio_b":\s*"(\d{4}-\d{2}-\d{2})"', _obs)
+                        _m5 = __import__('re').search(r'"data_fim_b":\s*"(\d{4}-\d{2}-\d{2})"', _obs)
+                        if _m2 and _m3:
+                            filtro["data_inicio"] = _m2.group(1)
+                            filtro["data_fim"]    = _m3.group(1)
+                            if _m4: filtro["data_inicio_b"] = _m4.group(1)
+                            if _m5: filtro["data_fim_b"]    = _m5.group(1)
+                            break
+                logging.warning(f"[PDF-COMP] datas herdadas: A={filtro.get('data_inicio')}~{filtro.get('data_fim')} B={filtro.get('data_inicio_b')}~{filtro.get('data_fim_b')} comp_ant={filtro.get('comparar_periodo_anterior')}")
+
             logging.warning(f"[PDF] tipo detectado={tipo_detectado} cliente={filtro.get('cliente')} data_inicio={filtro.get('data_inicio')}")
             resultado = calcular(df, filtro)
 
