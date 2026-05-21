@@ -388,7 +388,7 @@ REGRAS:
 - Para comparativo com período imediatamente anterior (ex: "vs mês passado"): comparar_periodo_anterior=true
 - "mesmo dia do mês passado", "até o dia X do mês passado", "até o mesmo dia do mês passado": calcule data_inicio=primeiro dia do mês passado, data_fim=dia X do mês passado (ou mesmo dia do mês atual mas no mês passado). Exemplo: hoje é 14/05 → "até o mesmo dia do mês passado" = data_inicio=01/04/2026, data_fim=14/04/2026
 - tipo_operacao="TODOS" por padrão em TODAS as consultas (inclui produtos e serviços). Somente use "SERVICOS" se o usuário mencionar explicitamente apenas serviços. Somente use "PRODUTOS" se o usuário mencionar explicitamente apenas produtos.
-- Se usuário pedir "em PDF", "relatório PDF", "manda em PDF", "exportar PDF": formato="pdf"
+- Se usuário pedir "em PDF", "relatório PDF", "manda em PDF", "exportar PDF", "manda pra mim", "me manda": formato="pdf" — IMPORTANTE: neste caso HERDAR o tipo da pergunta anterior no histórico (não mudar para detalhe_nota). Só usar tipo="detalhe_nota" se o usuário mencionar explicitamente número de nota ou DANFE junto ao pedido de PDF.
 - "últimas vendas", "últimas notas", "histórico de compras", "relatório de notas", "notas emitidas", "relatório de vendas de um cliente", "notas faturadas": tipo="ultimas_vendas", precisa_cliente=true se cliente não informado, precisa_periodo=true se período não informado
 - "últimos preços", "preço atual", "quanto paga", "tabela de preços": tipo="ultimos_precos"
 - Se mencionar produto específico (ex: "file mignon", "cupim", "peito"): preencha busca_produto com o termo → mostra preço mais recente por produto; se período não especificado: precisa_periodo=false (o sistema assume 90 dias automaticamente)
@@ -730,7 +730,7 @@ def calcular(df: pd.DataFrame, filtro: dict) -> dict:
         d["chave_acesso"] = str(dff['CHAVE_ACESSO'].dropna().iloc[0]).strip() if 'CHAVE_ACESSO' in dff.columns and len(dff) > 0 else None
 
     # ── Últimas vendas de cliente ──
-    if tipo == "ultimas_vendas" and (filtro.get("cliente") or filtro.get("busca_produto") or filtro.get("cnpj_raiz")):
+    if tipo == "ultimas_vendas" and filtro.get("cliente"):
         if 'NOME_CLIENTE' in dff.columns:
             d["cliente_encontrado"] = dff['NOME_CLIENTE'].iloc[0]
 
@@ -743,9 +743,6 @@ def calcular(df: pd.DataFrame, filtro: dict) -> dict:
             grp_cols = ['DATA_MOVTO','NUM_DOCTO']
             if 'NOME_FILIAL' in dff.columns: grp_cols.append('NOME_FILIAL')
             if 'NOM_VENDEDOR' in dff.columns: grp_cols.append('NOM_VENDEDOR')
-            # Incluir NOME_CLIENTE quando buscando por produto (sem cliente específico)
-            if not filtro.get("cliente") and filtro.get("busca_produto") and 'NOME_CLIENTE' in dff.columns:
-                grp_cols.append('NOME_CLIENTE')
             grp = dff.groupby(grp_cols).agg(
                 kg=('QTDE_PRI','sum'),
                 fat=('VALOR_LIQUIDO','sum'),
@@ -759,7 +756,6 @@ def calcular(df: pd.DataFrame, filtro: dict) -> dict:
                     "data":     r['DATA_MOVTO'].strftime('%d/%m/%Y') if hasattr(r['DATA_MOVTO'],'strftime') else str(r['DATA_MOVTO']),
                     "nr_nota":  nr,
                     "filial":   str(r.get('NOME_FILIAL','')),
-                    "cliente":  str(r.get('NOME_CLIENTE','')) if 'NOME_CLIENTE' in r.index else "",
                     "vendedor": str(r.get('NOM_VENDEDOR','')),
                     "kg":       round(float(r['kg']),2),
                     "cx30":     int(round(float(r['kg'])/30,0)),
@@ -952,21 +948,15 @@ Sua missão é transformar dados de vendas em informação clara e útil para a 
   Use o campo "resumo_notas" do JSON. Cada elemento tem: data, nr_nota, filial, kg, cx30, fat, pm.
   Monte a tabela abaixo, UMA LINHA POR ELEMENTO de resumo_notas, na ordem que aparecem:
   
-  ## NOTAS FISCAIS · [produto filtrado ou cliente_encontrado] · [período]
+  ## ÚLTIMAS VENDAS · [cliente_encontrado]
   
-  Se "busca_produto" estiver preenchido nos dados (busca por produto sem cliente específico), use esta tabela:
-  | DATA | NR NOTA | FILIAL | CLIENTE | KG | CX30 | FATURAMENTO | R$/kg |
-  |------|---------|--------|---------|----|------|-------------|-------|
-  
-  Se tiver cliente específico (campo "cliente_encontrado"), use esta tabela:
   | DATA | NR NOTA | FILIAL | KG | CX30 | FATURAMENTO | R$/kg |
   |------|---------|--------|----|------|-------------|-------|
   
   REGRAS OBRIGATÓRIAS:
   - Coluna DATA: use o campo "data" de cada elemento
   - Coluna NR NOTA: use o campo "nr_nota" de cada elemento — NUNCA coloque "-" se o campo tiver valor
-  - Coluna FILIAL: use o campo "filial" de cada elemento — NUNCA coloque "-" se o campo tiver valor
-  - Coluna CLIENTE: use o campo "cliente" de cada elemento — NUNCA coloque "-" se o campo tiver valor
+  - Coluna FILIAL: use o campo "filial" de cada elemento — NUNCA coloque "-" se o campo tiver valor  
   - Coluna KG: use o campo "kg" formatado com 3 casas decimais
   - Coluna CX30: use o campo "cx30"
   - Coluna FATURAMENTO: use o campo "fat" no formato R$ X.XXX,XX
@@ -2094,6 +2084,18 @@ async def chat(req: ChatRequest):
                 "var %", "var kg", "var fat", "comparar", "comparação",
                 "mês anterior", "mes anterior", "período anterior"]):
             tipo_detectado = "comparativo"
+        elif any(p in ultima_resp_assist for p in ["notas fiscais", "nr nota", "nf nota"]) and filtro.get("tipo") in ("detalhe_nota", None, "indefinido") and not filtro.get("nr_nota"):
+            # Usuário pediu PDF após ver tabela de notas — herdar ultimas_vendas
+            tipo_detectado = "ultimas_vendas"
+
+        # Fallback: busca_produto preenchido mas tipo é detalhe_nota sem nr_nota → ultimas_vendas
+        if not tipo_detectado and filtro.get("tipo") in ("detalhe_nota", "periodo_livre", "indefinido", None) and not filtro.get("nr_nota"):
+            if filtro.get("busca_produto"):
+                tipo_detectado = "ultimas_vendas"
+                logging.warning(f"[PDF] fallback busca_produto → ultimas_vendas | produto={filtro.get('busca_produto')}")
+            elif any(p in ultima_resp_assist for p in ["notas fiscais", "nr nota", "nf nota", "filial", "faturamento"]):
+                tipo_detectado = "ultimas_vendas"
+                logging.warning(f"[PDF] fallback tabela notas → ultimas_vendas")
 
         if tipo_detectado:
             filtro["tipo"] = tipo_detectado
@@ -2106,23 +2108,17 @@ async def chat(req: ChatRequest):
                         if txt and len(txt) < 60 and not any(p in txt.lower() for p in palavras_cmd):
                             filtro["cliente"] = txt
                             break
-            # Herdar busca_produto da última pergunta do usuário
+            # Herdar busca_produto: busca nos logs de FILTRO do histórico
             if not filtro.get("busca_produto"):
+                import re as _re_bp2
                 for msg in reversed(historico[:-1]):
-                    if msg.get("role") == "user":
-                        txt = msg.get("content", "").strip()
-                        if txt and not any(p in txt.lower() for p in palavras_cmd):
-                            # Extrair busca_produto do filtro interpretado anteriormente
-                            # via observacao da última msg do assistente
-                            break
-                # Tentar extrair do histórico recente: última pergunta que não é comando
-                for msg in reversed(historico[:-1]):
-                    if msg.get("role") == "user":
-                        txt = msg.get("content", "").strip().lower()
-                        if txt and not any(p in txt for p in palavras_cmd) and len(txt) < 80:
-                            # Se a pergunta anterior tinha palavra de produto, herda
-                            filtro["busca_produto"] = msg.get("content","").strip()
-                            break
+                    _c = str(msg.get("content",""))
+                    # Procura padrão JSON do filtro logado pelo sistema
+                    _m = _re_bp2.search(r'"busca_produto":\s*"([^"null][^"]*)"', _c)
+                    if _m:
+                        filtro["busca_produto"] = _m.group(1)
+                        logging.warning(f"[PDF] busca_produto herdado: {filtro['busca_produto']}")
+                        break
             # Se ultimos_precos, garantir 90 dias (o bloco anterior não roda de novo)
             if tipo_detectado == "ultimos_precos":
                 hoje = date.today()
