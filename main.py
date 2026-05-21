@@ -1856,7 +1856,7 @@ async def chat(req: ChatRequest):
 
         # 4. Retornar: texto na tela + PDF do DANFE se disponível
         if pdf_b64:
-            texto_final = f"RELATORIO_PDF_BASE64:{pdf_b64}:FILENAME:{pdf_nome}\n{resposta_texto}"
+            texto_final = f"{resposta_texto}\nRELATORIO_PDF_BASE64:{pdf_b64}:FILENAME:{pdf_nome}"
         else:
             texto_final = resposta_texto + f"\n\n⚠️ Não foi possível gerar o DANFE (chave de acesso inválida ou não cadastrada no MeuDanfe)."
 
@@ -2010,7 +2010,7 @@ async def chat(req: ChatRequest):
             pdf_bytes = gerar_relatorio_pdf(df, filtro_pdf, resultado)
             pdf_nome  = _proximo_seq_pdf()
             pdf_b64   = _b64.b64encode(pdf_bytes).decode()
-            texto_final = f"RELATORIO_PDF_BASE64:{pdf_b64}:FILENAME:{pdf_nome}\n{resposta_texto}"
+            texto_final = f"{resposta_texto}\nRELATORIO_PDF_BASE64:{pdf_b64}:FILENAME:{pdf_nome}"
             logging.info(f"[PDF-AUTO] Gerado: {pdf_nome} tipo={tipo_resultado} cliente={filtro.get('cliente','')}")
         except Exception as e:
             logging.error(f"[PDF-AUTO] erro: {e}")
