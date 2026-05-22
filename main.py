@@ -390,6 +390,9 @@ REGRAS:
 - tipo_operacao="TODOS" por padrão em TODAS as consultas (inclui produtos e serviços). Somente use "SERVICOS" se o usuário mencionar explicitamente apenas serviços. Somente use "PRODUTOS" se o usuário mencionar explicitamente apenas produtos.
 - Se usuário pedir "em PDF", "relatório PDF", "manda em PDF", "exportar PDF", "manda pra mim", "me manda": formato="pdf" — IMPORTANTE: neste caso HERDAR o tipo da pergunta anterior no histórico (não mudar para detalhe_nota). Só usar tipo="detalhe_nota" se o usuário mencionar explicitamente número de nota ou DANFE junto ao pedido de PDF.
 - "últimas vendas", "últimas notas", "histórico de compras", "relatório de notas", "notas emitidas", "relatório de vendas de um cliente", "notas faturadas": tipo="ultimas_vendas", precisa_cliente=true se cliente não informado, precisa_periodo=true se período não informado
+- DISTINÇÃO CRÍTICA "relatório" vs "análise":
+  * "relatório de vendas de hoje/semana/mês", "relatorio de vendas", "relatório do dia", "notas do dia", "notas de hoje" → tipo="ultimas_vendas" (tabela de notas, sem análise)
+  * "análise das vendas", "analise do dia", "como foram as vendas", "resumo do dia", "resumo das vendas", "como estamos hoje", "balanço do dia" → tipo="resumo_diario" ou "resumo_mensal" (análise com KPIs, top clientes, previsão)
 - "últimos preços", "preço atual", "quanto paga", "tabela de preços": tipo="ultimos_precos"
 - Se mencionar produto específico (ex: "file mignon", "cupim", "peito"): preencha busca_produto com o termo → mostra preço mais recente por produto; se período não especificado: precisa_periodo=false (o sistema assume 90 dias automaticamente)
 - DISTINÇÃO busca_produto: se a pergunta for sobre "notas fiscais", "relatório de notas", "quando vendemos X", "notas com X", "quais notas tem X" → tipo="ultimas_vendas" + busca_produto. Se for sobre preço/valor do produto → tipo="ultimos_precos" + busca_produto
