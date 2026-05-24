@@ -45,19 +45,23 @@ html, body {
 
 /* ── LAYOUT ── */
 .app {
-  display: grid;
-  grid-template-columns: 260px 1fr;
-  grid-template-rows: 100vh;
+  display: flex;
+  flex-direction: row;
   height: 100vh;
+  width: 100vw;
+  overflow: hidden;
 }
 
 /* ── SIDEBAR ── */
 .sidebar {
+  width: 260px;
+  flex-shrink: 0;
   background: var(--surface);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  height: 100vh;
 }
 
 .sidebar-header {
@@ -229,10 +233,12 @@ html, body {
 .main {
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  position: relative;
+  flex: 1;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
+  position: relative;
+  height: 100vh;
 }
 
 /* Top bar */
