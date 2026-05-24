@@ -1,0 +1,1545 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>IAF · Inteligência Analítica Frinense</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ── RESET & TOKENS ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #0e0f11;
+  --surface:   #16181c;
+  --surface2:  #1e2026;
+  --border:    #2a2d35;
+  --border2:   #353840;
+  --red:       #e03434;
+  --red-soft:  #c0392b;
+  --red-glow:  rgba(224,52,52,0.15);
+  --red-glow2: rgba(224,52,52,0.06);
+  --gold:      #f5a623;
+  --green:     #2ecc71;
+  --text:      #f0f1f3;
+  --text-2:    #9aa0ad;
+  --text-3:    #5c6370;
+  --font:      'DM Sans', sans-serif;
+  --mono:      'DM Mono', monospace;
+  --radius:    14px;
+  --radius-sm: 8px;
+  --shadow:    0 4px 24px rgba(0,0,0,0.4);
+  --shadow-lg: 0 8px 40px rgba(0,0,0,0.6);
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.6;
+  overflow: hidden;
+}
+
+/* ── LAYOUT ── */
+.app {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  grid-template-rows: 100vh;
+  height: 100vh;
+}
+
+/* ── SIDEBAR ── */
+.sidebar {
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar-header {
+  padding: 24px 20px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.logo-mark {
+  width: 34px; height: 34px;
+  background: var(--red);
+  border-radius: 9px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700; color: #fff;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+
+.logo-text {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.3px;
+}
+
+.logo-sub {
+  font-size: 10.5px;
+  color: var(--text-3);
+  font-weight: 400;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  margin-left: 44px;
+  margin-top: -2px;
+}
+
+/* Status pill */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(46,204,113,0.1);
+  border: 1px solid rgba(46,204,113,0.2);
+  border-radius: 20px;
+  padding: 3px 9px;
+  font-size: 10px;
+  color: var(--green);
+  font-weight: 500;
+  margin-left: 44px;
+  margin-top: 6px;
+}
+.status-dot {
+  width: 5px; height: 5px;
+  background: var(--green);
+  border-radius: 50%;
+  animation: pulse-dot 2s ease infinite;
+}
+@keyframes pulse-dot {
+  0%,100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Quick actions */
+.sidebar-section {
+  padding: 16px 16px 8px;
+}
+.sidebar-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-3);
+  padding: 0 4px;
+  margin-bottom: 8px;
+}
+
+.quick-btn {
+  width: 100%;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  color: var(--text-2);
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 400;
+  transition: all 0.15s ease;
+  text-align: left;
+}
+.quick-btn:hover {
+  background: var(--surface2);
+  border-color: var(--border);
+  color: var(--text);
+}
+.quick-btn:active { transform: scale(0.98); }
+.quick-btn .qicon {
+  width: 28px; height: 28px;
+  border-radius: 7px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.sidebar-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 8px 16px;
+}
+
+/* Filiais */
+.filial-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+  padding: 0 16px;
+}
+.filial-chip {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 4px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+.filial-chip:hover, .filial-chip.active {
+  border-color: var(--red);
+  color: var(--red);
+  background: var(--red-glow2);
+}
+.filial-chip span { display: block; font-size: 9px; color: var(--text-3); margin-top: 1px; font-weight: 400; }
+
+/* Sidebar footer */
+.sidebar-footer {
+  margin-top: auto;
+  padding: 16px;
+  border-top: 1px solid var(--border);
+}
+.db-info {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+.db-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: var(--text-3);
+  padding: 2px 0;
+}
+.db-row strong { color: var(--text-2); font-weight: 500; }
+.db-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-3); margin-bottom: 6px; font-weight: 600; }
+
+/* ── MAIN AREA ── */
+.main {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Top bar */
+.topbar {
+  height: 56px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  flex-shrink: 0;
+  background: var(--bg);
+}
+.topbar-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+.topbar-title strong { color: var(--text); }
+
+.topbar-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.tb-btn {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-2);
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s;
+}
+.tb-btn:hover { border-color: var(--border2); color: var(--text); background: var(--surface2); }
+.tb-btn.primary {
+  background: var(--red);
+  border-color: var(--red);
+  color: #fff;
+}
+.tb-btn.primary:hover { background: var(--red-soft); }
+
+/* ── MESSAGES ── */
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  scroll-behavior: smooth;
+}
+.messages::-webkit-scrollbar { width: 4px; }
+.messages::-webkit-scrollbar-track { background: transparent; }
+.messages::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+
+/* Welcome screen */
+.welcome {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+  padding: 40px 24px;
+  text-align: center;
+}
+.welcome-icon {
+  width: 64px; height: 64px;
+  background: var(--red-glow);
+  border: 1px solid var(--red-glow);
+  border-radius: 18px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 28px;
+}
+.welcome h2 {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.5px;
+}
+.welcome p {
+  font-size: 14px;
+  color: var(--text-2);
+  max-width: 400px;
+  line-height: 1.7;
+}
+.suggestions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  width: 100%;
+  max-width: 520px;
+}
+.sug-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s;
+}
+.sug-card:hover {
+  border-color: var(--border2);
+  background: var(--surface2);
+  transform: translateY(-1px);
+}
+.sug-card:active { transform: translateY(0); }
+.sug-card .sug-icon { font-size: 16px; margin-bottom: 6px; }
+.sug-card .sug-text { font-size: 12.5px; color: var(--text-2); line-height: 1.4; }
+.sug-card .sug-label { font-size: 10px; color: var(--text-3); margin-top: 2px; }
+
+/* Message bubble */
+.msg { display: flex; gap: 12px; animation: fadeUp 0.2s ease; max-width: 100%; }
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.msg.user { flex-direction: row-reverse; }
+
+.msg-avatar {
+  width: 32px; height: 32px;
+  border-radius: 9px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 2px;
+}
+.msg.user .msg-avatar { background: var(--red); color: #fff; }
+.msg.assistant .msg-avatar {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 15px;
+}
+
+.msg-body { flex: 1; min-width: 0; }
+.msg.user .msg-body { display: flex; flex-direction: column; align-items: flex-end; }
+
+.msg-bubble {
+  display: inline-block;
+  max-width: 100%;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  font-size: 14px;
+  line-height: 1.65;
+}
+.msg.user .msg-bubble {
+  background: var(--red);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+.msg.assistant .msg-bubble {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 4px;
+  color: var(--text);
+  width: 100%;
+}
+
+/* Markdown styles inside bubble */
+.msg-bubble h2, .msg-bubble h3 {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  margin: 14px 0 8px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--border);
+  letter-spacing: -0.2px;
+}
+.msg-bubble h2:first-child, .msg-bubble h3:first-child { margin-top: 0; }
+.msg-bubble p { margin-bottom: 8px; font-size: 13.5px; color: var(--text-2); }
+.msg-bubble strong { color: var(--text); font-weight: 600; }
+
+/* Tables */
+.msg-bubble .tbl-wrap {
+  overflow-x: auto;
+  margin: 10px 0;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+.msg-bubble table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-family: var(--mono);
+}
+.msg-bubble th {
+  background: var(--surface2);
+  color: var(--text-2);
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 7px 12px;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
+.msg-bubble td {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.msg-bubble tr:last-child td { border-bottom: none; }
+.msg-bubble tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
+.msg-bubble tr.total-row td { font-weight: 700; color: var(--text); background: var(--surface2); font-family: var(--mono); }
+
+/* Msg actions */
+.msg-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.msg.user .msg-actions { justify-content: flex-end; }
+
+.action-btn {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-3);
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.15s;
+}
+.action-btn:hover { border-color: var(--border2); color: var(--text-2); background: var(--surface2); }
+.action-btn.pdf-btn:hover { border-color: var(--red); color: var(--red); }
+.action-btn.wa-btn:hover { border-color: #25d366; color: #25d366; }
+.action-btn.audio-btn:hover { border-color: var(--gold); color: var(--gold); }
+.action-btn.audio-btn.playing { border-color: var(--gold); color: var(--gold); animation: audio-pulse 1.5s ease infinite; }
+@keyframes audio-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+
+/* PDF & DANFE badges */
+.pdf-badge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  margin-top: 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-decoration: none;
+  color: inherit;
+}
+.pdf-badge:hover { border-color: var(--red); }
+.pdf-badge .pdf-icon {
+  width: 32px; height: 32px;
+  background: var(--red-glow);
+  border-radius: 7px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+.pdf-badge .pdf-info { flex: 1; }
+.pdf-badge .pdf-name { font-size: 12px; font-weight: 600; color: var(--text); }
+.pdf-badge .pdf-meta { font-size: 10px; color: var(--text-3); margin-top: 1px; }
+.pdf-badge .pdf-dl { font-size: 11px; color: var(--red); font-weight: 500; }
+
+/* Typing indicator */
+.typing {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  border-bottom-left-radius: 4px;
+  width: fit-content;
+}
+.typing span {
+  width: 6px; height: 6px;
+  background: var(--text-3);
+  border-radius: 50%;
+  animation: bounce 1.4s ease infinite;
+}
+.typing span:nth-child(2) { animation-delay: 0.2s; }
+.typing span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes bounce {
+  0%,60%,100% { transform: translateY(0); }
+  30% { transform: translateY(-6px); }
+}
+
+/* ── INPUT AREA ── */
+.input-area {
+  padding: 16px 24px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+}
+
+.input-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  align-items: flex-end;
+  gap: 0;
+  transition: border-color 0.15s;
+  position: relative;
+}
+.input-wrap:focus-within {
+  border-color: var(--border2);
+  box-shadow: 0 0 0 3px var(--red-glow2);
+}
+
+#userInput {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  padding: 14px 16px;
+  resize: none;
+  max-height: 140px;
+  line-height: 1.5;
+  min-height: 52px;
+}
+#userInput::placeholder { color: var(--text-3); }
+
+.input-actions {
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* Voice button — destaque */
+#voiceBtn {
+  width: 38px; height: 38px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px;
+  transition: all 0.15s;
+  position: relative;
+}
+#voiceBtn:hover { border-color: var(--gold); color: var(--gold); background: rgba(245,166,35,0.08); }
+#voiceBtn.listening {
+  border-color: var(--red);
+  color: var(--red);
+  background: var(--red-glow);
+  animation: voice-ring 1s ease infinite;
+}
+@keyframes voice-ring {
+  0% { box-shadow: 0 0 0 0 var(--red-glow); }
+  70% { box-shadow: 0 0 0 8px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+#voiceBtn.listening::before {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: 14px;
+  border: 1px solid var(--red);
+  opacity: 0.3;
+  animation: voice-ring 1s ease infinite;
+}
+
+#sendBtn {
+  width: 38px; height: 38px;
+  border-radius: 10px;
+  border: none;
+  background: var(--red);
+  color: #fff;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px;
+  transition: all 0.15s;
+}
+#sendBtn:hover { background: var(--red-soft); transform: scale(1.03); }
+#sendBtn:active { transform: scale(0.97); }
+#sendBtn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+/* Input hints */
+.input-hints {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.hint-chip {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-3);
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 400;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.hint-chip:hover { border-color: var(--border2); color: var(--text-2); }
+
+/* ── VOICE OVERLAY ── */
+.voice-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.85);
+  backdrop-filter: blur(12px);
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  z-index: 100;
+}
+.voice-overlay.active { display: flex; }
+
+.voice-circle {
+  width: 100px; height: 100px;
+  border-radius: 50%;
+  background: var(--red-glow);
+  border: 2px solid var(--red);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 36px;
+  animation: voice-breathe 1.5s ease infinite;
+}
+@keyframes voice-breathe {
+  0%,100% { transform: scale(1); box-shadow: 0 0 0 0 var(--red-glow); }
+  50% { transform: scale(1.06); box-shadow: 0 0 0 20px transparent; }
+}
+
+.voice-text { font-size: 15px; color: var(--text-2); }
+.voice-cancel {
+  height: 36px; padding: 0 20px;
+  border-radius: 20px;
+  border: 1px solid var(--border2);
+  background: transparent;
+  color: var(--text-2);
+  font-family: var(--font);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.voice-cancel:hover { border-color: var(--red); color: var(--red); }
+
+/* ── WA MODAL ── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  backdrop-filter: blur(6px);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+.modal-overlay.active { display: flex; }
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 28px;
+  width: 100%;
+  max-width: 400px;
+  box-shadow: var(--shadow-lg);
+  animation: modal-in 0.2s ease;
+}
+@keyframes modal-in {
+  from { opacity: 0; transform: scale(0.95) translateY(8px); }
+  to   { opacity: 1; transform: scale(1)    translateY(0); }
+}
+.modal h3 { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+.modal p  { font-size: 12.5px; color: var(--text-3); margin-bottom: 18px; }
+
+.contact-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; max-height: 200px; overflow-y: auto; }
+.contact-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.contact-item:hover { border-color: #25d366; background: rgba(37,211,102,0.05); }
+.contact-item input[type=checkbox] { accent-color: #25d366; }
+.contact-avatar {
+  width: 30px; height: 30px;
+  background: var(--surface2);
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 600; color: var(--text-2);
+}
+.contact-name { font-size: 13px; color: var(--text); }
+.contact-phone { font-size: 10px; color: var(--text-3); }
+
+.modal-actions { display: flex; gap: 8px; }
+.btn-wa {
+  flex: 1; height: 38px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: #25d366;
+  color: #fff;
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-wa:hover { background: #1db954; }
+.btn-cancel {
+  height: 38px; padding: 0 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-2);
+  font-family: var(--font);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-cancel:hover { border-color: var(--border2); }
+
+/* ── RESPONSIVO MOBILE ── */
+@media (max-width: 768px) {
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+
+  .sidebar {
+    position: fixed;
+    left: -260px;
+    top: 0; bottom: 0;
+    width: 260px;
+    z-index: 50;
+    transition: left 0.25s ease;
+    box-shadow: var(--shadow-lg);
+  }
+  .sidebar.open { left: 0; }
+
+  .sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 49;
+    display: none;
+  }
+  .sidebar-backdrop.active { display: block; }
+
+  .topbar { padding: 0 16px; }
+  .messages { padding: 16px; gap: 14px; }
+  .input-area { padding: 12px 16px 16px; }
+
+  .suggestions { grid-template-columns: 1fr; }
+
+  #menuBtn { display: flex !important; }
+}
+
+#menuBtn {
+  display: none;
+  width: 32px; height: 32px;
+  align-items: center; justify-content: center;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 16px;
+}
+
+/* Scroll to bottom btn */
+.scroll-btn {
+  position: absolute;
+  bottom: 90px;
+  right: 24px;
+  width: 34px; height: 34px;
+  border-radius: 50%;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  display: none;
+  align-items: center; justify-content: center;
+  cursor: pointer;
+  font-size: 14px;
+  z-index: 10;
+  transition: all 0.15s;
+}
+.scroll-btn:hover { border-color: var(--border2); color: var(--text); }
+.scroll-btn.visible { display: flex; }
+
+/* Notification toast */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 16px;
+  font-size: 13px;
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  opacity: 0;
+  transition: all 0.25s ease;
+  z-index: 300;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ── SIDEBAR ── -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="logo">
+        <div class="logo-mark">IAF</div>
+        <div class="logo-text">Frinense</div>
+      </div>
+      <div class="logo-sub">Inteligência Analítica</div>
+      <div class="status-pill">
+        <div class="status-dot"></div>
+        Sistema online
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Consultas rápidas</div>
+      <button class="quick-btn" onclick="enviarPergunta('Análise das vendas de hoje')">
+        <div class="qicon" style="background:rgba(224,52,52,0.1);color:var(--red)">📊</div>
+        Análise de hoje
+      </button>
+      <button class="quick-btn" onclick="enviarPergunta('Resumo do mês atual')">
+        <div class="qicon" style="background:rgba(245,166,35,0.1);color:var(--gold)">📅</div>
+        Resumo do mês
+      </button>
+      <button class="quick-btn" onclick="enviarPergunta('Top 10 clientes do mês')">
+        <div class="qicon" style="background:rgba(46,204,113,0.1);color:var(--green)">🏆</div>
+        Top clientes
+      </button>
+      <button class="quick-btn" onclick="enviarPergunta('Relatório de vendas de hoje em PDF')">
+        <div class="qicon" style="background:rgba(41,128,185,0.1);color:#2980b9">📄</div>
+        Relatório PDF
+      </button>
+      <button class="quick-btn" onclick="enviarPergunta('Ranking de vendedores do mês')">
+        <div class="qicon" style="background:rgba(155,89,182,0.1);color:#9b59b6">👤</div>
+        Ranking vendedores
+      </button>
+    </div>
+
+    <div class="sidebar-divider"></div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Filtrar por filial</div>
+      <div class="filial-grid">
+        <div class="filial-chip" onclick="toggleFilial(this,'Itaperuna')">
+          ITAP<span>Itaperuna</span>
+        </div>
+        <div class="filial-chip" onclick="toggleFilial(this,'Bom Jesus')">
+          BJ<span>Bom Jesus</span>
+        </div>
+        <div class="filial-chip" onclick="toggleFilial(this,'Porciúncula')">
+          PORC<span>Porciúncula</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="sidebar-footer">
+      <div class="db-label">Base de dados</div>
+      <div class="db-info" id="dbInfo">
+        <div class="db-row"><span>Registros</span><strong id="dbReg">—</strong></div>
+        <div class="db-row"><span>Atualizado</span><strong id="dbUpd">—</strong></div>
+        <div class="db-row"><span>Último dado</span><strong id="dbUlt">—</strong></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Backdrop mobile -->
+  <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="closeSidebar()"></div>
+
+  <!-- ── MAIN ── -->
+  <main class="main">
+    <!-- Topbar -->
+    <div class="topbar">
+      <div style="display:flex;align-items:center;gap:10px">
+        <button id="menuBtn" onclick="toggleSidebar()">☰</button>
+        <div class="topbar-title"><strong>IAF</strong> · Analista Comercial</div>
+      </div>
+      <div class="topbar-actions">
+        <button class="tb-btn" onclick="limparChat()">
+          <span>↺</span> Nova conversa
+        </button>
+        <button class="tb-btn primary" onclick="abrirModalWA()" id="waTopBtn" style="display:none">
+          <span>📲</span> Enviar WA
+        </button>
+      </div>
+    </div>
+
+    <!-- Messages -->
+    <div class="messages" id="messages">
+      <!-- Welcome state -->
+      <div class="welcome" id="welcome">
+        <div class="welcome-icon">🥩</div>
+        <div>
+          <h2>Olá! Sou o IAF</h2>
+          <p>Seu analista comercial inteligente. Pergunte sobre vendas, clientes, notas fiscais ou peça um relatório em PDF.</p>
+        </div>
+        <div class="suggestions">
+          <div class="sug-card" onclick="enviarPergunta('Análise das vendas de hoje')">
+            <div class="sug-icon">📊</div>
+            <div class="sug-text">Análise das vendas de hoje</div>
+            <div class="sug-label">Resumo diário</div>
+          </div>
+          <div class="sug-card" onclick="enviarPergunta('Últimas compras da Sendas')">
+            <div class="sug-icon">🔍</div>
+            <div class="sug-text">Últimas compras da Sendas</div>
+            <div class="sug-label">Histórico de cliente</div>
+          </div>
+          <div class="sug-card" onclick="enviarPergunta('Top 10 clientes de abril em PDF')">
+            <div class="sug-icon">📄</div>
+            <div class="sug-text">Top 10 clientes de abril em PDF</div>
+            <div class="sug-label">Relatório PDF</div>
+          </div>
+          <div class="sug-card" onclick="enviarPergunta('Comparativo abril 2026 vs abril 2025')">
+            <div class="sug-icon">📈</div>
+            <div class="sug-text">Comparativo abril 2026 vs 2025</div>
+            <div class="sug-label">Análise comparativa</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Scroll to bottom -->
+    <button class="scroll-btn" id="scrollBtn" onclick="scrollToBottom()">↓</button>
+
+    <!-- Input -->
+    <div class="input-area">
+      <div class="input-wrap">
+        <textarea id="userInput" placeholder="Pergunte sobre vendas, clientes, notas fiscais..."
+          rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+        <div class="input-actions">
+          <button id="voiceBtn" onclick="toggleVoice()" title="Entrada por voz">🎤</button>
+          <button id="sendBtn" onclick="enviar()" title="Enviar">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div class="input-hints">
+        <button class="hint-chip" onclick="enviarPergunta('manda em PDF')">📄 PDF</button>
+        <button class="hint-chip" onclick="abrirModalWA()">📲 Enviar WA</button>
+        <button class="hint-chip" onclick="enviarPergunta('Resumo de hoje')">📊 Hoje</button>
+        <button class="hint-chip" onclick="enviarPergunta('Top clientes do mês')">🏆 Top clientes</button>
+        <button class="hint-chip" onclick="enviarPergunta('Relatório do mês em PDF')">📅 Mês</button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- Voice overlay -->
+<div class="voice-overlay" id="voiceOverlay">
+  <div class="voice-circle">🎤</div>
+  <div class="voice-text" id="voiceText">Ouvindo... fale sua pergunta</div>
+  <div style="font-size:13px;color:var(--text-3);font-style:italic" id="voiceInterim"></div>
+  <button class="voice-cancel" onclick="cancelarVoz()">Cancelar</button>
+</div>
+
+<!-- WA Modal -->
+<div class="modal-overlay" id="waModal">
+  <div class="modal">
+    <h3>📲 Enviar via WhatsApp</h3>
+    <p>Selecione os destinatários autorizados para receber este relatório.</p>
+    <div class="contact-list" id="contactList">
+      <div style="font-size:12px;color:var(--text-3);text-align:center;padding:12px">Carregando contatos...</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="fecharModalWA()">Cancelar</button>
+      <button class="btn-wa" onclick="enviarWA()">📲 Enviar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ── STATE ──
+let historico = [];
+let ultimoTexto = '';
+let ultimoPdf = null;
+let filialAtiva = null;
+let recognition = null;
+let isListening = false;
+let pendingWaData = null;
+
+// ── INIT ──
+document.addEventListener('DOMContentLoaded', () => {
+  carregarDashboard();
+  autoResize(document.getElementById('userInput'));
+  setupScrollObserver();
+});
+
+// ── DASHBOARD (sidebar info) ──
+async function carregarDashboard() {
+  try {
+    const r = await fetch('/dashboard');
+    const d = await r.json();
+    document.getElementById('dbReg').textContent = d.total_registros?.toLocaleString('pt-BR') || '—';
+    document.getElementById('dbUpd').textContent = d.csv_modificado || '—';
+    document.getElementById('dbUlt').textContent = d.dia_label || '—';
+  } catch(e) {}
+}
+
+// ── FILIAL FILTER ──
+function toggleFilial(el, nome) {
+  if (el.classList.contains('active')) {
+    el.classList.remove('active');
+    filialAtiva = null;
+  } else {
+    document.querySelectorAll('.filial-chip').forEach(c => c.classList.remove('active'));
+    el.classList.add('active');
+    filialAtiva = nome;
+  }
+}
+
+// ── SEND ──
+async function enviar() {
+  const input = document.getElementById('userInput');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  autoResize(input);
+  await enviarPergunta(text);
+}
+
+async function enviarPergunta(texto) {
+  // Esconde welcome
+  document.getElementById('welcome').style.display = 'none';
+
+  // Adiciona msg user
+  addMessage('user', texto);
+  historico.push({ role: 'user', content: texto });
+
+  // Typing indicator
+  const typingId = addTyping();
+  document.getElementById('sendBtn').disabled = true;
+
+  try {
+    const payload = { mensagem: texto, historico: historico.slice(-12) };
+    const r = await fetch('/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await r.json();
+    removeTyping(typingId);
+
+    // Processa content[]
+    let textoResp = '';
+    let pdfData = null;
+    let danfeData = null;
+
+    for (const item of (data.content || [])) {
+      if (item.type === 'text') {
+        textoResp = item.text;
+      } else if (item.type === 'pdf') {
+        pdfData = item;
+      } else if (item.type === 'danfe') {
+        danfeData = item;
+      }
+    }
+
+    if (textoResp) {
+      ultimoTexto = textoResp;
+      historico.push({ role: 'assistant', content: textoResp });
+      addMessage('assistant', textoResp, pdfData, danfeData);
+
+      // Ativa botão WA se tiver conteúdo
+      document.getElementById('waTopBtn').style.display = 'flex';
+      pendingWaData = { texto: textoResp, pdf: pdfData };
+    }
+
+  } catch(e) {
+    removeTyping(typingId);
+    addMessage('assistant', '❌ Erro ao processar. Tente novamente.');
+  }
+
+  document.getElementById('sendBtn').disabled = false;
+  scrollToBottom();
+}
+
+// ── RENDER MESSAGE ──
+function addMessage(role, text, pdfData, danfeData) {
+  const msgs = document.getElementById('messages');
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+
+  const avatar = document.createElement('div');
+  avatar.className = 'msg-avatar';
+  avatar.textContent = role === 'user' ? 'VC' : '🥩';
+
+  const body = document.createElement('div');
+  body.className = 'msg-body';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble';
+
+  if (role === 'assistant') {
+    bubble.innerHTML = renderMarkdown(text);
+
+    // Wrap tables
+    bubble.querySelectorAll('table').forEach(t => {
+      const wrap = document.createElement('div');
+      wrap.className = 'tbl-wrap';
+      t.parentNode.insertBefore(wrap, t);
+      wrap.appendChild(t);
+      // Destaca linha TOTAIS
+      t.querySelectorAll('tr').forEach(tr => {
+        if (tr.textContent.toUpperCase().includes('TOTAIS') || tr.textContent.toUpperCase().includes('TOTAL')) {
+          tr.classList.add('total-row');
+        }
+      });
+    });
+  } else {
+    bubble.textContent = text;
+  }
+
+  body.appendChild(bubble);
+
+  // PDF badge
+  if (pdfData) {
+    ultimoPdf = pdfData;
+    const badge = document.createElement('a');
+    badge.className = 'pdf-badge';
+    badge.href = `data:application/pdf;base64,${pdfData.data}`;
+    badge.download = pdfData.filename || 'relatorio.pdf';
+    badge.innerHTML = `
+      <div class="pdf-icon">📄</div>
+      <div class="pdf-info">
+        <div class="pdf-name">${pdfData.filename || 'Relatório.pdf'}</div>
+        <div class="pdf-meta">Relatório gerado pelo IAF</div>
+      </div>
+      <div class="pdf-dl">↓ Baixar</div>
+    `;
+    body.appendChild(badge);
+  }
+
+  // DANFE badge
+  if (danfeData) {
+    const badge = document.createElement('a');
+    badge.className = 'pdf-badge';
+    badge.href = `data:application/pdf;base64,${danfeData.data}`;
+    badge.download = `DANFE_${danfeData.nr_nota || ''}.pdf`;
+    badge.innerHTML = `
+      <div class="pdf-icon" style="background:rgba(245,166,35,0.1)">🧾</div>
+      <div class="pdf-info">
+        <div class="pdf-name">DANFE · NF ${danfeData.nr_nota || ''}</div>
+        <div class="pdf-meta">Documento Auxiliar da Nota Fiscal Eletrônica</div>
+      </div>
+      <div class="pdf-dl" style="color:var(--gold)">↓ Baixar</div>
+    `;
+    body.appendChild(badge);
+  }
+
+  // Actions (apenas para assistant)
+  if (role === 'assistant') {
+    const actions = document.createElement('div');
+    actions.className = 'msg-actions';
+
+    // Audio
+    const audioBtn = document.createElement('button');
+    audioBtn.className = 'action-btn audio-btn';
+    audioBtn.innerHTML = '🔊 Ouvir';
+    audioBtn.onclick = () => falarTexto(text, audioBtn);
+    actions.appendChild(audioBtn);
+
+    // PDF (se não veio PDF, pode pedir)
+    if (!pdfData) {
+      const pdfBtn = document.createElement('button');
+      pdfBtn.className = 'action-btn pdf-btn';
+      pdfBtn.innerHTML = '📄 PDF';
+      pdfBtn.onclick = () => enviarPergunta('manda em PDF');
+      actions.appendChild(pdfBtn);
+    }
+
+    // WA
+    const waBtn = document.createElement('button');
+    waBtn.className = 'action-btn wa-btn';
+    waBtn.innerHTML = '📲 Enviar WA';
+    waBtn.onclick = () => {
+      pendingWaData = { texto: text, pdf: pdfData };
+      abrirModalWA();
+    };
+    actions.appendChild(waBtn);
+
+    // Copiar
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'action-btn';
+    copyBtn.innerHTML = '⎘ Copiar';
+    copyBtn.onclick = () => {
+      navigator.clipboard.writeText(text);
+      copyBtn.innerHTML = '✓ Copiado';
+      setTimeout(() => copyBtn.innerHTML = '⎘ Copiar', 2000);
+    };
+    actions.appendChild(copyBtn);
+
+    body.appendChild(actions);
+  }
+
+  div.appendChild(avatar);
+  div.appendChild(body);
+  msgs.appendChild(div);
+  scrollToBottom();
+}
+
+function addTyping() {
+  const msgs = document.getElementById('messages');
+  const div = document.createElement('div');
+  div.className = 'msg assistant';
+  div.id = 'typing-' + Date.now();
+  div.innerHTML = `
+    <div class="msg-avatar">🥩</div>
+    <div class="msg-body">
+      <div class="typing"><span></span><span></span><span></span></div>
+    </div>
+  `;
+  msgs.appendChild(div);
+  scrollToBottom();
+  return div.id;
+}
+
+function removeTyping(id) {
+  const el = document.getElementById(id);
+  if (el) el.remove();
+}
+
+// ── MARKDOWN RENDERER ──
+function renderMarkdown(text) {
+  return text
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    // Tabelas
+    .replace(/^\|(.+)\|\s*$/gm, (m) => {
+      const cells = m.split('|').filter((_,i,a) => i>0 && i<a.length-1).map(c => c.trim());
+      return '<tr>' + cells.map(c => `<td>${c}</td>`).join('') + '</tr>';
+    })
+    .replace(/(<tr>.*<\/tr>\n?)+/gs, block => {
+      const rows = block.trim().split('\n').filter(r => !r.match(/^\s*[\|\-\s]+\s*$/));
+      if (!rows.length) return '';
+      const [head, ...body] = rows;
+      const thRow = head.replace(/<td>/g,'<th>').replace(/<\/td>/g,'</th>');
+      const bodyRows = body.filter(r => !r.match(/^<tr><td>[\s\-\|]*<\/td><\/tr>$/)).join('\n');
+      return `<table><thead>${thRow}</thead><tbody>${bodyRows}</tbody></table>`;
+    })
+    // Headings
+    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+    // Bold / italic
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    // Parágrafos
+    .replace(/\n{2,}/g, '</p><p>')
+    .replace(/^(?!<[htu])(.+)$/gm, (m) => m.startsWith('<') ? m : m)
+    .replace(/\n/g, '<br>')
+    // Wrap
+    .replace(/^/, '<p>').replace(/$/, '</p>')
+    .replace(/<p><\/p>/g, '')
+    .replace(/<p>(<[htu])/g, '$1')
+    .replace(/(<\/[htu][^>]*>)<\/p>/g, '$1');
+}
+
+// ── VOICE ──
+function toggleVoice() {
+  if (isListening) {
+    cancelarVoz();
+  } else {
+    iniciarVoz();
+  }
+}
+
+function iniciarVoz() {
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRec) { showToast('❌ Voz não suportada neste navegador'); return; }
+
+  recognition = new SpeechRec();
+  recognition.lang = 'pt-BR';
+  recognition.interimResults = true;
+  recognition.continuous = false;
+
+  document.getElementById('voiceOverlay').classList.add('active');
+  document.getElementById('voiceBtn').classList.add('listening');
+  isListening = true;
+
+  recognition.onresult = (e) => {
+    let interim = '', final = '';
+    for (const r of e.results) {
+      if (r.isFinal) final += r[0].transcript;
+      else interim += r[0].transcript;
+    }
+    document.getElementById('voiceInterim').textContent = interim || final;
+    if (final) {
+      document.getElementById('voiceText').textContent = `"${final}"`;
+    }
+  };
+
+  recognition.onend = () => {
+    const interim = document.getElementById('voiceInterim').textContent;
+    const voiceText = document.getElementById('voiceText').textContent;
+    fecharVoz();
+    const texto = voiceText.replace(/^"|"$/g, '').trim();
+    if (texto && texto !== 'Ouvindo... fale sua pergunta') {
+      enviarPergunta(texto);
+    }
+  };
+
+  recognition.onerror = () => fecharVoz();
+  recognition.start();
+}
+
+function cancelarVoz() {
+  if (recognition) recognition.stop();
+  fecharVoz();
+}
+
+function fecharVoz() {
+  document.getElementById('voiceOverlay').classList.remove('active');
+  document.getElementById('voiceBtn').classList.remove('listening');
+  document.getElementById('voiceText').textContent = 'Ouvindo... fale sua pergunta';
+  document.getElementById('voiceInterim').textContent = '';
+  isListening = false;
+  recognition = null;
+}
+
+// ── TTS ──
+function falarTexto(text, btn) {
+  if (window.speechSynthesis.speaking) {
+    window.speechSynthesis.cancel();
+    btn.classList.remove('playing');
+    btn.innerHTML = '🔊 Ouvir';
+    return;
+  }
+  const clean = text.replace(/[#*|`>]/g, '').replace(/\s+/g, ' ').trim().substring(0, 800);
+  const utt = new SpeechSynthesisUtterance(clean);
+  utt.lang = 'pt-BR';
+  utt.rate = 1.05;
+  btn.classList.add('playing');
+  btn.innerHTML = '⏹ Parar';
+  utt.onend = () => { btn.classList.remove('playing'); btn.innerHTML = '🔊 Ouvir'; };
+  window.speechSynthesis.speak(utt);
+}
+
+// ── WA MODAL ──
+async function abrirModalWA() {
+  document.getElementById('waModal').classList.add('active');
+  await carregarContatos();
+}
+
+function fecharModalWA() {
+  document.getElementById('waModal').classList.remove('active');
+}
+
+async function carregarContatos() {
+  const list = document.getElementById('contactList');
+  try {
+    const r = await fetch('/contatos');
+    const data = await r.json();
+    const contatos = data.contatos || [];
+    if (!contatos.length) {
+      list.innerHTML = '<div style="font-size:12px;color:var(--text-3);text-align:center;padding:12px">Nenhum contato cadastrado</div>';
+      return;
+    }
+    list.innerHTML = contatos.filter(c => c.ativo).map((c, i) => `
+      <label class="contact-item">
+        <input type="checkbox" value="${c.telefone}" id="ct_${i}">
+        <div class="contact-avatar">${c.nome.charAt(0).toUpperCase()}</div>
+        <div>
+          <div class="contact-name">${c.nome}</div>
+          <div class="contact-phone">${c.telefone}</div>
+        </div>
+      </label>
+    `).join('');
+  } catch(e) {
+    list.innerHTML = '<div style="font-size:12px;color:var(--text-3);text-align:center;padding:12px">Erro ao carregar contatos</div>';
+  }
+}
+
+async function enviarWA() {
+  const checks = document.querySelectorAll('#contactList input[type=checkbox]:checked');
+  if (!checks.length) { showToast('⚠️ Selecione pelo menos um contato'); return; }
+
+  const telefones = Array.from(checks).map(c => c.value);
+  fecharModalWA();
+  showToast('📲 Enviando...');
+
+  try {
+    const payload = {
+      telefones,
+      texto: ultimoTexto,
+      pdf: ultimoPdf ? ultimoPdf.data : null,
+      filename: ultimoPdf ? ultimoPdf.filename : null
+    };
+    const r = await fetch('/whatsapp-send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (r.ok) {
+      showToast('✅ Enviado com sucesso!');
+    } else {
+      showToast('❌ Erro no envio. Tente novamente.');
+    }
+  } catch(e) {
+    showToast('❌ Erro de conexão');
+  }
+}
+
+// ── UTILS ──
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    enviar();
+  }
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+}
+
+function scrollToBottom() {
+  const msgs = document.getElementById('messages');
+  msgs.scrollTo({ top: msgs.scrollHeight, behavior: 'smooth' });
+}
+
+function setupScrollObserver() {
+  const msgs = document.getElementById('messages');
+  const btn = document.getElementById('scrollBtn');
+  msgs.addEventListener('scroll', () => {
+    const atBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 100;
+    btn.classList.toggle('visible', !atBottom);
+  });
+}
+
+function limparChat() {
+  historico = [];
+  ultimoTexto = '';
+  ultimoPdf = null;
+  pendingWaData = null;
+  const msgs = document.getElementById('messages');
+  msgs.innerHTML = '';
+  document.getElementById('welcome').style.display = 'flex';
+  msgs.appendChild(document.getElementById('welcome'));
+  document.getElementById('waTopBtn').style.display = 'none';
+  showToast('💬 Nova conversa iniciada');
+}
+
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sidebarBackdrop').classList.toggle('active');
+}
+
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebarBackdrop').classList.remove('active');
+}
+
+function showToast(msg, dur = 3000) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), dur);
+}
+</script>
+</body>
+</html>
