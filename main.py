@@ -323,6 +323,10 @@ async def interpretar_pergunta(pergunta: str, historico: list, df: pd.DataFrame)
     d_max = df['DATA_MOVTO'].max().strftime('%d/%m/%Y') if pd.notna(df['DATA_MOVTO'].max()) else '?'
     filiais = sorted(df['NOME_FILIAL'].dropna().unique().tolist()) if 'NOME_FILIAL' in df.columns else []
     hoje = datetime.now().strftime('%d/%m/%Y')
+    ontem = (datetime.now() - timedelta(days=1)).strftime('%d/%m/%Y')
+    ontem_iso = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+    anteontem = (datetime.now() - timedelta(days=2)).strftime('%d/%m/%Y')
+    anteontem_iso = (datetime.now() - timedelta(days=2)).strftime('%Y-%m-%d')
 
     # Histórico resumido (últimas 6 msgs)
     hist_txt = ""
@@ -367,6 +371,8 @@ Retorne JSON com esta estrutura exata:
 
 REGRAS:
 - "hoje" = {hoje}
+- "ontem" = {ontem} → data_inicio="{ontem_iso}", data_fim="{ontem_iso}"
+- "anteontem" = {anteontem} → data_inicio="{anteontem_iso}", data_fim="{anteontem_iso}"
 - "mês passado" = mês anterior ao atual
 - "esta semana" = segunda-feira até hoje
 - Se período não especificado e tipo for resumo: use o último mês disponível
