@@ -282,11 +282,6 @@ html, body {
   transition: all 0.15s;
 }
 .tb-btn:hover { border-color: var(--border2); color: var(--text); background: var(--surface2); }
-
-@media (max-width: 768px) {
-  .tb-btn span.tb-label { display: none; }
-  .tb-btn { padding: 0 10px; font-size: 11px; }
-}
 .tb-btn.primary {
   background: var(--red);
   border-color: var(--red);
@@ -627,6 +622,8 @@ html, body {
   70% { box-shadow: 0 0 0 8px transparent; }
   100% { box-shadow: 0 0 0 0 transparent; }
 }
+
+
 #voiceBtn.listening::before {
   content: '';
   position: absolute;
@@ -824,22 +821,27 @@ html, body {
   }
   .sidebar-backdrop.active { display: block; }
 
-  .topbar { padding: 0 16px; }
-  .messages { padding: 16px; gap: 14px; }
-  .input-area { padding: 8px 12px 10px; }
-  .input-hints { gap: 4px; margin-top: 6px; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
+  .topbar { padding: 0 12px; }
+  .messages { padding: 12px; gap: 12px; }
+  .input-area { padding: 8px 12px 8px; }
+  .input-hints {
+    gap: 5px;
+    margin-top: 6px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 0;
+    -webkit-overflow-scrolling: touch;
+  }
   .input-hints::-webkit-scrollbar { display: none; }
-  .hint-chip { font-size: 10px; height: 24px; padding: 0 8px; flex-shrink: 0; }
-  #userInput { font-size: 13px; padding: 10px 12px; min-height: 44px; }
-  #voiceBtn, #sendBtn { width: 34px; height: 34px; }
-  .input-actions { padding: 6px 8px; gap: 3px; }
-
+  .hint-chip { flex-shrink: 0; height: 24px; padding: 0 9px; font-size: 11px; }
+  #userInput { font-size: 14px; padding: 10px 12px; min-height: 44px; }
+  #voiceBtn, #sendBtn { width: 36px; height: 36px; border-radius: 9px; }
+  .input-actions { padding: 7px 8px; gap: 4px; }
+  .input-wrap { border-radius: 12px; }
   .suggestions { grid-template-columns: 1fr; }
-  .welcome { padding: 20px 16px; gap: 16px; }
-  .welcome h2 { font-size: 18px; }
+  .welcome { padding: 24px 16px; gap: 18px; }
+  .welcome h2 { font-size: 19px; }
   .welcome p { font-size: 13px; }
-  .sug-card { padding: 10px 12px; }
-
   #menuBtn { display: flex !important; }
 }
 
@@ -983,11 +985,9 @@ html, body {
         <div class="topbar-title"><strong>IAF</strong> · Analista Comercial</div>
       </div>
       <div class="topbar-actions">
-        <button class="tb-btn" onclick="location.reload()" title="Recarregar">
-          <span>↺</span> <span class="tb-label">Atualizar</span>
-        </button>
+        <button class="tb-btn" onclick="location.reload()" title="Recarregar">↺</button>
         <button class="tb-btn" onclick="limparChat()">
-          <span>✕</span> <span class="tb-label">Nova conversa</span>
+          <span>✕</span> Nova conversa
         </button>
         <button class="tb-btn primary" onclick="abrirModalWA()" id="waTopBtn" style="display:none">
           <span>📲</span> Enviar WA
@@ -1048,7 +1048,8 @@ html, body {
         </div>
       </div>
       <div class="input-hints">
-        <button class="hint-chip" onclick="enviarPergunta('manda em PDF')">📄 PDF</button>        <button class="hint-chip" onclick="abrirModalWA()">📲 Enviar WA</button>
+        <button class="hint-chip" onclick="enviarPergunta('manda em PDF')">📄 PDF</button>
+        <button class="hint-chip" onclick="abrirModalWA()">📲 Enviar WA</button>
         <button class="hint-chip" onclick="enviarPergunta('Resumo de hoje')">📊 Hoje</button>
         <button class="hint-chip" onclick="enviarPergunta('Top clientes do mês')">🏆 Top clientes</button>
         <button class="hint-chip" onclick="enviarPergunta('Relatório do mês em PDF')">📅 Mês</button>
@@ -1369,6 +1370,9 @@ function renderMarkdown(text) {
 }
 
 // ── VOICE ──
+// ── WAKE WORD "IAF" ──────────────────────────────────────
+// ────────────────────────────────────────────────────────────
+
 function toggleVoice() {
   if (isListening) {
     cancelarVoz();
