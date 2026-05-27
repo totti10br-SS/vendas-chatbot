@@ -597,52 +597,53 @@ let wakeActive = false;
 
 function iniciarWakeWord() {
   if (!SpeechRecognition) return;
+  if (isRecording || !wakeActive) return;
+
   try {
     wakeRecognition = new SpeechRecognition();
     wakeRecognition.lang = 'pt-BR';
-    wakeRecognition.continuous = true;
+    wakeRecognition.continuous = false;      // false = compatível Android
     wakeRecognition.interimResults = true;
+    wakeRecognition.maxAlternatives = 3;
 
     wakeRecognition.onresult = (e) => {
-      if (isRecording) return; // já está ouvindo, ignora
       for (let i = e.resultIndex; i < e.results.length; i++) {
-        const t = e.results[i][0].transcript.trim().toLowerCase();
-        // Detecta "IAF" ou aproximações ("iá", "ia f", "iafe", "iav")
-        if (/\b(iaf|ia f|iafe|iav|yaf)\b/.test(t)) {
-          wakeDetectado();
-          return;
+        // Testa todas as alternativas retornadas
+        for (let j = 0; j < e.results[i].length; j++) {
+          const t = e.results[i][j].transcript.trim().toLowerCase();
+          if (/\b(iaf|ia f|iafe|iav|yaf|i a f)\b/.test(t) || t === 'ia' || t === 'iaf.' ) {
+            wakeDetectado();
+            return;
+          }
         }
       }
     };
 
     wakeRecognition.onend = () => {
-      // Reinicia automaticamente se não estiver gravando comando
-      if (!isRecording && wakeActive) {
-        setTimeout(() => {
-          try { wakeRecognition.start(); } catch(err) {}
-        }, 300);
+      // Loop contínuo: reinicia imediatamente se não estiver capturando pergunta
+      if (wakeActive && !isRecording) {
+        setTimeout(iniciarWakeWord, 150);
       }
     };
 
     wakeRecognition.onerror = (e) => {
-      if (e.error === 'not-allowed') {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
         wakeActive = false;
         atualizarIndicadorWake(false);
         return;
       }
-      // Reconecta em qualquer outro erro
+      // Qualquer outro erro: tenta reiniciar após pausa curta
       if (wakeActive && !isRecording) {
-        setTimeout(() => {
-          try { wakeRecognition.start(); } catch(err) {}
-        }, 1000);
+        setTimeout(iniciarWakeWord, 500);
       }
     };
 
     wakeRecognition.start();
-    wakeActive = true;
-    atualizarIndicadorWake(true);
   } catch(err) {
-    console.warn('Wake word não disponível:', err);
+    // Se falhar, tenta de novo em 1s
+    if (wakeActive && !isRecording) {
+      setTimeout(iniciarWakeWord, 1000);
+    }
   }
 }
 
@@ -678,12 +679,12 @@ function wakeDetectado() {
     if (recognition) {
       recognition.onend = (e) => {
         if (_origOnend) _origOnend(e);
-        // Reativa wake word
+        // Reativa loop do wake word após pergunta
         setTimeout(() => {
           wakeActive = true;
-          try { wakeRecognition.start(); } catch(err) { iniciarWakeWord(); }
           atualizarIndicadorWake(true);
-        }, 800);
+          iniciarWakeWord();
+        }, 1000);
       };
     }
   }, 400);
