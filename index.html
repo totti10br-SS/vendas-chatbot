@@ -674,19 +674,27 @@ function wakeDetectado() {
   // Inicia captura da pergunta após 400ms (tempo do bip)
   setTimeout(() => {
     toggleMic();
-    // Após o toggleMic terminar, reativa o wake word
-    const _origOnend = recognition ? recognition.onend : null;
-    if (recognition) {
-      recognition.onend = (e) => {
-        if (_origOnend) _origOnend(e);
-        // Reativa loop do wake word após pergunta
+    // Aguarda o toggleMic terminar e reativa o wake word
+    // toggleMic seta isRecording=false no onend — monitoramos isso
+    const intervalo = setInterval(() => {
+      if (!isRecording) {
+        clearInterval(intervalo);
         setTimeout(() => {
           wakeActive = true;
           atualizarIndicadorWake(true);
           iniciarWakeWord();
-        }, 1000);
-      };
-    }
+        }, 800);
+      }
+    }, 200);
+    // Timeout de segurança: 10s
+    setTimeout(() => {
+      clearInterval(intervalo);
+      if (!wakeActive) {
+        wakeActive = true;
+        atualizarIndicadorWake(true);
+        iniciarWakeWord();
+      }
+    }, 10000);
   }, 400);
 }
 
