@@ -282,6 +282,11 @@ html, body {
   transition: all 0.15s;
 }
 .tb-btn:hover { border-color: var(--border2); color: var(--text); background: var(--surface2); }
+
+@media (max-width: 768px) {
+  .tb-btn span.tb-label { display: none; }
+  .tb-btn { padding: 0 10px; font-size: 11px; }
+}
 .tb-btn.primary {
   background: var(--red);
   border-color: var(--red);
@@ -622,30 +627,6 @@ html, body {
   70% { box-shadow: 0 0 0 8px transparent; }
   100% { box-shadow: 0 0 0 0 transparent; }
 }
-/* ── WAKE WORD INDICATOR ── */
-.wake-indicator {
-  display: none;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 10px;
-  background: rgba(245,166,35,0.08);
-  border: 1px solid rgba(245,166,35,0.25);
-  border-radius: 20px;
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--gold);
-  letter-spacing: 0.5px;
-  cursor: default;
-  user-select: none;
-}
-.wake-indicator.active { display: flex; }
-.wake-indicator .wake-dot {
-  width: 5px; height: 5px;
-  background: var(--gold);
-  border-radius: 50%;
-  animation: pulse-dot 1.5s ease infinite;
-}
-
 #voiceBtn.listening::before {
   content: '';
   position: absolute;
@@ -845,9 +826,19 @@ html, body {
 
   .topbar { padding: 0 16px; }
   .messages { padding: 16px; gap: 14px; }
-  .input-area { padding: 12px 16px 16px; }
+  .input-area { padding: 8px 12px 10px; }
+  .input-hints { gap: 4px; margin-top: 6px; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
+  .input-hints::-webkit-scrollbar { display: none; }
+  .hint-chip { font-size: 10px; height: 24px; padding: 0 8px; flex-shrink: 0; }
+  #userInput { font-size: 13px; padding: 10px 12px; min-height: 44px; }
+  #voiceBtn, #sendBtn { width: 34px; height: 34px; }
+  .input-actions { padding: 6px 8px; gap: 3px; }
 
   .suggestions { grid-template-columns: 1fr; }
+  .welcome { padding: 20px 16px; gap: 16px; }
+  .welcome h2 { font-size: 18px; }
+  .welcome p { font-size: 13px; }
+  .sug-card { padding: 10px 12px; }
 
   #menuBtn { display: flex !important; }
 }
@@ -992,8 +983,11 @@ html, body {
         <div class="topbar-title"><strong>IAF</strong> · Analista Comercial</div>
       </div>
       <div class="topbar-actions">
+        <button class="tb-btn" onclick="location.reload()" title="Recarregar">
+          <span>↺</span> <span class="tb-label">Atualizar</span>
+        </button>
         <button class="tb-btn" onclick="limparChat()">
-          <span>↺</span> Nova conversa
+          <span>✕</span> <span class="tb-label">Nova conversa</span>
         </button>
         <button class="tb-btn primary" onclick="abrirModalWA()" id="waTopBtn" style="display:none">
           <span>📲</span> Enviar WA
@@ -1054,11 +1048,7 @@ html, body {
         </div>
       </div>
       <div class="input-hints">
-        <button class="hint-chip" onclick="enviarPergunta('manda em PDF')">📄 PDF</button>
-        <div class="wake-indicator" id="wakeIndicator" title='Diga "IAF" para ativar o microfone'>
-          <span class="wake-dot"></span>IAF
-        </div>
-        <button class="hint-chip" onclick="abrirModalWA()">📲 Enviar WA</button>
+        <button class="hint-chip" onclick="enviarPergunta('manda em PDF')">📄 PDF</button>        <button class="hint-chip" onclick="abrirModalWA()">📲 Enviar WA</button>
         <button class="hint-chip" onclick="enviarPergunta('Resumo de hoje')">📊 Hoje</button>
         <button class="hint-chip" onclick="enviarPergunta('Top clientes do mês')">🏆 Top clientes</button>
         <button class="hint-chip" onclick="enviarPergunta('Relatório do mês em PDF')">📅 Mês</button>
@@ -1379,97 +1369,6 @@ function renderMarkdown(text) {
 }
 
 // ── VOICE ──
-// ── WAKE WORD "IAF" ──────────────────────────────────────
-const _SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-let wakeRec = null;
-let wakeOn  = false;
-
-function wakeLoop() {
-  if (!_SpeechRec || !wakeOn || isListening) return;
-  try {
-    wakeRec = new _SpeechRec();
-    wakeRec.lang = 'pt-BR';
-    wakeRec.continuous = false;
-    wakeRec.interimResults = true;
-    wakeRec.maxAlternatives = 3;
-
-    wakeRec.onresult = (e) => {
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        for (let j = 0; j < e.results[i].length; j++) {
-          const t = e.results[i][j].transcript.trim().toLowerCase();
-          if (/\b(iaf|ia f|iafe|iav|yaf|i a f)\b/.test(t) || t === 'ia') {
-            wakeAtivado();
-            return;
-          }
-        }
-      }
-    };
-
-    wakeRec.onend = () => {
-      if (wakeOn && !isListening) setTimeout(wakeLoop, 200);
-    };
-
-    wakeRec.onerror = (e) => {
-      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-        wakeOn = false;
-        document.getElementById('wakeIndicator')?.classList.remove('active');
-        return;
-      }
-      if (wakeOn && !isListening) setTimeout(wakeLoop, 800);
-    };
-
-    wakeRec.start();
-  } catch(err) {
-    if (wakeOn && !isListening) setTimeout(wakeLoop, 1000);
-  }
-}
-
-function wakeAtivado() {
-  if (isListening) return;
-  wakeRec = null;
-
-  // Bip de confirmação
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = ctx.createOscillator();
-    const g   = ctx.createGain();
-    osc.connect(g); g.connect(ctx.destination);
-    osc.frequency.value = 880; osc.type = 'sine';
-    g.gain.setValueAtTime(0.25, ctx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
-    osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.2);
-  } catch(e) {}
-
-  // Pulsa o botão e abre o overlay de voz após o bip
-  const btn = document.getElementById('voiceBtn');
-  if (btn) { btn.style.transform = 'scale(1.25)'; setTimeout(() => btn.style.transform = '', 250); }
-
-  setTimeout(() => {
-    iniciarVoz();
-    // Quando fecharVoz() for chamado, reinicia o loop
-    const _origFechar = fecharVoz;
-    fecharVoz = function() {
-      _origFechar();
-      fecharVoz = _origFechar; // restaura original
-      if (wakeOn) setTimeout(wakeLoop, 800);
-    };
-  }, 350);
-}
-
-function iniciarWake() {
-  if (!_SpeechRec) return;
-  navigator.mediaDevices.getUserMedia({ audio: true })
-    .then(() => {
-      wakeOn = true;
-      document.getElementById('wakeIndicator')?.classList.add('active');
-      setTimeout(wakeLoop, 800);
-    })
-    .catch(() => {});
-}
-
-document.addEventListener('DOMContentLoaded', () => setTimeout(iniciarWake, 1200));
-// ────────────────────────────────────────────────────────────
-
 function toggleVoice() {
   if (isListening) {
     cancelarVoz();
