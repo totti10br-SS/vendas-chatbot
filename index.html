@@ -554,6 +554,11 @@ body.modo-analitico .analitico-btn-voltar { display:inline-block !important; }
       <textarea id="userInput" placeholder="Pergunte ao IAF sobre suas vendas..." rows="1"
         onkeydown="handleKey(event)" oninput="autoResize(this)" disabled></textarea>
       <button id="stopSpeakBtn" onclick="stopSpeaking()" title="Parar voz" style="display:none;width:42px;height:42px;flex-shrink:0;background:#1a1a1a;border:1px solid rgba(245,200,0,.5);border-radius:8px;cursor:pointer;font-size:18px;align-items:center;justify-content:center;">⏹️</button>
+      <!-- Indicador wake word -->
+      <div id="wakeIndicator" title='Diga "IAF" para ativar o microfone' style="display:none;align-items:center;gap:5px;padding:4px 9px;background:rgba(245,200,0,.08);border:1px solid rgba(245,200,0,.25);border-radius:6px;cursor:default;user-select:none;">
+        <span style="width:6px;height:6px;border-radius:50%;background:#f5c800;animation:micPulse .8s infinite;flex-shrink:0"></span>
+        <span style="font-size:10px;color:#f5c800;font-weight:700;letter-spacing:.5px">IAF</span>
+      </div>
       <button id="stopFetchBtn" onclick="stopFetch()" title="Cancelar pergunta" style="display:none;width:42px;height:42px;flex-shrink:0;background:#1a0000;border:1px solid rgba(204,0,0,.6);border-radius:8px;cursor:pointer;font-size:16px;color:#ff4444;align-items:center;justify-content:center;line-height:1;">✖</button>
       <button id="micBtn" onclick="toggleMic()" disabled title="Falar">🎤</button>
       <button id="sendBtn" onclick="sendMessage()" disabled>
@@ -585,6 +590,119 @@ let voiceEnabled = false;
 let isRecording  = false;
 let recognition  = null;
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+// ── WAKE WORD "IAF" ──────────────────────────────────────────
+let wakeRecognition = null;
+let wakeActive = false;
+
+function iniciarWakeWord() {
+  if (!SpeechRecognition) return;
+  try {
+    wakeRecognition = new SpeechRecognition();
+    wakeRecognition.lang = 'pt-BR';
+    wakeRecognition.continuous = true;
+    wakeRecognition.interimResults = true;
+
+    wakeRecognition.onresult = (e) => {
+      if (isRecording) return; // já está ouvindo, ignora
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript.trim().toLowerCase();
+        // Detecta "IAF" ou aproximações ("iá", "ia f", "iafe", "iav")
+        if (/\b(iaf|ia f|iafe|iav|yaf)\b/.test(t)) {
+          wakeDetectado();
+          return;
+        }
+      }
+    };
+
+    wakeRecognition.onend = () => {
+      // Reinicia automaticamente se não estiver gravando comando
+      if (!isRecording && wakeActive) {
+        setTimeout(() => {
+          try { wakeRecognition.start(); } catch(err) {}
+        }, 300);
+      }
+    };
+
+    wakeRecognition.onerror = (e) => {
+      if (e.error === 'not-allowed') {
+        wakeActive = false;
+        atualizarIndicadorWake(false);
+        return;
+      }
+      // Reconecta em qualquer outro erro
+      if (wakeActive && !isRecording) {
+        setTimeout(() => {
+          try { wakeRecognition.start(); } catch(err) {}
+        }, 1000);
+      }
+    };
+
+    wakeRecognition.start();
+    wakeActive = true;
+    atualizarIndicadorWake(true);
+  } catch(err) {
+    console.warn('Wake word não disponível:', err);
+  }
+}
+
+function wakeDetectado() {
+  // Para o wake word, toca bip, inicia captura da pergunta
+  wakeRecognition.stop();
+  wakeActive = false;
+
+  // Bip de confirmação
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.frequency.value = 880;
+    osc.type = 'sine';
+    gain.gain.setValueAtTime(0.3, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.25);
+  } catch(e) {}
+
+  // Pisca o microfone por 300ms antes de ativar
+  const btn = document.getElementById('micBtn');
+  if (btn) { btn.style.transform = 'scale(1.2)'; setTimeout(() => btn.style.transform = '', 300); }
+
+  // Inicia captura da pergunta após 400ms (tempo do bip)
+  setTimeout(() => {
+    toggleMic();
+    // Após o toggleMic terminar, reativa o wake word
+    const _origOnend = recognition ? recognition.onend : null;
+    if (recognition) {
+      recognition.onend = (e) => {
+        if (_origOnend) _origOnend(e);
+        // Reativa wake word
+        setTimeout(() => {
+          wakeActive = true;
+          try { wakeRecognition.start(); } catch(err) { iniciarWakeWord(); }
+          atualizarIndicadorWake(true);
+        }, 800);
+      };
+    }
+  }, 400);
+}
+
+function atualizarIndicadorWake(ativo) {
+  const el = document.getElementById('wakeIndicator');
+  if (!el) return;
+  el.style.display = ativo ? 'flex' : 'none';
+}
+
+// Inicia o wake word assim que o microfone for liberado
+document.addEventListener('DOMContentLoaded', () => {
+  if (!SpeechRecognition) return;
+  navigator.mediaDevices.getUserMedia({ audio: true })
+    .then(() => { setTimeout(iniciarWakeWord, 1000); })
+    .catch(() => {}); // silencioso se negar
+});
+// ────────────────────────────────────────────────────────────
 
 function toggleVoice(){ /* legado */ }
 // speakThis e stopSpeaking definidos no painel ElevenLabs abaixo
