@@ -553,13 +553,7 @@ body.modo-analitico .analitico-btn-voltar { display:inline-block !important; }
     <div class="input-area">
       <textarea id="userInput" placeholder="Pergunte ao IAF sobre suas vendas..." rows="1"
         onkeydown="handleKey(event)" oninput="autoResize(this)" disabled></textarea>
-      <button id="stopSpeakBtn" onclick="stopSpeaking()" title="Parar voz" style="display:none;width:42px;height:42px;flex-shrink:0;background:#1a1a1a;border:1px solid rgba(245,200,0,.5);border-radius:8px;cursor:pointer;font-size:18px;align-items:center;justify-content:center;">⏹️</button>
-      <!-- Indicador wake word -->
-      <div id="wakeIndicator" title='Diga "IAF" para ativar o microfone' style="display:none;align-items:center;gap:5px;padding:4px 9px;background:rgba(245,200,0,.08);border:1px solid rgba(245,200,0,.25);border-radius:6px;cursor:default;user-select:none;">
-        <span style="width:6px;height:6px;border-radius:50%;background:#f5c800;animation:micPulse .8s infinite;flex-shrink:0"></span>
-        <span style="font-size:10px;color:#f5c800;font-weight:700;letter-spacing:.5px">IAF</span>
-      </div>
-      <button id="stopFetchBtn" onclick="stopFetch()" title="Cancelar pergunta" style="display:none;width:42px;height:42px;flex-shrink:0;background:#1a0000;border:1px solid rgba(204,0,0,.6);border-radius:8px;cursor:pointer;font-size:16px;color:#ff4444;align-items:center;justify-content:center;line-height:1;">✖</button>
+      <button id="stopSpeakBtn" onclick="stopSpeaking()" title="Parar voz" style="display:none;width:42px;height:42px;flex-shrink:0;background:#1a1a1a;border:1px solid rgba(245,200,0,.5);border-radius:8px;cursor:pointer;font-size:18px;align-items:center;justify-content:center;">⏹️</button>      <button id="stopFetchBtn" onclick="stopFetch()" title="Cancelar pergunta" style="display:none;width:42px;height:42px;flex-shrink:0;background:#1a0000;border:1px solid rgba(204,0,0,.6);border-radius:8px;cursor:pointer;font-size:16px;color:#ff4444;align-items:center;justify-content:center;line-height:1;">✖</button>
       <button id="micBtn" onclick="toggleMic()" disabled title="Falar">🎤</button>
       <button id="sendBtn" onclick="sendMessage()" disabled>
         <svg viewBox="0 0 24 24"><path d="M2 21L23 12 2 3v7l15 2-15 2v7z"/></svg>
@@ -590,128 +584,6 @@ let voiceEnabled = false;
 let isRecording  = false;
 let recognition  = null;
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-
-// ── WAKE WORD "IAF" ──────────────────────────────────────────
-let wakeRecognition = null;
-let wakeActive = false;
-
-function iniciarWakeWord() {
-  if (!SpeechRecognition) return;
-  if (isRecording || !wakeActive) return;
-
-  try {
-    wakeRecognition = new SpeechRecognition();
-    wakeRecognition.lang = 'pt-BR';
-    wakeRecognition.continuous = false;      // false = compatível Android
-    wakeRecognition.interimResults = true;
-    wakeRecognition.maxAlternatives = 3;
-
-    wakeRecognition.onresult = (e) => {
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        // Testa todas as alternativas retornadas
-        for (let j = 0; j < e.results[i].length; j++) {
-          const t = e.results[i][j].transcript.trim().toLowerCase();
-          if (/\b(iaf|ia f|iafe|iav|yaf|i a f)\b/.test(t) || t === 'ia' || t === 'iaf.' ) {
-            wakeDetectado();
-            return;
-          }
-        }
-      }
-    };
-
-    wakeRecognition.onend = () => {
-      // Loop contínuo: reinicia imediatamente se não estiver capturando pergunta
-      if (wakeActive && !isRecording) {
-        setTimeout(iniciarWakeWord, 150);
-      }
-    };
-
-    wakeRecognition.onerror = (e) => {
-      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-        wakeActive = false;
-        atualizarIndicadorWake(false);
-        return;
-      }
-      // Qualquer outro erro: tenta reiniciar após pausa curta
-      if (wakeActive && !isRecording) {
-        setTimeout(iniciarWakeWord, 500);
-      }
-    };
-
-    wakeRecognition.start();
-  } catch(err) {
-    // Se falhar, tenta de novo em 1s
-    if (wakeActive && !isRecording) {
-      setTimeout(iniciarWakeWord, 1000);
-    }
-  }
-}
-
-function wakeDetectado() {
-  // Para o wake word, toca bip, inicia captura da pergunta
-  wakeRecognition.stop();
-  wakeActive = false;
-
-  // Bip de confirmação
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.frequency.value = 880;
-    osc.type = 'sine';
-    gain.gain.setValueAtTime(0.3, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.25);
-  } catch(e) {}
-
-  // Pisca o microfone por 300ms antes de ativar
-  const btn = document.getElementById('micBtn');
-  if (btn) { btn.style.transform = 'scale(1.2)'; setTimeout(() => btn.style.transform = '', 300); }
-
-  // Inicia captura da pergunta após 400ms (tempo do bip)
-  setTimeout(() => {
-    toggleMic();
-    // Aguarda o toggleMic terminar e reativa o wake word
-    // toggleMic seta isRecording=false no onend — monitoramos isso
-    const intervalo = setInterval(() => {
-      if (!isRecording) {
-        clearInterval(intervalo);
-        setTimeout(() => {
-          wakeActive = true;
-          atualizarIndicadorWake(true);
-          iniciarWakeWord();
-        }, 800);
-      }
-    }, 200);
-    // Timeout de segurança: 10s
-    setTimeout(() => {
-      clearInterval(intervalo);
-      if (!wakeActive) {
-        wakeActive = true;
-        atualizarIndicadorWake(true);
-        iniciarWakeWord();
-      }
-    }, 10000);
-  }, 400);
-}
-
-function atualizarIndicadorWake(ativo) {
-  const el = document.getElementById('wakeIndicator');
-  if (!el) return;
-  el.style.display = ativo ? 'flex' : 'none';
-}
-
-// Inicia o wake word assim que o microfone for liberado
-document.addEventListener('DOMContentLoaded', () => {
-  if (!SpeechRecognition) return;
-  navigator.mediaDevices.getUserMedia({ audio: true })
-    .then(() => { setTimeout(iniciarWakeWord, 1000); })
-    .catch(() => {}); // silencioso se negar
-});
-// ────────────────────────────────────────────────────────────
 
 function toggleVoice(){ /* legado */ }
 // speakThis e stopSpeaking definidos no painel ElevenLabs abaixo
