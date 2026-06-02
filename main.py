@@ -1190,6 +1190,170 @@ def detalhe_tipo(tipo: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 # ─────────────────────────────────────────────
+#  PDF A PARTIR DO TEXTO NARRADO
+# ─────────────────────────────────────────────
+def gerar_pdf_do_texto(texto_md: str, titulo: str = "RELATÓRIO IAF", periodo: str = "") -> bytes:
+    """Converte o texto Markdown narrado diretamente em PDF via ReportLab."""
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    import io, re
+
+    VERM = colors.HexColor("#C8102E")
+    AMAR = colors.HexColor("#F5C800")
+    PRET = colors.HexColor("#1A1A1A")
+    CINZ = colors.HexColor("#F5F5F5")
+    CINZ2 = colors.HexColor("#DDDDDD")
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+        leftMargin=1.8*cm, rightMargin=1.8*cm,
+        topMargin=1.8*cm, bottomMargin=1.8*cm)
+
+    s_titulo = ParagraphStyle("ptit", fontName="Helvetica-Bold", fontSize=11, textColor=colors.white)
+    s_sub    = ParagraphStyle("psub", fontName="Helvetica", fontSize=8, textColor=colors.HexColor("#CCCCCC"), alignment=TA_RIGHT)
+    s_h2     = ParagraphStyle("ph2",  fontName="Helvetica-Bold", fontSize=10, textColor=VERM, spaceBefore=10, spaceAfter=4)
+    s_h3     = ParagraphStyle("ph3",  fontName="Helvetica-Bold", fontSize=9, textColor=PRET, spaceBefore=8, spaceAfter=3)
+    s_body   = ParagraphStyle("pbod", fontName="Helvetica", fontSize=8.5, textColor=PRET, spaceAfter=3, leading=13)
+    s_bullet = ParagraphStyle("pbul", fontName="Helvetica", fontSize=8.5, textColor=PRET, leftIndent=12, spaceAfter=2, leading=13)
+    s_th     = ParagraphStyle("pth",  fontName="Helvetica-Bold", fontSize=7, textColor=colors.HexColor("#555555"))
+    s_td     = ParagraphStyle("ptd",  fontName="Helvetica", fontSize=7.5, textColor=PRET)
+    s_td_r   = ParagraphStyle("ptdr", fontName="Helvetica", fontSize=7.5, textColor=PRET, alignment=TA_RIGHT)
+    s_td_b   = ParagraphStyle("ptdb", fontName="Helvetica-Bold", fontSize=7.5, textColor=PRET, alignment=TA_RIGHT)
+    s_footer = ParagraphStyle("pfoo", fontName="Helvetica", fontSize=7, textColor=colors.HexColor("#999999"), alignment=TA_CENTER)
+
+    hoje_str = datetime.now().strftime("%d/%m/%Y %H:%M")
+    story = []
+
+    # Cabeçalho
+    hdr = Table([[Paragraph(f"IAF · {titulo}", s_titulo),
+                  Paragraph(f"{periodo}<br/>Gerado em {hoje_str}", s_sub)]],
+                colWidths=["65%", "35%"])
+    hdr.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,-1), VERM),
+        ("TOPPADDING", (0,0), (-1,-1), 8), ("BOTTOMPADDING", (0,0), (-1,-1), 8),
+        ("LEFTPADDING", (0,0), (0,-1), 10), ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+    ]))
+    story.append(hdr)
+    story.append(Spacer(1, 0.4*cm))
+
+    def _bold(txt):
+        """Converte **texto** para <b>texto</b>"""
+        return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", txt)
+
+    def _parse_table(lines):
+        """Converte linhas Markdown de tabela em Table ReportLab."""
+        rows = []
+        for line in lines:
+            if re.match(r"\s*\|[-:\s|]+\|\s*$", line):
+                continue  # linha separadora
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            rows.append(cells)
+        if not rows:
+            return None
+
+        n_cols = max(len(r) for r in rows)
+        # Normaliza colunas
+        rows = [r + [""] * (n_cols - len(r)) for r in rows]
+
+        col_w = [A4[0] / n_cols - 0.5*cm] * n_cols
+        # Detecta colunas numéricas (valores monetários, kg)
+        def is_num(txt): return bool(re.match(r"[R$\d.,\-\+%]+$", txt.strip()))
+
+        td = []
+        for i, row in enumerate(rows):
+            if i == 0:
+                td.append([Paragraph(c, s_th) for c in row])
+            else:
+                is_totals = any(w in " ".join(row).upper() for w in ["TOTAIS","TOTAL"])
+                st = s_td_b if is_totals else s_td
+                td.append([Paragraph(_bold(c), s_td_r if is_num(c) else st) for c in row])
+
+        t = Table(td, colWidths=col_w, repeatRows=1)
+        style = [
+            ("BACKGROUND", (0,0), (-1,0), CINZ),
+            ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+            ("LINEBELOW", (0,0), (-1,0), 1, CINZ2),
+            ("GRID", (0,0), (-1,-1), 0.3, CINZ2),
+            ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, CINZ]),
+            ("TOPPADDING", (0,0), (-1,-1), 2),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 2),
+            ("FONTSIZE", (0,0), (-1,-1), 7.5),
+        ]
+        # Linha de totais
+        for i, row in enumerate(rows):
+            if any(w in " ".join(row).upper() for w in ["TOTAIS","TOTAL"]):
+                style += [("BACKGROUND",(0,i),(-1,i),colors.HexColor("#FFF3CD")),
+                          ("FONTNAME",(0,i),(-1,i),"Helvetica-Bold"),
+                          ("LINEABOVE",(0,i),(-1,i),1,CINZ2)]
+        t.setStyle(TableStyle(style))
+        return t
+
+    # Parser linha por linha
+    lines = texto_md.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+
+        # Tabela Markdown
+        if line.strip().startswith("|"):
+            tbl_lines = []
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                tbl_lines.append(lines[i])
+                i += 1
+            t = _parse_table(tbl_lines)
+            if t:
+                story.append(t)
+                story.append(Spacer(1, 0.2*cm))
+            continue
+
+        # H2 ##
+        m = re.match(r"^##\s+(.+)$", line)
+        if m:
+            story.append(Paragraph(_bold(m.group(1)), s_h2))
+            story.append(HRFlowable(width="100%", thickness=0.8, color=VERM, spaceAfter=2))
+            i += 1
+            continue
+
+        # H3 ###
+        m = re.match(r"^###\s+(.+)$", line)
+        if m:
+            story.append(Paragraph(_bold(m.group(1)), s_h3))
+            i += 1
+            continue
+
+        # Bullet •, -, *
+        m = re.match(r"^[•\-\*]\s+(.+)$", line.strip())
+        if m:
+            story.append(Paragraph(f"• {_bold(m.group(1))}", s_bullet))
+            i += 1
+            continue
+
+        # Linha em branco
+        if not line.strip():
+            story.append(Spacer(1, 0.15*cm))
+            i += 1
+            continue
+
+        # Texto normal
+        txt = _bold(line.strip())
+        if txt:
+            story.append(Paragraph(txt, s_body))
+        i += 1
+
+    story.append(Spacer(1, 0.3*cm))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=CINZ2))
+    story.append(Paragraph(f"IAF · Analista Comercial · Frinense Alimentos · {hoje_str}", s_footer))
+
+    doc.build(story)
+    buf.seek(0)
+    return buf.read()
+
+
+# ─────────────────────────────────────────────
 #  ROUTE — /chat (nova arquitetura)
 # ─────────────────────────────────────────────
 def gerar_relatorio_pdf(df: pd.DataFrame, filtro: dict, resultado: dict) -> bytes:
@@ -2282,25 +2446,38 @@ async def chat(req: ChatRequest):
         _last_resultado.update(resultado)  # salva para PDF
 
     if filtro.get("formato") == "pdf":
+        # USA O TEXTO NARRADO — é exatamente o que estava na tela
+        texto_para_pdf = _last_resultado.get("_texto_narrado", "")
+        if not texto_para_pdf:
+            return JSONResponse({"content": [{"type": "text", "text":
+                "⚠️ Faça uma consulta primeiro para depois pedir o PDF."}]})
         try:
-            pdf_bytes = gerar_relatorio_pdf(df, filtro, resultado)
-            filename = _proximo_seq_pdf()
-            logging.info(f"[PDF] Gerando: {filename}")
+            tipo_r   = _last_resultado.get("tipo", "resumo_mensal")
+            titulos  = {"resumo_mensal":"RESUMO MENSAL DE VENDAS","resumo_diario":"RESUMO DIÁRIO DE VENDAS",
+                        "ultimas_vendas":"ÚLTIMAS VENDAS","ultimos_precos":"ÚLTIMOS PREÇOS",
+                        "ranking_clientes":"RANKING DE CLIENTES","ranking_vendedores":"RANKING DE VENDEDORES",
+                        "ranking_produtos":"RANKING DE PRODUTOS","comparativo":"RELATÓRIO COMPARATIVO"}
+            titulo_r = titulos.get(tipo_r, "RELATÓRIO IAF")
+            d1 = (_last_resultado.get("_filtro") or {}).get("data_inicio","") or filtro.get("data_inicio","")
+            d2 = (_last_resultado.get("_filtro") or {}).get("data_fim","")    or filtro.get("data_fim","")
+            try:
+                p1 = datetime.strptime(d1,"%Y-%m-%d").strftime("%d/%m/%Y") if d1 else ""
+                p2 = datetime.strptime(d2,"%Y-%m-%d").strftime("%d/%m/%Y") if d2 else ""
+                periodo_r = f"{p1} a {p2}" if p1 and p2 and p1!=p2 else p1
+            except: periodo_r = f"{d1} a {d2}"
+            pdf_bytes = gerar_pdf_do_texto(texto_para_pdf, titulo_r, periodo_r)
+            filename  = _proximo_seq_pdf()
             import base64 as _b64
-            pdf_b64 = _b64.b64encode(pdf_bytes).decode()
+            pdf_b64   = _b64.b64encode(pdf_bytes).decode()
+            logging.warning(f"[PDF-TEXTO] Gerado: {filename} tipo={tipo_r}")
             return JSONResponse({
-                "id": "iaf-pdf",
-                "type": "message",
-                "role": "assistant",
-                "content": [{"type": "text", "text":
-                    f"📄 Relatório gerado!\nRELATORIO_PDF_BASE64:{pdf_b64}:FILENAME:{filename}"}],
-                "model": "iaf-v2",
-                "stop_reason": "end_turn"
+                "id": "iaf-pdf", "type": "message", "role": "assistant",
+                "content": [{"type": "text", "text": f"📄 PDF gerado!\nRELATORIO_PDF_BASE64:{pdf_b64}:FILENAME:{filename}"}],
+                "model": "iaf-v2", "stop_reason": "end_turn"
             })
         except Exception as e:
-            logging.error(f"[PDF] erro: {e}")
-            return JSONResponse({"content": [{"type": "text", "text":
-                f"❌ Erro ao gerar PDF: {str(e)}. Tente sem o PDF por enquanto."}]})
+            logging.error(f"[PDF-TEXTO] erro: {e}")
+            return JSONResponse({"content": [{"type": "text", "text": f"❌ Erro ao gerar PDF: {e}"}]})
 
     # ETAPA 3 — Narrar
     try:
@@ -2321,6 +2498,8 @@ async def chat(req: ChatRequest):
 
     # Retornar narração na tela sempre
     # PDF vai como mensagem separada embutida no content (frontend já sabe processar)
+    # Salva o texto narrado para PDF
+    _last_resultado["_texto_narrado"] = resposta_texto
     content_list = [{"type": "text", "text": resposta_texto}]
 
     if tipo_resultado in _tipos_com_pdf and not _ja_tem_pdf and not _pedir_pdf:
