@@ -48,6 +48,10 @@ from reportlab.lib.enums import TA_RIGHT, TA_CENTER
 #  CONFIG
 # ─────────────────────────────────────────────
 app = FastAPI()
+
+# Cache do último resultado calculado — usado para gerar PDF do que está na tela
+_last_resultado: dict = {}
+
 app.add_middleware(CORSMiddleware,
     allow_origins=["https://web-production-91aff.up.railway.app"],
     allow_methods=["GET", "POST", "DELETE"],
@@ -2070,8 +2074,17 @@ async def chat(req: ChatRequest):
         return JSONResponse({"content": [{"type": "text", "text":
             "⚠️ Sem dados disponíveis para o período/filtro solicitado. Verifique o período ou tente outro filtro."}]})
 
-    # ETAPA 2.5 — Se formato PDF, SEMPRE detectar tipo pela última resposta do assistente
+    # ETAPA 2.5 — Se formato PDF, usa o último resultado calculado (o que estava na tela)
     if filtro.get("formato") == "pdf":
+        global _last_resultado
+        if _last_resultado:
+            resultado = _last_resultado
+            logging.warning(f"[PDF] Usando _last_resultado tipo={resultado.get('tipo')} dados_keys={list(resultado.get('dados',{}).keys())}")
+        else:
+            logging.warning("[PDF] _last_resultado vazio — usando detecção por histórico")
+        if False:  # bloco antigo mantido como fallback (nunca executa se _last_resultado ok)
+            pass
+    if filtro.get("formato") == "pdf" and not _last_resultado:
         ultima_resp_assist = ""
         for msg in reversed(historico[:-1]):
             if msg.get("role") == "assistant":
@@ -2191,6 +2204,9 @@ async def chat(req: ChatRequest):
 
             logging.warning(f"[PDF] tipo detectado={tipo_detectado} cliente={filtro.get('cliente')} data_inicio={filtro.get('data_inicio')}")
             resultado = calcular(df, filtro)
+        # Salva o último resultado para uso no PDF
+        global _last_resultado
+        _last_resultado = resultado
 
     if filtro.get("formato") == "pdf":
         try:
