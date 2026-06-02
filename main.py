@@ -1492,130 +1492,81 @@ def gerar_relatorio_pdf(df: pd.DataFrame, filtro: dict, resultado: dict) -> byte
         else:
             corpo_html = "<p>Dados comparativos não disponíveis. Tente refazer a consulta.</p>"
 
-    # ── RESUMO MENSAL / DIÁRIO — PDF Analítico com insights ──
+    # ── RESUMO MENSAL / DIÁRIO — PDF Analítico ──
     elif tipo_rel in ("resumo_mensal", "resumo_diario", "periodo_livre"):
         dados_r = resultado.get("dados", {})
-
-        # Por filial
-        por_filial = dados_r.get("por_filial", [])
-        linhas_filial = ""
-        for pf in por_filial:
-            nome_f = str(pf.get("filial", pf.get("NOME_FILIAL", "")))
-            fat_f  = float(pf.get("faturamento", pf.get("fat", 0)))
-            kg_f   = float(pf.get("kg", pf.get("QTDE_PRI", 0)))
-            cx_f   = int(round(kg_f / 30))
-            nt_f   = int(pf.get("notas", pf.get("NUM_DOCTO", 0)))
-            pm_f   = round(fat_f / kg_f, 2) if kg_f > 0 else 0
-            pct_f  = round(fat_f / fat * 100, 1) if fat > 0 else 0
-            linhas_filial += f"<tr><td><strong>{_h.escape(nome_f)}</strong></td><td class='valor'>{fmt_brl(fat_f)}</td><td class='valor'>{fmt_kg(kg_f)}</td><td class='valor'>{cx_f:,}</td><td class='valor'>{nt_f:,}</td><td class='valor'>{fmt_brl(pm_f)}</td><td class='valor'>{pct_f:.1f}%</td></tr>"
-
-        # Top clientes
+        por_filial   = dados_r.get("por_filial", [])
         top_clientes = dados_r.get("top_clientes", [])[:15]
-        linhas_cli = ""
-        for i, tc in enumerate(top_clientes, 1):
-            nome_c = str(tc.get("cliente", tc.get("NOME_CLIENTE", "")))[:50]
-            fat_c  = float(tc.get("faturamento", tc.get("fat", 0)))
-            kg_c   = float(tc.get("kg", 0))
-            nt_c   = int(tc.get("notas", 0))
-            pm_c   = round(fat_c / kg_c, 2) if kg_c > 0 else 0
-            pct_c  = round(fat_c / fat * 100, 1) if fat > 0 else 0
-            linhas_cli += f"<tr><td style='text-align:center;font-weight:bold'>{i}</td><td>{_h.escape(nome_c)}</td><td class='valor'>{fmt_brl(fat_c)}</td><td class='valor'>{fmt_kg(kg_c)}</td><td class='valor'>{nt_c:,}</td><td class='valor'>{fmt_brl(pm_c)}</td><td class='valor'>{pct_c:.1f}%</td></tr>"
-
-        # Top produtos
         top_produtos = dados_r.get("top_produtos", [])[:15]
+        top_vend     = dados_r.get("top_vendedores", [])[:10]
+        prev_fat     = dados_r.get("previsao_fat", 0)
+        prev_kg      = dados_r.get("previsao_kg", 0)
+        prev_cx      = dados_r.get("previsao_cx30", 0)
+        dias_fat     = dados_r.get("dias_faturados", 0)
+        dias_res     = dados_r.get("dias_uteis_restantes", 0)
+        med_fat      = dados_r.get("media_diaria_fat", 0)
+
+        def _lin_filial(pf):
+            nome_f = str(pf.get("filial", pf.get("NOME_FILIAL","")))
+            fat_f  = float(pf.get("faturamento", pf.get("fat",0)))
+            kg_f   = float(pf.get("kg",0))
+            cx_f   = int(round(kg_f/30))
+            nt_f   = int(pf.get("notas",0))
+            pm_f   = round(fat_f/kg_f,2) if kg_f>0 else 0
+            pct_f  = round(fat_f/fat*100,1) if fat>0 else 0
+            return f"<tr><td><strong>{_h.escape(nome_f)}</strong></td><td class='valor'>{fmt_brl(fat_f)}</td><td class='valor'>{fmt_kg(kg_f)}</td><td class='valor'>{cx_f:,}</td><td class='valor'>{nt_f:,}</td><td class='valor'>{fmt_brl(pm_f)}</td><td class='valor'>{pct_f:.1f}%</td></tr>"
+
+        linhas_filial = "".join(_lin_filial(pf) for pf in por_filial)
+
+        linhas_cli = ""
+        for i,tc in enumerate(top_clientes,1):
+            nm = str(tc.get("cliente",tc.get("NOME_CLIENTE","")))[:50]
+            ft = float(tc.get("faturamento",tc.get("fat",0)))
+            kg = float(tc.get("kg",0))
+            nt = int(tc.get("notas",0))
+            pm_c = round(ft/kg,2) if kg>0 else 0
+            pct  = round(ft/fat*100,1) if fat>0 else 0
+            linhas_cli += f"<tr><td style='text-align:center'><b>{i}</b></td><td>{_h.escape(nm)}</td><td class='valor'>{fmt_brl(ft)}</td><td class='valor'>{fmt_kg(kg)}</td><td class='valor'>{nt:,}</td><td class='valor'>{fmt_brl(pm_c)}</td><td class='valor'>{pct:.1f}%</td></tr>"
+
         linhas_prod = ""
-        for i, tp in enumerate(top_produtos, 1):
-            nome_p = str(tp.get("produto", tp.get("DESCRICAO", tp.get("DESC_PRODUTO", ""))))[:45]
-            fat_p  = float(tp.get("faturamento", tp.get("fat", 0)))
-            kg_p   = float(tp.get("kg", 0))
-            pm_p   = round(fat_p / kg_p, 2) if kg_p > 0 else 0
-            pct_p  = round(fat_p / fat * 100, 1) if fat > 0 else 0
-            linhas_prod += f"<tr><td style='text-align:center;font-weight:bold'>{i}</td><td>{_h.escape(nome_p)}</td><td class='valor'>{fmt_brl(fat_p)}</td><td class='valor'>{fmt_kg(kg_p)}</td><td class='valor'>{fmt_brl(pm_p)}</td><td class='valor'>{pct_p:.1f}%</td></tr>"
+        for i,tp in enumerate(top_produtos,1):
+            nm = str(tp.get("produto",tp.get("DESCRICAO",tp.get("DESC_PRODUTO",""))))[:45]
+            ft = float(tp.get("faturamento",tp.get("fat",0)))
+            kg = float(tp.get("kg",0))
+            pm_p = round(ft/kg,2) if kg>0 else 0
+            pct  = round(ft/fat*100,1) if fat>0 else 0
+            linhas_prod += f"<tr><td style='text-align:center'><b>{i}</b></td><td>{_h.escape(nm)}</td><td class='valor'>{fmt_brl(ft)}</td><td class='valor'>{fmt_kg(kg)}</td><td class='valor'>{fmt_brl(pm_p)}</td><td class='valor'>{pct:.1f}%</td></tr>"
 
-        # Top vendedores
-        top_vend = dados_r.get("top_vendedores", [])[:10]
         linhas_vend = ""
-        for i, tv in enumerate(top_vend, 1):
-            nome_v = str(tv.get("vendedor", tv.get("NOM_VENDEDOR", "")))[:40]
-            fat_v  = float(tv.get("faturamento", tv.get("fat", 0)))
-            kg_v   = float(tv.get("kg", 0))
-            nt_v   = int(tv.get("notas", 0))
-            pct_v  = round(fat_v / fat * 100, 1) if fat > 0 else 0
-            linhas_vend += f"<tr><td style='text-align:center;font-weight:bold'>{i}</td><td>{_h.escape(nome_v)}</td><td class='valor'>{fmt_brl(fat_v)}</td><td class='valor'>{fmt_kg(kg_v)}</td><td class='valor'>{nt_v:,}</td><td class='valor'>{pct_v:.1f}%</td></tr>"
-
-        # Previsão de fechamento
-        prev_fat = dados_r.get("previsao_fat", 0)
-        prev_kg  = dados_r.get("previsao_kg", 0)
-        prev_cx  = dados_r.get("previsao_cx30", 0)
-        dias_fat = dados_r.get("dias_faturados", 0)
-        dias_res = dados_r.get("dias_uteis_restantes", 0)
-        med_fat  = dados_r.get("media_diaria_fat", 0)
+        for i,tv in enumerate(top_vend,1):
+            nm = str(tv.get("vendedor",tv.get("NOM_VENDEDOR","")))[:40]
+            ft = float(tv.get("faturamento",tv.get("fat",0)))
+            kg = float(tv.get("kg",0))
+            nt = int(tv.get("notas",0))
+            pct = round(ft/fat*100,1) if fat>0 else 0
+            linhas_vend += f"<tr><td style='text-align:center'><b>{i}</b></td><td>{_h.escape(nm)}</td><td class='valor'>{fmt_brl(ft)}</td><td class='valor'>{fmt_kg(kg)}</td><td class='valor'>{nt:,}</td><td class='valor'>{pct:.1f}%</td></tr>"
 
         prev_html = ""
         if prev_fat:
-            prev_html = f"""
-            <div class="grupo-header" style="margin-top:16px">
-              <span class="grupo-tipo">📈 PREVISÃO DE FECHAMENTO</span>
-              <span class="grupo-stats">{dias_fat} dias faturados · {dias_res} dias úteis restantes</span>
-            </div>
-            <table><thead><tr>
-              <th>Faturamento Previsto</th><th>Volume Previsto</th><th>CX30 Previsto</th><th>Média Diária Fat.</th>
-            </tr></thead><tbody><tr>
-              <td class="valor" style="font-size:12px;font-weight:bold;color:#C8102E">{fmt_brl(prev_fat)}</td>
-              <td class="valor">{fmt_kg(prev_kg)}</td>
-              <td class="valor">{int(prev_cx):,}</td>
-              <td class="valor">{fmt_brl(med_fat)}</td>
-            </tr></tbody></table>"""
+            prev_html = f'''<div class="grupo-header" style="margin-top:14px"><span class="grupo-tipo">📈 PREVISÃO DE FECHAMENTO</span><span class="grupo-stats">{dias_fat} dias faturados · {dias_res} dias úteis restantes</span></div>
+            <table><thead><tr><th>Fat. Previsto</th><th>Vol. Previsto</th><th>CX30 Previsto</th><th>Média Diária</th></tr></thead>
+            <tbody><tr><td class="valor" style="font-size:11px;font-weight:bold;color:#C8102E">{fmt_brl(prev_fat)}</td><td class="valor">{fmt_kg(prev_kg)}</td><td class="valor">{int(prev_cx):,}</td><td class="valor">{fmt_brl(med_fat)}</td></tr></tbody></table>'''
 
-        corpo_html = f"""
-        <div class="grupo-header">
-          <span class="grupo-tipo">🏢 DESEMPENHO POR FILIAL</span>
-          <span class="grupo-stats">{len(por_filial)} filiais</span>
-        </div>
-        <table><thead><tr>
-          <th>FILIAL</th><th style="text-align:right">FATURAMENTO</th>
-          <th style="text-align:right">VOLUME KG</th><th style="text-align:right">CX30</th>
-          <th style="text-align:right">NOTAS</th><th style="text-align:right">R$/KG</th>
-          <th style="text-align:right">% FAT</th>
-        </tr></thead>
-        <tbody>{linhas_filial}</tbody></table>
-
+        corpo_html = f'''
+        <div class="grupo-header"><span class="grupo-tipo">🏢 POR FILIAL</span></div>
+        <table><thead><tr><th>FILIAL</th><th style="text-align:right">FATURAMENTO</th><th style="text-align:right">VOLUME KG</th><th style="text-align:right">CX30</th><th style="text-align:right">NOTAS</th><th style="text-align:right">R$/KG</th><th style="text-align:right">%</th></tr></thead>
+        <tbody>{linhas_filial or "<tr><td colspan=7>Sem dados</td></tr>"}</tbody></table>
         {prev_html}
-
-        <div class="grupo-header" style="margin-top:16px">
-          <span class="grupo-tipo">🏆 TOP CLIENTES</span>
-          <span class="grupo-stats">por faturamento</span>
-        </div>
-        <table><thead><tr>
-          <th style="text-align:center">#</th><th>CLIENTE</th>
-          <th style="text-align:right">FATURAMENTO</th><th style="text-align:right">VOLUME KG</th>
-          <th style="text-align:right">NOTAS</th><th style="text-align:right">R$/KG</th>
-          <th style="text-align:right">% FAT</th>
-        </tr></thead>
-        <tbody>{linhas_cli if linhas_cli else "<tr><td colspan='7'>Sem dados</td></tr>"}</tbody></table>
-
-        <div class="grupo-header" style="margin-top:16px">
-          <span class="grupo-tipo">📦 TOP PRODUTOS</span>
-          <span class="grupo-stats">por faturamento</span>
-        </div>
-        <table><thead><tr>
-          <th style="text-align:center">#</th><th>PRODUTO</th>
-          <th style="text-align:right">FATURAMENTO</th><th style="text-align:right">VOLUME KG</th>
-          <th style="text-align:right">R$/KG</th><th style="text-align:right">% FAT</th>
-        </tr></thead>
-        <tbody>{linhas_prod if linhas_prod else "<tr><td colspan='6'>Sem dados</td></tr>"}</tbody></table>
-
-        <div class="grupo-header" style="margin-top:16px">
-          <span class="grupo-tipo">👤 TOP VENDEDORES</span>
-          <span class="grupo-stats">por faturamento</span>
-        </div>
-        <table><thead><tr>
-          <th style="text-align:center">#</th><th>VENDEDOR</th>
-          <th style="text-align:right">FATURAMENTO</th><th style="text-align:right">VOLUME KG</th>
-          <th style="text-align:right">NOTAS</th><th style="text-align:right">% FAT</th>
-        </tr></thead>
-        <tbody>{linhas_vend if linhas_vend else "<tr><td colspan='6'>Sem dados</td></tr>"}</tbody></table>
-        """
+        <div class="grupo-header" style="margin-top:14px"><span class="grupo-tipo">🏆 TOP CLIENTES</span><span class="grupo-stats">por faturamento</span></div>
+        <table><thead><tr><th>#</th><th>CLIENTE</th><th style="text-align:right">FATURAMENTO</th><th style="text-align:right">VOLUME KG</th><th style="text-align:right">NOTAS</th><th style="text-align:right">R$/KG</th><th style="text-align:right">%</th></tr></thead>
+        <tbody>{linhas_cli or "<tr><td colspan=7>Sem dados</td></tr>"}</tbody></table>
+        <div class="grupo-header" style="margin-top:14px"><span class="grupo-tipo">📦 TOP PRODUTOS</span><span class="grupo-stats">por faturamento</span></div>
+        <table><thead><tr><th>#</th><th>PRODUTO</th><th style="text-align:right">FATURAMENTO</th><th style="text-align:right">VOLUME KG</th><th style="text-align:right">R$/KG</th><th style="text-align:right">%</th></tr></thead>
+        <tbody>{linhas_prod or "<tr><td colspan=6>Sem dados</td></tr>"}</tbody></table>
+        <div class="grupo-header" style="margin-top:14px"><span class="grupo-tipo">👤 TOP VENDEDORES</span><span class="grupo-stats">por faturamento</span></div>
+        <table><thead><tr><th>#</th><th>VENDEDOR</th><th style="text-align:right">FATURAMENTO</th><th style="text-align:right">VOLUME KG</th><th style="text-align:right">NOTAS</th><th style="text-align:right">%</th></tr></thead>
+        <tbody>{linhas_vend or "<tr><td colspan=6>Sem dados</td></tr>"}</tbody></table>
+        '''
 
     # ── PADRÃO: relatório de faturamento por tipo de movimento ──
     else:
@@ -2190,6 +2141,10 @@ async def chat(req: ChatRequest):
     # ETAPA 2 — Calcular
     try:
         resultado = calcular(df, filtro)
+        # Salva sempre — PDF vai usar esse resultado diretamente
+        if not filtro.get("formato") == "pdf":
+            _last_resultado.clear()
+            _last_resultado.update(resultado)
     except Exception as e:
         logging.error(f"[CALCULAR] erro: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao calcular dados: {e}")
@@ -2327,13 +2282,10 @@ async def chat(req: ChatRequest):
         _last_resultado.update(resultado)  # salva para PDF
 
     if filtro.get("formato") == "pdf":
-        if not resultado:
-            resultado = dict(_last_resultado) if _last_resultado else {"tipo": filtro.get("tipo","resumo_mensal"), "dados": {}}
         try:
-            filtro_pdf = {**filtro, "tipo": resultado.get("tipo", filtro.get("tipo","resumo_mensal"))}
-            pdf_bytes = gerar_relatorio_pdf(df, filtro_pdf, resultado)
+            pdf_bytes = gerar_relatorio_pdf(df, filtro, resultado)
             filename = _proximo_seq_pdf()
-            logging.info(f"[PDF] Gerando: {filename} tipo={filtro_pdf['tipo']}")
+            logging.info(f"[PDF] Gerando: {filename}")
             import base64 as _b64
             pdf_b64 = _b64.b64encode(pdf_bytes).decode()
             return JSONResponse({
