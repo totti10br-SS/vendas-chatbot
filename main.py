@@ -353,7 +353,7 @@ PERGUNTA ATUAL: {pergunta}
 
 Retorne JSON com esta estrutura exata:
 {{
-  "tipo": "resumo_mensal|resumo_diario|ultimas_vendas|ultimos_precos|detalhe_nota|ranking_clientes|ranking_produtos|ranking_vendedores|comparativo|grafico|cnpj_query|periodo_livre|saudacao|indefinido",
+  "tipo": "resumo_mensal|resumo_diario|ultimas_vendas|ultimos_precos|detalhe_nota|ranking_clientes|ranking_produtos|ranking_vendedores|comparativo|grafico|cnpj_query|periodo_livre|mix_produtos_cliente|saudacao|indefinido",
   "data_inicio": "YYYY-MM-DD ou null",
   "data_fim": "YYYY-MM-DD ou null",
   "filial": "ITAP|BJESUS|PORC ou null",
@@ -404,6 +404,7 @@ REGRAS:
   * "relatório de vendas de hoje/semana/mês", "relatorio de vendas", "relatório do dia", "notas do dia", "notas de hoje" → tipo="ultimas_vendas" (tabela de notas, sem análise)
   * "análise das vendas", "analise do dia", "como foram as vendas", "resumo do dia", "resumo das vendas", "como estamos hoje", "balanço do dia" → tipo="resumo_diario" ou "resumo_mensal" (análise com KPIs, top clientes, previsão)
 - "últimos preços", "preço atual", "quanto paga", "tabela de preços": tipo="ultimos_precos"
+- "mix de produtos", "produtos vendidos para", "quais produtos", "relação de produtos", "mix do cliente": tipo="mix_produtos_cliente", precisa_cliente=true, precisa_periodo=true
 - Se mencionar produto específico (ex: "file mignon", "cupim", "peito"): preencha busca_produto com o termo → mostra preço mais recente por produto; se período não especificado: precisa_periodo=false (o sistema assume 90 dias automaticamente)
 - DISTINÇÃO busca_produto: se a pergunta for sobre "notas fiscais", "relatório de notas", "quando vendemos X", "notas com X", "quais notas tem X" → tipo="ultimas_vendas" + busca_produto. Se for sobre preço/valor do produto → tipo="ultimos_precos" + busca_produto
 - NUNCA invente dados, apenas interprete a pergunta"""
@@ -801,6 +802,32 @@ def calcular(df: pd.DataFrame, filtro: dict) -> dict:
         d["itens_detalhados"] = registros
 
     # ── Últimos preços por produto ──
+    # ── MIX DE PRODUTOS POR CLIENTE ──
+    if tipo == "mix_produtos_cliente":
+        col_cod  = "COD_PRODUTO"  if "COD_PRODUTO"  in dff.columns else None
+        col_desc = "DESC_PRODUTO" if "DESC_PRODUTO" in dff.columns else "DESCRICAO" if "DESCRICAO" in dff.columns else None
+        if col_desc:
+            grp_cols = [col for col in [col_cod, col_desc] if col]
+            mix = dff.groupby(grp_cols).agg(
+                kg=("QTDE_PRI","sum"),
+                fat=("VALOR_LIQUIDO","sum"),
+                notas=("NUM_DOCTO","nunique"),
+            ).reset_index().sort_values("fat", ascending=False)
+            d["mix_produtos"] = []
+            for _, r in mix.iterrows():
+                kg_v  = float(r["kg"])
+                fat_v = float(r["fat"])
+                d["mix_produtos"].append({
+                    "cod":     str(r[col_cod]) if col_cod else "",
+                    "produto": str(r[col_desc])[:60],
+                    "kg":      round(kg_v, 3),
+                    "cx30":    int(round(kg_v / 30)),
+                    "fat":     round(fat_v, 2),
+                    "pm":      round(fat_v / kg_v, 2) if kg_v > 0 else 0,
+                    "notas":   int(r["notas"]),
+                })
+            d["total_produtos"] = len(d["mix_produtos"])
+
     if tipo == "ultimos_precos" and "DESC_PRODUTO" in dff.columns:
         cliente_nome = dff['NOME_CLIENTE'].iloc[0] if 'NOME_CLIENTE' in dff.columns and len(dff) > 0 else None
         if cliente_nome:
@@ -982,6 +1009,26 @@ Sua missão é transformar dados de vendas em informação clara e útil para a 
   CASO ESPECIAL — ÚLTIMA NOTA: Se "resumo_notas" tiver exatamente 1 nota:
   **Nota [nr_nota]** · [data] · [filial]
   **Faturamento:** R$ [fat] | **Volume:** [kg] kg | **Itens:** [n_itens]
+- mix_produtos_cliente:
+  Use o campo "mix_produtos" do JSON. Cada elemento tem: cod, produto, kg, cx30, fat, pm, notas.
+  
+  ## MIX DE PRODUTOS · [cliente_encontrado] · [periodo_ini] a [periodo_fim]
+  
+  | COD | PRODUTO | KG | CX30 | FATURAMENTO | R$/KG | NOTAS |
+  |-----|---------|----|----- |-------------|-------|-------|
+  
+  REGRAS:
+  - Uma linha por produto, ordenado por faturamento (maior primeiro)
+  - COD: campo "cod" — se vazio, use "-"
+  - PRODUTO: campo "produto"
+  - KG: campo "kg" com 3 casas decimais
+  - CX30: campo "cx30"
+  - FATURAMENTO: campo "fat" formato R$ X.XXX,XX
+  - R$/KG: campo "pm" formato R$ XX,XX
+  - NOTAS: campo "notas"
+  - Linha TOTAIS obrigatória ao final
+  - Após a tabela: parágrafo resumindo total de produtos distintos, volume total e faturamento total
+
 - ranking_clientes: Tabela com posição, nome, kg, cx30, faturamento, R$/kg
 - ranking_vendedores: Tabela com cod, nome, kg, cx30, faturamento, notas
 - comparativo: 
@@ -1447,6 +1494,7 @@ def gerar_relatorio_pdf(df: pd.DataFrame, filtro: dict, resultado: dict) -> byte
         "resumo_diario":    "RESUMO DIÁRIO DE VENDAS",
         "ultimas_vendas":   "ÚLTIMAS VENDAS POR NOTA",
         "ultimos_precos":   "ÚLTIMOS PREÇOS POR PRODUTO",
+                        "mix_produtos_cliente": "MIX DE PRODUTOS POR CLIENTE",
         "ranking_clientes": "RANKING DE CLIENTES",
         "ranking_vendedores": "RANKING DE VENDEDORES",
         "ranking_produtos":  "RANKING DE PRODUTOS",
