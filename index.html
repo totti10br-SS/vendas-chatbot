@@ -23,52 +23,25 @@
 body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);height:100dvh;display:flex;flex-direction:column;overflow:hidden;}
 
 /* MODAL MIX PRODUTOS */
-.modal-mix-overlay {
-  position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(6px);
-  display:none;align-items:center;justify-content:center;z-index:500;
-}
-.modal-mix-overlay.active { display:flex; }
-.modal-mix {
-  background:#1C1C1C;border:1px solid rgba(245,200,0,.3);border-radius:16px;
-  padding:24px;width:100%;max-width:420px;box-shadow:0 20px 60px rgba(0,0,0,.7);
-  animation:modalIn .2s ease;
-}
-@keyframes modalIn { from{opacity:0;transform:scale(.95) translateY(8px)} to{opacity:1;transform:scale(1) translateY(0)} }
-.modal-mix h3 { font-family:'Barlow Condensed',sans-serif;font-size:18px;font-weight:700;color:#fff;margin-bottom:4px;letter-spacing:.5px; }
-.modal-mix p  { font-size:12px;color:#777;margin-bottom:16px; }
-.modal-mix label { font-size:11px;color:#aaa;text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px; }
-.modal-mix input[type=text] {
-  width:100%;background:#252525;border:1px solid rgba(255,255,255,.1);border-radius:8px;
-  padding:10px 14px;color:#fff;font-family:'Barlow',sans-serif;font-size:14px;outline:none;
-  transition:border-color .15s;
-}
-.modal-mix input[type=text]:focus { border-color:var(--yellow); }
-.periodo-btns { display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:16px 0; }
-.periodo-btn {
-  background:#252525;border:1px solid rgba(255,255,255,.1);border-radius:8px;
-  padding:10px;color:#aaa;font-family:'Barlow Condensed',sans-serif;font-size:13px;
-  font-weight:600;letter-spacing:.5px;cursor:pointer;transition:all .15s;text-align:center;
-}
-.periodo-btn:hover { border-color:var(--yellow);color:var(--yellow);background:#2a2a1a; }
-.periodo-btn.selected { background:var(--yellow);color:#111;border-color:var(--yellow); }
-.modal-mix-actions { display:flex;gap:8px;margin-top:4px; }
-.btn-mix-ok {
-  flex:1;background:var(--red);border:none;border-radius:8px;padding:11px;
-  color:#fff;font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:700;
-  letter-spacing:.5px;cursor:pointer;transition:background .15s;
-}
-.btn-mix-ok:hover { background:var(--red-dark); }
-.btn-mix-cancel {
-  background:transparent;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:11px 16px;
-  color:#aaa;font-family:'Barlow',sans-serif;font-size:13px;cursor:pointer;transition:all .15s;
-}
-.btn-mix-cancel:hover { border-color:rgba(255,255,255,.3);color:#fff; }
-.suggestion-destaque {
-  background:rgba(245,200,0,.08) !important;
-  border-color:rgba(245,200,0,.3) !important;
-  color:var(--yellow) !important;
-  font-weight:600;
-}
+.modal-mix-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(6px);display:none;align-items:center;justify-content:center;z-index:500;}
+.modal-mix-overlay.active{display:flex;}
+.modal-mix{background:#1C1C1C;border:1px solid rgba(245,200,0,.3);border-radius:16px;padding:24px;width:100%;max-width:420px;box-shadow:0 20px 60px rgba(0,0,0,.7);animation:modalIn .2s ease;}
+@keyframes modalIn{from{opacity:0;transform:scale(.95) translateY(8px)}to{opacity:1;transform:scale(1) translateY(0)}}
+.modal-mix h3{font-family:'Barlow Condensed',sans-serif;font-size:18px;font-weight:700;color:#fff;margin-bottom:4px;letter-spacing:.5px;}
+.modal-mix p{font-size:12px;color:#777;margin-bottom:16px;}
+.modal-mix label{font-size:11px;color:#aaa;text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px;}
+.modal-mix input[type=text]{width:100%;background:#252525;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:10px 14px;color:#fff;font-family:'Barlow',sans-serif;font-size:14px;outline:none;transition:border-color .15s;}
+.modal-mix input[type=text]:focus{border-color:var(--yellow);}
+.periodo-btns{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:16px 0;}
+.periodo-btn{background:#252525;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:10px;color:#aaa;font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:600;letter-spacing:.5px;cursor:pointer;transition:all .15s;text-align:center;}
+.periodo-btn:hover{border-color:var(--yellow);color:var(--yellow);background:#2a2a1a;}
+.periodo-btn.selected{background:var(--yellow);color:#111;border-color:var(--yellow);}
+.modal-mix-actions{display:flex;gap:8px;margin-top:4px;}
+.btn-mix-ok{flex:1;background:var(--red);border:none;border-radius:8px;padding:11px;color:#fff;font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:700;letter-spacing:.5px;cursor:pointer;transition:background .15s;}
+.btn-mix-ok:hover{background:var(--red-dark);}
+.btn-mix-cancel{background:transparent;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:11px 16px;color:#aaa;font-family:'Barlow',sans-serif;font-size:13px;cursor:pointer;transition:all .15s;}
+.btn-mix-cancel:hover{border-color:rgba(255,255,255,.3);color:#fff;}
+.suggestion-destaque{background:rgba(245,200,0,.08)!important;border-color:rgba(245,200,0,.3)!important;color:var(--yellow)!important;font-weight:600;}
 
 /* HEADER */
 header{background:var(--red);padding:0 14px;height:42px;display:flex;align-items:center;gap:10px;box-shadow:0 2px 10px rgba(0,0,0,.5);flex-shrink:0;position:relative;}
@@ -407,52 +380,25 @@ body.modo-vasco .welcome p strong{color:#fff;}
   body { height:100dvh; overflow:hidden; }
 
   /* MODAL MIX PRODUTOS */
-.modal-mix-overlay {
-  position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(6px);
-  display:none;align-items:center;justify-content:center;z-index:500;
-}
-.modal-mix-overlay.active { display:flex; }
-.modal-mix {
-  background:#1C1C1C;border:1px solid rgba(245,200,0,.3);border-radius:16px;
-  padding:24px;width:100%;max-width:420px;box-shadow:0 20px 60px rgba(0,0,0,.7);
-  animation:modalIn .2s ease;
-}
-@keyframes modalIn { from{opacity:0;transform:scale(.95) translateY(8px)} to{opacity:1;transform:scale(1) translateY(0)} }
-.modal-mix h3 { font-family:'Barlow Condensed',sans-serif;font-size:18px;font-weight:700;color:#fff;margin-bottom:4px;letter-spacing:.5px; }
-.modal-mix p  { font-size:12px;color:#777;margin-bottom:16px; }
-.modal-mix label { font-size:11px;color:#aaa;text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px; }
-.modal-mix input[type=text] {
-  width:100%;background:#252525;border:1px solid rgba(255,255,255,.1);border-radius:8px;
-  padding:10px 14px;color:#fff;font-family:'Barlow',sans-serif;font-size:14px;outline:none;
-  transition:border-color .15s;
-}
-.modal-mix input[type=text]:focus { border-color:var(--yellow); }
-.periodo-btns { display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:16px 0; }
-.periodo-btn {
-  background:#252525;border:1px solid rgba(255,255,255,.1);border-radius:8px;
-  padding:10px;color:#aaa;font-family:'Barlow Condensed',sans-serif;font-size:13px;
-  font-weight:600;letter-spacing:.5px;cursor:pointer;transition:all .15s;text-align:center;
-}
-.periodo-btn:hover { border-color:var(--yellow);color:var(--yellow);background:#2a2a1a; }
-.periodo-btn.selected { background:var(--yellow);color:#111;border-color:var(--yellow); }
-.modal-mix-actions { display:flex;gap:8px;margin-top:4px; }
-.btn-mix-ok {
-  flex:1;background:var(--red);border:none;border-radius:8px;padding:11px;
-  color:#fff;font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:700;
-  letter-spacing:.5px;cursor:pointer;transition:background .15s;
-}
-.btn-mix-ok:hover { background:var(--red-dark); }
-.btn-mix-cancel {
-  background:transparent;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:11px 16px;
-  color:#aaa;font-family:'Barlow',sans-serif;font-size:13px;cursor:pointer;transition:all .15s;
-}
-.btn-mix-cancel:hover { border-color:rgba(255,255,255,.3);color:#fff; }
-.suggestion-destaque {
-  background:rgba(245,200,0,.08) !important;
-  border-color:rgba(245,200,0,.3) !important;
-  color:var(--yellow) !important;
-  font-weight:600;
-}
+.modal-mix-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(6px);display:none;align-items:center;justify-content:center;z-index:500;}
+.modal-mix-overlay.active{display:flex;}
+.modal-mix{background:#1C1C1C;border:1px solid rgba(245,200,0,.3);border-radius:16px;padding:24px;width:100%;max-width:420px;box-shadow:0 20px 60px rgba(0,0,0,.7);animation:modalIn .2s ease;}
+@keyframes modalIn{from{opacity:0;transform:scale(.95) translateY(8px)}to{opacity:1;transform:scale(1) translateY(0)}}
+.modal-mix h3{font-family:'Barlow Condensed',sans-serif;font-size:18px;font-weight:700;color:#fff;margin-bottom:4px;letter-spacing:.5px;}
+.modal-mix p{font-size:12px;color:#777;margin-bottom:16px;}
+.modal-mix label{font-size:11px;color:#aaa;text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px;}
+.modal-mix input[type=text]{width:100%;background:#252525;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:10px 14px;color:#fff;font-family:'Barlow',sans-serif;font-size:14px;outline:none;transition:border-color .15s;}
+.modal-mix input[type=text]:focus{border-color:var(--yellow);}
+.periodo-btns{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:16px 0;}
+.periodo-btn{background:#252525;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:10px;color:#aaa;font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:600;letter-spacing:.5px;cursor:pointer;transition:all .15s;text-align:center;}
+.periodo-btn:hover{border-color:var(--yellow);color:var(--yellow);background:#2a2a1a;}
+.periodo-btn.selected{background:var(--yellow);color:#111;border-color:var(--yellow);}
+.modal-mix-actions{display:flex;gap:8px;margin-top:4px;}
+.btn-mix-ok{flex:1;background:var(--red);border:none;border-radius:8px;padding:11px;color:#fff;font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:700;letter-spacing:.5px;cursor:pointer;transition:background .15s;}
+.btn-mix-ok:hover{background:var(--red-dark);}
+.btn-mix-cancel{background:transparent;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:11px 16px;color:#aaa;font-family:'Barlow',sans-serif;font-size:13px;cursor:pointer;transition:all .15s;}
+.btn-mix-cancel:hover{border-color:rgba(255,255,255,.3);color:#fff;}
+.suggestion-destaque{background:rgba(245,200,0,.08)!important;border-color:rgba(245,200,0,.3)!important;color:var(--yellow)!important;font-weight:600;}
 
 /* HEADER */
   header { height:48px; padding:0 10px; gap:8px; }
@@ -1858,15 +1804,14 @@ async function testVoiceEL(){
 }
 </script>
 
+
 <!-- MODAL MIX DE PRODUTOS -->
 <div class="modal-mix-overlay" id="modalMixOverlay">
   <div class="modal-mix">
     <h3>📦 Mix de Produtos por Cliente</h3>
     <p>Veja todos os produtos vendidos para um cliente em um período.</p>
-
     <label>Nome do Cliente</label>
-    <input type="text" id="mixClienteInput" placeholder="Ex: Sendas, Camara, Atacadão..." autocomplete="off">
-
+    <input type="text" id="mixClienteInput" placeholder="Ex: Sendas, Atakarejo, Camara..." autocomplete="off">
     <label style="margin-top:14px">Período</label>
     <div class="periodo-btns">
       <div class="periodo-btn" data-periodo="mes_atual"    onclick="selecionarPeriodo(this)">📅 Mês Atual</div>
@@ -1874,72 +1819,51 @@ async function testVoiceEL(){
       <div class="periodo-btn" data-periodo="tres_meses"   onclick="selecionarPeriodo(this)">📆 Últimos 3 Meses</div>
       <div class="periodo-btn" data-periodo="ano"          onclick="selecionarPeriodo(this)">📊 Ano Atual</div>
     </div>
-
     <div class="modal-mix-actions">
       <button class="btn-mix-cancel" onclick="fecharModalMix()">Cancelar</button>
       <button class="btn-mix-ok"     onclick="confirmarMixProdutos()">🔍 Consultar</button>
     </div>
   </div>
 </div>
-
 <script>
-let _mixPeriodoSelecionado = null;
-
-function abrirModalMixProdutos() {
+var _mixPeriodoSelecionado = null;
+function abrirModalMixProdutos(){
   document.getElementById('modalMixOverlay').classList.add('active');
+  document.getElementById('mixClienteInput').value='';
   document.getElementById('mixClienteInput').focus();
-  _mixPeriodoSelecionado = null;
-  document.querySelectorAll('.periodo-btn').forEach(b => b.classList.remove('selected'));
+  _mixPeriodoSelecionado=null;
+  document.querySelectorAll('.periodo-btn').forEach(function(b){b.classList.remove('selected');});
 }
-
-function fecharModalMix() {
+function fecharModalMix(){
   document.getElementById('modalMixOverlay').classList.remove('active');
 }
-
-function selecionarPeriodo(el) {
-  document.querySelectorAll('.periodo-btn').forEach(b => b.classList.remove('selected'));
+function selecionarPeriodo(el){
+  document.querySelectorAll('.periodo-btn').forEach(function(b){b.classList.remove('selected');});
   el.classList.add('selected');
-  _mixPeriodoSelecionado = el.dataset.periodo;
+  _mixPeriodoSelecionado=el.dataset.periodo;
 }
-
-function confirmarMixProdutos() {
-  const cliente = document.getElementById('mixClienteInput').value.trim();
-  if (!cliente) {
-    document.getElementById('mixClienteInput').focus();
-    document.getElementById('mixClienteInput').style.borderColor = '#CC0000';
-    setTimeout(() => document.getElementById('mixClienteInput').style.borderColor = '', 1500);
+function confirmarMixProdutos(){
+  var cliente=document.getElementById('mixClienteInput').value.trim();
+  if(!cliente){
+    document.getElementById('mixClienteInput').style.borderColor='#CC0000';
+    setTimeout(function(){document.getElementById('mixClienteInput').style.borderColor='';},1500);
     return;
   }
-  if (!_mixPeriodoSelecionado) {
-    document.querySelectorAll('.periodo-btn').forEach(b => {
-      b.style.borderColor = '#CC0000';
-      setTimeout(() => b.style.borderColor = '', 1500);
+  if(!_mixPeriodoSelecionado){
+    document.querySelectorAll('.periodo-btn').forEach(function(b){
+      b.style.borderColor='#CC0000';
+      setTimeout(function(){b.style.borderColor='';},1500);
     });
     return;
   }
-
-  const periodos = {
-    mes_atual:    "mês atual",
-    mes_anterior: "mês anterior",
-    tres_meses:   "últimos 3 meses",
-    ano:          "ano atual"
-  };
-
+  var periodos={mes_atual:'mes atual',mes_anterior:'mes anterior',tres_meses:'ultimos 3 meses',ano:'ano atual'};
   fecharModalMix();
-  const pergunta = `Mix de produtos vendidos para ${cliente} no ${periodos[_mixPeriodoSelecionado]}`;
-  sendMessage(pergunta);
+  var pergunta='Mix de produtos vendidos para '+cliente+' no '+periodos[_mixPeriodoSelecionado];
+  document.getElementById('userInput').value=pergunta;
+  sendMessage();
 }
-
-// Fechar modal ao clicar fora
-document.getElementById('modalMixOverlay').addEventListener('click', function(e) {
-  if (e.target === this) fecharModalMix();
-});
-
-// Enter no campo de cliente
-document.getElementById('mixClienteInput').addEventListener('keydown', function(e) {
-  if (e.key === 'Enter') confirmarMixProdutos();
-});
+document.getElementById('modalMixOverlay').addEventListener('click',function(e){if(e.target===this)fecharModalMix();});
+document.getElementById('mixClienteInput').addEventListener('keydown',function(e){if(e.key==='Enter')confirmarMixProdutos();});
 </script>
-
 </body>
 </html>
