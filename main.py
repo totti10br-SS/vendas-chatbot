@@ -53,8 +53,10 @@ app = FastAPI()
 _last_resultado: dict = {}
 
 # Último PDF gerado (server-side) — usado pela Camada 0 para reenvio/WhatsApp
-# sem repassar pela LLM. Sempre corresponde ao _texto_narrado atual.
-_last_pdf: dict = {"b64": None, "filename": None}
+# sem repassar pela LLM. origem: "texto_tela" (espelho da narração) ou
+# "auto_detalhado" (relatório completo de notas). Pedido explícito de PDF
+# sempre entrega o espelho da tela.
+_last_pdf: dict = {"b64": None, "filename": None, "origem": None}
 
 app.add_middleware(CORSMiddleware,
     allow_origins=["https://web-production-91aff.up.railway.app"],
@@ -2034,20 +2036,21 @@ def _resp_txt(msg):
     return JSONResponse({"content": [{"type": "text", "text": msg}]})
 
 def _resposta_pdf_do_ultimo():
-    """Gera/reaproveita PDF da última consulta SEM passar pela LLM."""
+    """Gera/reaproveita PDF espelho da ÚLTIMA RESPOSTA NA TELA — sem LLM.
+    Nunca entrega o PDF auto-detalhado aqui: pedido explícito de PDF = tela."""
     texto = _last_resultado.get("_texto_narrado", "")
     if not texto:
         return _resp_txt("⚠️ Faça uma consulta primeiro para depois pedir o PDF.")
     try:
-        if _last_pdf.get("b64"):
+        if _last_pdf.get("b64") and _last_pdf.get("origem") == "texto_tela":
             pdf_b64, filename = _last_pdf["b64"], _last_pdf["filename"]
-            logging.warning(f"[ROTEADOR-PDF] reaproveitado: {filename}")
+            logging.warning(f"[ROTEADOR-PDF] reaproveitado (texto_tela): {filename}")
         else:
             pdf_bytes = gerar_pdf_do_texto(texto, "RELATÓRIO IAF", "")
             filename  = _proximo_seq_pdf()
             pdf_b64   = base64.b64encode(pdf_bytes).decode()
-            _last_pdf.update({"b64": pdf_b64, "filename": filename})
-            logging.warning(f"[ROTEADOR-PDF] gerado: {filename}")
+            _last_pdf.update({"b64": pdf_b64, "filename": filename, "origem": "texto_tela"})
+            logging.warning(f"[ROTEADOR-PDF] gerado do texto da tela: {filename}")
         return JSONResponse({
             "id": "iaf-pdf", "type": "message", "role": "assistant",
             "content": [{"type": "text", "text": f"📄 PDF gerado!\nRELATORIO_PDF_BASE64:{pdf_b64}:FILENAME:{filename}"}],
@@ -2079,14 +2082,15 @@ async def _executar_envio_whats(acao):
         )
     try:
         if acao.get("pdf"):
-            pdf_b64  = _last_pdf.get("b64")
-            filename = _last_pdf.get("filename") or "relatorio_iaf.pdf"
-            if not pdf_b64:
-                # Regenera a partir do texto narrado salvo — sem LLM
+            # Sempre envia o espelho da tela — nunca o auto-detalhado
+            if _last_pdf.get("b64") and _last_pdf.get("origem") == "texto_tela":
+                pdf_b64  = _last_pdf["b64"]
+                filename = _last_pdf["filename"] or "relatorio_iaf.pdf"
+            else:
                 pdf_bytes = gerar_pdf_do_texto(_last_resultado.get("_texto_narrado", ""), "RELATÓRIO IAF", "")
                 filename  = _proximo_seq_pdf()
                 pdf_b64   = base64.b64encode(pdf_bytes).decode()
-                _last_pdf.update({"b64": pdf_b64, "filename": filename})
+                _last_pdf.update({"b64": pdf_b64, "filename": filename, "origem": "texto_tela"})
             r = await _enviar_pdf_whatsapp(contato["numero"], pdf_b64, filename,
                                            "📊 Relatório IAF · Frinense Alimentos")
             alvo = "PDF"
@@ -2619,7 +2623,7 @@ async def chat(req: ChatRequest):
             filename  = _proximo_seq_pdf()
             import base64 as _b64
             pdf_b64   = _b64.b64encode(pdf_bytes).decode()
-            _last_pdf.update({"b64": pdf_b64, "filename": filename})  # Camada 0 reaproveita
+            _last_pdf.update({"b64": pdf_b64, "filename": filename, "origem": "texto_tela"})  # Camada 0 reaproveita
             logging.warning(f"[PDF-TEXTO] Gerado: {filename} tipo={tipo_r}")
             return JSONResponse({
                 "id": "iaf-pdf", "type": "message", "role": "assistant",
@@ -2652,7 +2656,7 @@ async def chat(req: ChatRequest):
     # Salva o texto narrado para PDF
     _last_resultado["_texto_narrado"] = resposta_texto
     # Nova narração → PDF anterior fica obsoleto (Camada 0 regenera se precisar)
-    _last_pdf.update({"b64": None, "filename": None})
+    _last_pdf.update({"b64": None, "filename": None, "origem": None})
     content_list = [{"type": "text", "text": resposta_texto}]
 
     if tipo_resultado in _tipos_com_pdf and not _ja_tem_pdf and not _pedir_pdf:
@@ -2664,7 +2668,7 @@ async def chat(req: ChatRequest):
             pdf_b64   = _b64.b64encode(pdf_bytes).decode()
             # PDF como segundo item no content — frontend renderiza separado
             content_list.append({"type": "text", "text": f"RELATORIO_PDF_BASE64:{pdf_b64}:FILENAME:{pdf_nome}"})
-            _last_pdf.update({"b64": pdf_b64, "filename": pdf_nome})  # Camada 0 reaproveita
+            _last_pdf.update({"b64": pdf_b64, "filename": pdf_nome, "origem": "auto_detalhado"})
             logging.info(f"[PDF-AUTO] Gerado: {pdf_nome} tipo={tipo_resultado} cliente={filtro.get('cliente','')}")
         except Exception as e:
             logging.error(f"[PDF-AUTO] erro: {e}")
