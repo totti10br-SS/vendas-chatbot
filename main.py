@@ -52,6 +52,10 @@ app = FastAPI()
 # Último resultado calculado — usado para gerar PDF exato do que está na tela
 _last_resultado: dict = {}
 
+# Último PDF gerado (server-side) — usado pela Camada 0 para reenvio/WhatsApp
+# sem repassar pela LLM. Sempre corresponde ao _texto_narrado atual.
+_last_pdf: dict = {"b64": None, "filename": None}
+
 app.add_middleware(CORSMiddleware,
     allow_origins=["https://web-production-91aff.up.railway.app"],
     allow_methods=["GET", "POST", "DELETE"],
@@ -1966,6 +1970,139 @@ td {{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
 
 
 
+# ─────────────────────────────────────────────
+#  CAMADA 0 — ROTEADOR DE COMANDOS DE AÇÃO
+#  Detecta comandos sobre o resultado ANTERIOR (enviar pro WhatsApp,
+#  gerar PDF) ANTES do interpretador LLM. Determinístico: comando de
+#  ação nunca volta pro Haiku, só consome o que já foi calculado.
+# ─────────────────────────────────────────────
+
+def _norm_txt(t):
+    """Minúsculas e sem acentos — para matching de keywords."""
+    import unicodedata
+    t = unicodedata.normalize("NFD", (t or "").lower())
+    return "".join(c for c in t if unicodedata.category(c) != "Mn")
+
+_WA_KEYWORDS    = ("whats", "whatsapp", "zap", "wpp", "meu numero", "meu celular")
+_ENVIO_KEYWORDS = ("manda", "mande", "mandar", "envia", "envie", "enviar",
+                   "encaminha", "encaminhe", "encaminhar", "dispara", "passa", "passe")
+_PDF_KEYWORDS   = ("pdf", "arquivo", "relatorio", "documento")
+_REF_ANTERIOR   = ("ultima", "ultimo", "anterior", "essa", "esse", "isso",
+                   "pesquisa", "consulta", "resultado", "de novo", "novamente")
+# Termos que indicam NOVA consulta de dados → não curto-circuitar
+_TERMOS_QUERY   = ("faturamento", "quanto", "ranking", "comparativ", "resumo",
+                   "preco", "venda", "nota ", "nf ", "ne ", "danfe", "cliente ",
+                   "produto ", "filial", "vendedor", "janeiro", "fevereiro",
+                   "marco", "abril", "maio", "junho", "julho", "agosto",
+                   "setembro", "outubro", "novembro", "dezembro",
+                   "ontem", "hoje", "semana", "mes ")
+
+def _detectar_comando_acao(msg):
+    """Retorna dict com a ação detectada ou None (segue pipeline normal)."""
+    t = " " + _norm_txt(msg).strip() + " "
+    tem_wa    = any(k in t for k in _WA_KEYWORDS)
+    tem_envio = any(k in t for k in _ENVIO_KEYWORDS)
+    tem_pdf   = any(k in t for k in _PDF_KEYWORDS)
+    tem_query = any(k in t for k in _TERMOS_QUERY)
+    tem_ref   = any(k in t for k in _REF_ANTERIOR)
+
+    # ── Comando WhatsApp sobre o resultado anterior ──
+    if tem_wa and (tem_envio or tem_pdf):
+        # Se menciona consulta nova sem referenciar a anterior → pipeline normal
+        if tem_query and not tem_ref:
+            return None
+        nome = None
+        _nao_nomes = ("whats", "whatsapp", "zap", "wpp", "meu", "minha", "mim",
+                      "numero", "celular", "gerar", "enviar", "mandar")
+        # Padrão 1: "whats/zap do Fulano"
+        m = re.search(r"\b(?:whats|whatsapp|zap|wpp)\s+(?:do|da|de)\s+([a-z]{3,})", t)
+        # Padrão 2: "para/pro/pra Fulano"
+        if not m:
+            m = re.search(r"\b(?:para|pro|pra)\s+(?:o\s+|a\s+)?([a-z]{3,})", t)
+        if m and m.group(1) not in _nao_nomes:
+            nome = m.group(1)
+        return {"acao": "whats", "pdf": tem_pdf, "nome": nome}
+
+    # ── Comando PDF puro (curto, sem consulta nova) ──
+    if tem_pdf and not tem_query and len(t.split()) <= 8 \
+       and (tem_envio or "gera" in t or " em pdf " in t or " no pdf " in t or " como pdf " in t):
+        return {"acao": "pdf"}
+
+    return None
+
+def _resp_txt(msg):
+    return JSONResponse({"content": [{"type": "text", "text": msg}]})
+
+def _resposta_pdf_do_ultimo():
+    """Gera/reaproveita PDF da última consulta SEM passar pela LLM."""
+    texto = _last_resultado.get("_texto_narrado", "")
+    if not texto:
+        return _resp_txt("⚠️ Faça uma consulta primeiro para depois pedir o PDF.")
+    try:
+        if _last_pdf.get("b64"):
+            pdf_b64, filename = _last_pdf["b64"], _last_pdf["filename"]
+            logging.warning(f"[ROTEADOR-PDF] reaproveitado: {filename}")
+        else:
+            pdf_bytes = gerar_pdf_do_texto(texto, "RELATÓRIO IAF", "")
+            filename  = _proximo_seq_pdf()
+            pdf_b64   = base64.b64encode(pdf_bytes).decode()
+            _last_pdf.update({"b64": pdf_b64, "filename": filename})
+            logging.warning(f"[ROTEADOR-PDF] gerado: {filename}")
+        return JSONResponse({
+            "id": "iaf-pdf", "type": "message", "role": "assistant",
+            "content": [{"type": "text", "text": f"📄 PDF gerado!\nRELATORIO_PDF_BASE64:{pdf_b64}:FILENAME:{filename}"}],
+            "model": "iaf-v2", "stop_reason": "end_turn"
+        })
+    except Exception as e:
+        logging.error(f"[ROTEADOR-PDF] erro: {e}")
+        return _resp_txt(f"❌ Erro ao gerar PDF: {e}")
+
+async def _executar_envio_whats(acao):
+    """Envia última consulta (PDF ou texto) pro WhatsApp de contato cadastrado."""
+    tem_conteudo = _last_pdf.get("b64") or _last_resultado.get("_texto_narrado")
+    if not tem_conteudo:
+        return _resp_txt("⚠️ Não encontrei uma consulta recente para enviar. "
+                         "Faça a consulta primeiro e depois peça o envio.")
+    if not acao.get("nome"):
+        return _resp_txt("Para quem envio? Diga o nome do contato cadastrado — ex.: *manda pro João*.")
+    lista = _load_contatos()
+    nome_busca = acao["nome"].lower()
+    contato = next(
+        (c for c in lista if nome_busca in _norm_txt(c["nome"]) and c.get("ativo", True)),
+        None
+    )
+    if not contato:
+        return _resp_txt(
+            f"Infelizmente, o nome '{acao['nome']}' não está cadastrado como WhatsApp autorizado "
+            "para receber essas informações. Por favor, entre em contato com a T.I. da Frinense "
+            "para providenciar a inclusão! Obrigado!"
+        )
+    try:
+        if acao.get("pdf"):
+            pdf_b64  = _last_pdf.get("b64")
+            filename = _last_pdf.get("filename") or "relatorio_iaf.pdf"
+            if not pdf_b64:
+                # Regenera a partir do texto narrado salvo — sem LLM
+                pdf_bytes = gerar_pdf_do_texto(_last_resultado.get("_texto_narrado", ""), "RELATÓRIO IAF", "")
+                filename  = _proximo_seq_pdf()
+                pdf_b64   = base64.b64encode(pdf_bytes).decode()
+                _last_pdf.update({"b64": pdf_b64, "filename": filename})
+            r = await _enviar_pdf_whatsapp(contato["numero"], pdf_b64, filename,
+                                           "📊 Relatório IAF · Frinense Alimentos")
+            alvo = "PDF"
+        else:
+            texto_limpo = _limpar_texto_wa(_last_resultado.get("_texto_narrado", ""))
+            r = await _enviar_whatsapp(contato["numero"], texto_limpo)
+            alvo = "Resultado"
+        if r["ok"]:
+            logging.warning(f"[ROTEADOR-WA] {alvo} enviado para {contato['nome']}")
+            return _resp_txt(f"✅ {alvo} enviado para *{contato['nome']}* no WhatsApp!")
+        return _resp_txt(f"❌ Falha no envio para {contato['nome']}: {r['erro']}")
+    except Exception as e:
+        logging.error(f"[ROTEADOR-WA] erro: {e}")
+        return _resp_txt(f"❌ Erro no envio: {e}")
+
+
 @app.post("/chat")
 async def chat(req: ChatRequest):
     if not CLAUDE_KEY:
@@ -2000,6 +2137,15 @@ async def chat(req: ChatRequest):
         except Exception as e:
             resposta = f"Erro ao carregar informações: {e}"
         return JSONResponse({"content": [{"type": "text", "text": resposta}]})
+
+    # ── CAMADA 0 — ROTEADOR: comando de ação nunca vai pro Haiku ──
+    _acao = _detectar_comando_acao(ultima)
+    if _acao:
+        logging.warning(f"[ROTEADOR] ação detectada: {_acao} | msg='{ultima[:80]}'")
+        if _acao["acao"] == "whats":
+            return await _executar_envio_whats(_acao)
+        if _acao["acao"] == "pdf":
+            return _resposta_pdf_do_ultimo()
 
     # ── Pergunta precisa de cliente? ──
     df = load_df()
@@ -2473,6 +2619,7 @@ async def chat(req: ChatRequest):
             filename  = _proximo_seq_pdf()
             import base64 as _b64
             pdf_b64   = _b64.b64encode(pdf_bytes).decode()
+            _last_pdf.update({"b64": pdf_b64, "filename": filename})  # Camada 0 reaproveita
             logging.warning(f"[PDF-TEXTO] Gerado: {filename} tipo={tipo_r}")
             return JSONResponse({
                 "id": "iaf-pdf", "type": "message", "role": "assistant",
@@ -2504,6 +2651,8 @@ async def chat(req: ChatRequest):
     # PDF vai como mensagem separada embutida no content (frontend já sabe processar)
     # Salva o texto narrado para PDF
     _last_resultado["_texto_narrado"] = resposta_texto
+    # Nova narração → PDF anterior fica obsoleto (Camada 0 regenera se precisar)
+    _last_pdf.update({"b64": None, "filename": None})
     content_list = [{"type": "text", "text": resposta_texto}]
 
     if tipo_resultado in _tipos_com_pdf and not _ja_tem_pdf and not _pedir_pdf:
@@ -2515,6 +2664,7 @@ async def chat(req: ChatRequest):
             pdf_b64   = _b64.b64encode(pdf_bytes).decode()
             # PDF como segundo item no content — frontend renderiza separado
             content_list.append({"type": "text", "text": f"RELATORIO_PDF_BASE64:{pdf_b64}:FILENAME:{pdf_nome}"})
+            _last_pdf.update({"b64": pdf_b64, "filename": pdf_nome})  # Camada 0 reaproveita
             logging.info(f"[PDF-AUTO] Gerado: {pdf_nome} tipo={tipo_resultado} cliente={filtro.get('cliente','')}")
         except Exception as e:
             logging.error(f"[PDF-AUTO] erro: {e}")

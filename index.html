@@ -632,6 +632,14 @@ function toggleVoice(){ /* legado */ }
 
 function speak(text){ /* legado - nao usado */ }
 
+function _micFeedback(msg){
+  // Feedback visível (celular não tem console)
+  const input = document.getElementById('userInput');
+  const orig = input.placeholder;
+  input.placeholder = msg;
+  setTimeout(() => { input.placeholder = orig; }, 4000);
+}
+
 function toggleMic(){
   if(!SpeechRecognition){
     alert('Seu browser não suporta reconhecimento de voz. Use Chrome ou Edge.');
@@ -641,10 +649,14 @@ function toggleMic(){
     recognition && recognition.stop();
     return;
   }
+  let finalTranscript = '';   // acumula resultados finais desta gravação
   recognition = new SpeechRecognition();
   recognition.lang = 'pt-BR';
   recognition.continuous = false;
-  recognition.interimResults = false;
+  // interimResults=true é OBRIGATÓRIO no Chrome Android:
+  // com false, o onresult muitas vezes nunca dispara no celular
+  recognition.interimResults = true;
+  recognition.maxAlternatives = 1;
   recognition.onstart = () => {
     isRecording = true;
     const btn = document.getElementById('micBtn');
@@ -652,26 +664,52 @@ function toggleMic(){
     btn.textContent = '🔴';
   };
   recognition.onresult = (e) => {
-    const transcript = e.results[0][0].transcript;
-    document.getElementById('userInput').value = transcript;
-    autoResize(document.getElementById('userInput'));
+    let interim = '';
+    for(let i = e.resultIndex; i < e.results.length; i++){
+      const txt = e.results[i][0].transcript;
+      if(e.results[i].isFinal) finalTranscript += txt;
+      else interim += txt;
+    }
+    // Mostra transcrição ao vivo no input (final + parcial)
+    const input = document.getElementById('userInput');
+    input.value = (finalTranscript + interim).trim();
+    autoResize(input);
   };
   recognition.onend = () => {
     isRecording = false;
     const btn = document.getElementById('micBtn');
     btn.classList.remove('recording');
     btn.textContent = '🎤';
-    // Envia automaticamente se capturou algo
-    const val = document.getElementById('userInput').value.trim();
+    // Garante que o input fique só com o texto final consolidado
+    const input = document.getElementById('userInput');
+    const val = (finalTranscript || input.value).trim();
+    input.value = val;
     if(val) sendMessage();
+    else _micFeedback('Não captei nada. Toque no 🎤 e fale de novo.');
   };
   recognition.onerror = (e) => {
     isRecording = false;
     document.getElementById('micBtn').classList.remove('recording');
     document.getElementById('micBtn').textContent = '🎤';
-    if(e.error !== 'no-speech') console.warn('Mic erro:', e.error);
+    const msgs = {
+      'not-allowed':        'Permissão do microfone negada. Libere no cadeado da URL.',
+      'service-not-allowed':'Serviço de voz bloqueado pelo navegador.',
+      'network':            'Sem conexão com o serviço de voz. Verifique a internet.',
+      'audio-capture':      'Microfone não encontrado no aparelho.',
+      'aborted':            ''  // usuário cancelou, sem aviso
+    };
+    if(e.error !== 'no-speech' && e.error !== 'aborted'){
+      console.warn('Mic erro:', e.error);
+      _micFeedback('🎤 ' + (msgs[e.error] || ('Erro de voz: ' + e.error)));
+    }
   };
-  recognition.start();
+  try{
+    recognition.start();
+  }catch(err){
+    // InvalidStateError se já houver gravação ativa
+    isRecording = false;
+    console.warn('Mic start falhou:', err);
+  }
 }
 // ────────────────────────────────────────────────────────
 let dashCollapsed=true;
