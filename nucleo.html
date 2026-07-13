@@ -28,6 +28,8 @@
   .stage{position:fixed;inset:0;display:grid;place-items:center;transition:transform 1s cubic-bezier(.6,.05,.2,1),opacity .8s}
   #core{width:min(78vmin,720px);height:min(78vmin,720px);display:block}
   body.chat .stage{transform:translateY(-38vh) scale(.42);opacity:.5}
+  body.chat #core{cursor:pointer}
+  body.chat #core:hover{filter:drop-shadow(0 0 12px rgba(53,224,229,.7))}
 
   /* ---- HUD chrome ---- */
   .bracket{position:fixed;width:46px;height:46px;border:1.5px solid var(--line);z-index:5}
@@ -41,11 +43,6 @@
   .hud.tr{top:34px;right:82px;text-align:right}
   .hud .on{color:var(--teal)}
   .hud .amber{color:var(--amber)}
-  #newchat{position:fixed;top:28px;right:26px;z-index:20;display:none;align-items:center;gap:7px;
-    padding:8px 13px;border-radius:9px;background:var(--panel);border:1px solid var(--line);
-    color:var(--ice);font-size:12px;cursor:pointer;backdrop-filter:blur(6px);transition:.2s}
-  #newchat:hover{border-color:var(--cyan);color:#fff}
-  body.chat #newchat{display:inline-flex}
   body.chat .hud.tr{display:none}
 
   /* ---- ORBIT (welcome) ---- */
@@ -137,9 +134,8 @@
   <div class="hud brandtop">I&nbsp;A&nbsp;F</div>
   <div class="hud tl">Núcleo Analítico<br><span class="on">● Sistema online</span></div>
   <div class="hud tr">Base · 58.412 registros<br><span class="amber">◇</span> 3 filiais sincronizadas</div>
-  <button id="newchat" onclick="resetWelcome()">✦ Nova pergunta</button>
 
-  <div class="stage"><canvas id="core"></canvas></div>
+  <div class="stage"><canvas id="core" title="Voltar ao início"></canvas></div>
 
   <div id="orbit"></div>
 
@@ -238,6 +234,8 @@
 
   function enterChat(){ if(!document.body.classList.contains('chat')) document.body.classList.add('chat'); }
   window.resetWelcome=function(){ document.body.classList.remove('chat'); stream.innerHTML=''; history=[]; askEl.value=''; askEl.focus(); };
+  // Clicar no núcleo reduzido (modo chat) volta pro globo de perguntas
+  cv.addEventListener('click', () => { if(document.body.classList.contains('chat')) resetWelcome(); });
 
   function addMsg(role, html){
     const d=document.createElement('div'); d.className='msg '+(role==='user'?'user':'bot');
