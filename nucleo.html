@@ -43,7 +43,7 @@
   .hud.tr{top:34px;right:82px;text-align:right}
   .hud .on{color:var(--teal)}
   .hud .amber{color:var(--amber)}
-  body.chat .hud.tr{display:none}
+  body.chat .hud.tr{opacity:.75}
 
   /* ---- ORBIT (welcome) ---- */
   #orbit{position:absolute;inset:0;pointer-events:none;z-index:10;transition:opacity .5s}
@@ -60,7 +60,7 @@
   .chip:hover::before{background:var(--amber);box-shadow:0 0 10px var(--amber)}
 
   .titleblock{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none;z-index:15;width:min(52vmin,420px);transition:opacity .4s}
-  body.chat .titleblock{opacity:0}
+  body.chat .titleblock{opacity:0;visibility:hidden}
   .titleblock h1{font-size:clamp(20px,3.4vmin,34px);font-weight:600;letter-spacing:1px;color:#fff;text-shadow:0 0 24px rgba(53,224,229,.55)}
   .titleblock p{margin-top:6px;color:var(--dim);font-size:12.5px}
 
@@ -133,7 +133,7 @@
 
   <div class="hud brandtop">I&nbsp;A&nbsp;F</div>
   <div class="hud tl">Núcleo Analítico<br><span class="on">● Sistema online</span></div>
-  <div class="hud tr">Base · 58.412 registros<br><span class="amber">◇</span> 3 filiais sincronizadas</div>
+  <div class="hud tr">Base · <span id="hud-reg">—</span> registros<br><span class="amber">◇</span> Atualizado <span id="hud-upd">—</span></div>
 
   <div class="stage"><canvas id="core" title="Voltar ao início"></canvas></div>
 
@@ -315,6 +315,15 @@
   sendBtn.addEventListener('click',()=>send());
   askEl.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();send();}});
 
+  // Data da última atualização dos dados (mesma fonte do IAF tradicional: /dashboard)
+  (function loadMeta(){
+    fetch('/dashboard').then(r=>r.json()).then(d=>{
+      const reg=document.getElementById('hud-reg'), upd=document.getElementById('hud-upd');
+      if(reg && d.total_registros!=null) reg.textContent=Number(d.total_registros).toLocaleString('pt-BR');
+      if(upd){ const v=(d.csv_modificado && d.csv_modificado!=='—')?d.csv_modificado:(d.ultima_nota||'—'); upd.textContent=v; }
+    }).catch(()=>{});
+  })();
+
   /* ============ LOOP + BOOT ============ */
   let t0=null;
   function frame(ts){if(t0===null)t0=ts;const t=(ts-t0)/1000;render(ts);layoutChips(reduce?0:t);requestAnimationFrame(frame);}
@@ -323,7 +332,10 @@
   window.addEventListener('load',()=>{
     start();
     setTimeout(()=>{const boot=document.getElementById('boot');boot.style.opacity='0';setTimeout(()=>boot.remove(),650);
-      document.querySelectorAll('.chip,.titleblock,.askbar,.hud,.bracket').forEach((e,i)=>{e.classList.add('fade-in');e.style.animationDelay=(i*40)+'ms';});
+      document.querySelectorAll('.chip,.titleblock,.askbar,.hud,.bracket').forEach((e,i)=>{
+        e.classList.add('fade-in'); e.style.animationDelay=(i*40)+'ms';
+        e.addEventListener('animationend',()=>{ e.classList.remove('fade-in'); e.style.animationDelay=''; },{once:true});
+      });
     }, reduce?50:1150);
   });
   start();
