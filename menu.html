@@ -23,17 +23,21 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
 .card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;transition:opacity .25s;}
 .card.iaf::before{background:linear-gradient(90deg,#CC0000,#F5C800);}
 .card.ia3::before{background:linear-gradient(90deg,#0066CC,#00C8E0);}
+.card.nuc::before{background:linear-gradient(90deg,#0F9D8F,#35E0E5);}
 .card:hover{transform:translateY(-4px);border-color:rgba(255,255,255,.2);box-shadow:0 12px 40px rgba(0,0,0,.4);}
 
 .card-badge{display:inline-flex;align-items:center;justify-content:center;width:64px;height:64px;border-radius:16px;font-family:'Bebas Neue',sans-serif;font-size:28px;letter-spacing:2px;margin-bottom:18px;}
 .card.iaf .card-badge{background:rgba(204,0,0,.15);color:#CC0000;border:1.5px solid rgba(204,0,0,.3);}
 .card.ia3 .card-badge{background:rgba(0,102,204,.15);color:#00C8E0;border:1.5px solid rgba(0,102,204,.3);}
+.card.nuc .card-badge{background:rgba(18,184,166,.15);color:#35E0E5;border:1.5px solid rgba(18,184,166,.35);}
 .card:hover.iaf .card-badge{background:rgba(204,0,0,.25);}
 .card:hover.ia3 .card-badge{background:rgba(0,102,204,.25);}
+.card:hover.nuc .card-badge{background:rgba(18,184,166,.28);}
 
 .card h2{font-family:'Barlow Condensed',sans-serif;font-size:20px;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;}
 .card.iaf h2{color:#F5C800;}
 .card.ia3 h2{color:#00C8E0;}
+.card.nuc h2{color:#35E0E5;}
 
 .card p{font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:20px;}
 .card ul{list-style:none;text-align:left;margin-bottom:24px;}
@@ -42,12 +46,15 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
 .card ul li::before{content:'›';font-size:14px;}
 .card.iaf ul li::before{color:#F5C800;}
 .card.ia3 ul li::before{color:#00C8E0;}
+.card.nuc ul li::before{color:#35E0E5;}
 
 .btn-entrar{display:block;width:100%;padding:11px;border-radius:10px;font-family:'Barlow Condensed',sans-serif;font-size:15px;font-weight:700;letter-spacing:1px;text-transform:uppercase;border:none;cursor:pointer;transition:all .2s;}
 .card.iaf .btn-entrar{background:#CC0000;color:#F5C800;}
 .card.iaf .btn-entrar:hover{background:#F5C800;color:#CC0000;}
 .card.ia3 .btn-entrar{background:#0066CC;color:#00C8E0;}
 .card.ia3 .btn-entrar:hover{background:#00C8E0;color:#000;}
+.card.nuc .btn-entrar{background:#0F9D8F;color:#0a1620;}
+.card.nuc .btn-entrar:hover{background:#35E0E5;color:#000;}
 
 .footer{margin-top:40px;font-size:11px;color:var(--muted);text-align:center;letter-spacing:.5px;}
 </style>
@@ -85,6 +92,19 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
       <li>Calendário e sazonalidade</li>
     </ul>
     <button class="btn-entrar">Entrar no IA3 →</button>
+  </a>
+
+  <a href="/nucleo" class="card nuc">
+    <div class="card-badge">NÚC</div>
+    <h2>IAF · Núcleo</h2>
+    <p>Interface visual do IAF. Pergunte às suas vendas a partir de um painel interativo estilo HUD.</p>
+    <ul>
+      <li>Perguntas sugeridas em órbita</li>
+      <li>Painel HUD pensado para desktop</li>
+      <li>Usa os mesmos dados do IAF</li>
+      <li>Ideal para telas grandes e apresentações</li>
+    </ul>
+    <button class="btn-entrar">Entrar no Núcleo →</button>
   </a>
 
 </div>
