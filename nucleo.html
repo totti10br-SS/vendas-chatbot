@@ -188,13 +188,21 @@
 (() => {
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  const QUESTIONS = [
+  const QUESTIONS_RAPIDO = [
     "Como estão as vendas deste mês?",
     "Ranking de produtos mais vendidos",
     "Resumo diário de hoje",
     "Últimas vendas",
     "Comparar as três filiais",
     "Detalhe da última nota",
+  ];
+  const QUESTIONS_ANALITICO = [
+    "Evolução das vendas 2026 vs 2025",
+    "Qual filial mais cresceu no ano?",
+    "Tendência do preço médio por corte",
+    "Mix de produtos: o que mudou vs 2025?",
+    "Clientes que mais cresceram e caíram",
+    "Sazonalidade das vendas no ano",
   ];
 
   /* ============ 3D CORE ============ */
@@ -250,11 +258,16 @@
 
   /* ============ CHIPS ============ */
   const orbit=document.getElementById('orbit');
-  const chips=QUESTIONS.map((q,i)=>{const el=document.createElement('button');el.className='chip';el.textContent=q;
-    el.addEventListener('click',()=>send(q));
-    el.addEventListener('mouseenter',()=>el._hot=true);
-    el.addEventListener('mouseleave',()=>el._hot=false);
-    orbit.appendChild(el);return el;});
+  let chips=[];
+  function buildChips(list){
+    orbit.innerHTML='';
+    chips = list.map((q)=>{const el=document.createElement('button');el.className='chip';el.textContent=q;
+      el.addEventListener('click',()=>send(q));
+      el.addEventListener('mouseenter',()=>el._hot=true);
+      el.addEventListener('mouseleave',()=>el._hot=false);
+      orbit.appendChild(el);return el;});
+  }
+  buildChips(QUESTIONS_RAPIDO);
   function layoutChips(t){
     if(document.body.classList.contains('chat')){hovered=null;return;}
     const cx=innerWidth/2,cy=innerHeight/2,rx=Math.min(innerWidth*0.36,430),ry=Math.min(innerHeight*0.30,250),speed=reduce?0:0.12;let hot=null;
@@ -408,6 +421,7 @@
     modoBtn.title = _analitico
       ? 'Modo Analítico ATIVO — clique para voltar ao rápido'
       : 'Modo Analítico — análises profundas (YoY)';
+    buildChips(_analitico ? QUESTIONS_ANALITICO : QUESTIONS_RAPIDO);
     try{ localStorage.setItem('nucleo_modo', _analitico?'analitico':'rapido'); }catch(e){}
   }
   modoBtn.addEventListener('click', ()=> setAnalitico(!_analitico));
