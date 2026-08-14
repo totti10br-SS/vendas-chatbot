@@ -292,8 +292,19 @@
 
   function enterChat(){ if(!document.body.classList.contains('chat')) document.body.classList.add('chat'); }
   window.resetWelcome=function(){ document.body.classList.remove('chat'); stream.innerHTML=''; history=[]; askEl.value=''; askEl.focus(); };
-  // Clicar no núcleo reduzido (modo chat) volta pro globo de perguntas
-  cv.addEventListener('click', () => { if(document.body.classList.contains('chat')) resetWelcome(); });
+  // Clique simples no núcleo reduzido (modo chat) volta pro globo; duplo-clique abre o /admin (easter egg)
+  let _coreClickTimer=null;
+  cv.addEventListener('click', () => {
+    if(_coreClickTimer) return;                 // parte de um duplo-clique — ignora
+    _coreClickTimer = setTimeout(()=>{
+      _coreClickTimer=null;
+      if(document.body.classList.contains('chat')) resetWelcome();
+    }, 260);
+  });
+  cv.addEventListener('dblclick', () => {
+    if(_coreClickTimer){ clearTimeout(_coreClickTimer); _coreClickTimer=null; }
+    window.open('/admin', '_blank');            // painel de tokens + contatos WhatsApp
+  });
 
   function addMsg(role, html){
     const d=document.createElement('div'); d.className='msg '+(role==='user'?'user':'bot');
