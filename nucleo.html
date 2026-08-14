@@ -340,6 +340,25 @@
   }
 
   // Envia a última resposta (e o PDF, se houver) para um contato via WhatsApp
+  // Converte um Blob de PDF em base64 (para envio no WhatsApp / download)
+  function blobToB64(blob){
+    return new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(String(fr.result).split(',')[1]||'');fr.onerror=rej;fr.readAsDataURL(blob);});
+  }
+  // Gera o PDF da última análise — o modo analítico não embute PDF, usa o endpoint /pdf-analitico
+  async function gerarPdfAnalitico(){
+    if(!lastAssistantText || lastAssistantText.length < 40) return false;
+    try{
+      const resp=await fetch('/pdf-analitico',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({texto:lastAssistantText, titulo:'ANÁLISE COMERCIAL IAF'})});
+      if(!resp.ok) return false;
+      const blob=await resp.blob();
+      const b64=await blobToB64(blob);
+      if(!b64) return false;
+      lastPdf={b64, name:'IAF_Analitico.pdf'};
+      return true;
+    }catch(e){ console.warn('pdf-analitico erro',e); return false; }
+  }
+
   async function enviarWhats(nome, typing){
     const payload={nome:(nome||'').trim(), texto:lastAssistantText||''};
     if(lastPdf){ payload.pdf_b64=lastPdf.b64; payload.pdf_nome=lastPdf.name||'relatorio_iaf.pdf'; }
@@ -375,16 +394,28 @@
         await enviarWhats(text, typing);
         return;
       }
+      const pedidoPDF = /\bpdf\b/i.test(text);
       // ── Detecção de intenção de WhatsApp (mesma do IAF tradicional) ──
       try{
         const ri=await fetch('/detectar-intencao',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mensagem:text})});
         const di=await ri.json();
         if(di && di.enviar_whatsapp){
+          // Modo analítico não tem PDF automático: gera o PDF da última análise antes de enviar
+          if(pedidoPDF && _analitico) await gerarPdfAnalitico();
           if(di.nome){ await enviarWhats(di.nome, typing); }
           else { typing.remove(); waWaitingName=true; addMsg('bot','Para quem devo enviar? Me diga o nome cadastrado.'); }
           return;
         }
       }catch(e){ console.warn('detectar-intencao erro:', e); }
+
+      // ── Modo analítico + pedido de PDF (sem WhatsApp) → gera e oferece download ──
+      if(pedidoPDF && _analitico){
+        const ok=await gerarPdfAnalitico();
+        typing.remove();
+        if(ok && lastPdf){ addMsg('bot','📄 PDF da análise gerado.'); addPdfCard(lastPdf.b64,lastPdf.name); }
+        else addMsg('bot','<p>Não consegui gerar o PDF. Faça uma análise antes de pedir o PDF.</p>');
+        return;
+      }
 
       // ── Fluxo normal: pergunta vai pro /chat ──
       history.push({role:'user',content:text});
