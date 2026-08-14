@@ -111,6 +111,18 @@
   .askbar .send:disabled{opacity:.4;cursor:default}
   @keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
 
+  /* ---- RESPONSIVO: ampliar área de resposta no PC (não afeta o celular) ---- */
+  @media (min-width:1024px){
+    #stream{width:min(1080px,86vw);height:62vh;gap:16px}
+    .msg{max-width:80%;font-size:15px}
+    .msg.bot{max-width:88%}          /* respostas com tabela usam mais largura */
+    .askbar{width:min(900px,80vw)}
+  }
+  @media (min-width:1600px){
+    #stream{width:min(1300px,80vw);height:64vh}
+    .askbar{width:min(1040px,72vw)}
+  }
+
   /* ---- BOOT ---- */
   #boot{position:fixed;inset:0;z-index:90;background:var(--void);display:grid;place-items:center;transition:opacity .6s ease}
   #boot .b{font-family:ui-monospace,Consolas,monospace;letter-spacing:4px;color:var(--cyan);font-size:13px;text-align:center}
