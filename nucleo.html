@@ -238,6 +238,10 @@
   const askEl=document.getElementById('ask');
   const sendBtn=document.getElementById('send');
   let history=[], busy=false;
+  // ── Estado do fluxo WhatsApp (espelha o index.html) ──
+  let waWaitingName=false;    // true quando o IAF perguntou "para quem enviar?"
+  let lastAssistantText='';   // última resposta narrada (texto a enviar no WhatsApp)
+  let lastPdf=null;           // último PDF gerado {b64, name}
 
   function enterChat(){ if(!document.body.classList.contains('chat')) document.body.classList.add('chat'); }
   window.resetWelcome=function(){ document.body.classList.remove('chat'); stream.innerHTML=''; history=[]; askEl.value=''; askEl.focus(); };
@@ -288,15 +292,55 @@
     }catch(e){console.warn('pdf card erro',e);}
   }
 
+  // Envia a última resposta (e o PDF, se houver) para um contato via WhatsApp
+  async function enviarWhats(nome, typing){
+    const payload={nome:(nome||'').trim(), texto:lastAssistantText||''};
+    if(lastPdf){ payload.pdf_b64=lastPdf.b64; payload.pdf_nome=lastPdf.name||'relatorio_iaf.pdf'; }
+    try{
+      const rw=await fetch('/whatsapp-send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      const dw=await rw.json();
+      if(typing) typing.remove();
+      if(dw.ok){
+        const msg=lastPdf
+          ? 'Texto e PDF enviados para **'+dw.nome+'** via WhatsApp! ✅'
+          : 'Enviado para **'+dw.nome+'** ('+(dw.numero||'')+') via WhatsApp! ✅';
+        addMsg('bot',mdToHtml(msg));
+      } else {
+        addMsg('bot','<p>Não consegui enviar: '+esc(dw.erro||'contato não encontrado')+'</p>');
+      }
+    }catch(e){
+      if(typing) typing.remove();
+      addMsg('bot','<p>Erro ao enviar: '+esc(e.message||String(e))+'</p>');
+    }
+  }
+
   async function send(text){
     text=(text||askEl.value).trim();
     if(!text||busy) return;
     enterChat();
     askEl.value=''; busy=true; busyCore=true; sendBtn.disabled=true;
     addMsg('user',text);
-    history.push({role:'user',content:text});
     const typing=addTyping();
     try{
+      // ── Fluxo WhatsApp: aguardando o nome do contato ──
+      if(waWaitingName){
+        waWaitingName=false;
+        await enviarWhats(text, typing);
+        return;
+      }
+      // ── Detecção de intenção de WhatsApp (mesma do IAF tradicional) ──
+      try{
+        const ri=await fetch('/detectar-intencao',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mensagem:text})});
+        const di=await ri.json();
+        if(di && di.enviar_whatsapp){
+          if(di.nome){ await enviarWhats(di.nome, typing); }
+          else { typing.remove(); waWaitingName=true; addMsg('bot','Para quem devo enviar? Me diga o nome cadastrado.'); }
+          return;
+        }
+      }catch(e){ console.warn('detectar-intencao erro:', e); }
+
+      // ── Fluxo normal: pergunta vai pro /chat ──
+      history.push({role:'user',content:text});
       const r=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({messages:history, modo:'normal'})});
       const data=await r.json();
@@ -308,8 +352,8 @@
       let visible=reply, pdf=null;
       const m=reply.match(/RELATORIO_PDF_BASE64:([A-Za-z0-9+/=]+):FILENAME:([^\s]+)/);
       if(m){pdf={b64:m[1],name:m[2]};visible=reply.replace(m[0],'').replace(/📄\s*PDF gerado!?/,'').trim();}
-      if(visible) addMsg('bot',mdToHtml(visible));
-      if(pdf) addPdfCard(pdf.b64,pdf.name);
+      if(visible){ addMsg('bot',mdToHtml(visible)); lastAssistantText=visible; }
+      if(pdf){ addPdfCard(pdf.b64,pdf.name); lastPdf=pdf; }
       if(!visible && !pdf) addMsg('bot','<p>(sem resposta)</p>');
     }catch(e){
       typing.remove();
