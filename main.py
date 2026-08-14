@@ -3490,7 +3490,7 @@ async function carregarDados(){
   if(tblWrap) tblWrap.style.overflowX = 'auto';
   const tbody = document.querySelector('#tblConsultas tbody');
   tbody.innerHTML = '';
-  (d.consultas || []).slice().reverse().forEach(function(c){
+  (d.consultas || []).forEach(function(c){
     const badge = c.modelo.includes('haiku') ?
       '<span class="badge badge-haiku">HAIKU</span>' :
       '<span class="badge badge-sonnet">SONNET</span>';
