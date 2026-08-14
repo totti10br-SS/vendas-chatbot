@@ -3088,7 +3088,7 @@ CONTEXTO ANALÍTICO COMPLETO (evolução YoY, clientes, mix, preços):
             headers={"Content-Type": "application/json",
                      "x-api-key": CLAUDE_KEY,
                      "anthropic-version": "2023-06-01"},
-            json={"model": "claude-sonnet-4-20250514",
+            json={"model": "claude-sonnet-4-6",
                   "max_tokens": 4000,
                   "system": system_analitico,
                   "messages": msgs}
