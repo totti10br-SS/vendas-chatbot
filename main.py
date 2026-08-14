@@ -332,11 +332,12 @@ async def interpretar_pergunta(pergunta: str, historico: list, df: pd.DataFrame)
     d_min = df['DATA_MOVTO'].min().strftime('%d/%m/%Y') if pd.notna(df['DATA_MOVTO'].min()) else '?'
     d_max = df['DATA_MOVTO'].max().strftime('%d/%m/%Y') if pd.notna(df['DATA_MOVTO'].max()) else '?'
     filiais = sorted(df['NOME_FILIAL'].dropna().unique().tolist()) if 'NOME_FILIAL' in df.columns else []
-    hoje = datetime.now().strftime('%d/%m/%Y')
-    ontem = (datetime.now() - timedelta(days=1)).strftime('%d/%m/%Y')
-    ontem_iso = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-    anteontem = (datetime.now() - timedelta(days=2)).strftime('%d/%m/%Y')
-    anteontem_iso = (datetime.now() - timedelta(days=2)).strftime('%Y-%m-%d')
+    _agora_br = datetime.now(timezone(timedelta(hours=-3)))  # horário de Brasília (UTC-3, sem horário de verão)
+    hoje = _agora_br.strftime('%d/%m/%Y')
+    ontem = (_agora_br - timedelta(days=1)).strftime('%d/%m/%Y')
+    ontem_iso = (_agora_br - timedelta(days=1)).strftime('%Y-%m-%d')
+    anteontem = (_agora_br - timedelta(days=2)).strftime('%d/%m/%Y')
+    anteontem_iso = (_agora_br - timedelta(days=2)).strftime('%Y-%m-%d')
 
     # Histórico resumido (últimas 6 msgs)
     hist_txt = ""
