@@ -359,7 +359,7 @@ PERGUNTA ATUAL: {pergunta}
 
 Retorne JSON com esta estrutura exata:
 {{
-  "tipo": "resumo_mensal|resumo_diario|ultimas_vendas|ultimos_precos|detalhe_nota|ranking_clientes|ranking_produtos|ranking_vendedores|comparativo|grafico|cnpj_query|periodo_livre|saudacao|indefinido",
+  "tipo": "resumo_mensal|resumo_diario|ultimas_vendas|ultimos_precos|detalhe_nota|resumo_produto|ranking_clientes|ranking_produtos|ranking_vendedores|comparativo|grafico|cnpj_query|periodo_livre|saudacao|indefinido",
   "data_inicio": "YYYY-MM-DD ou null",
   "data_fim": "YYYY-MM-DD ou null",
   "filial": "ITAP|BJESUS|PORC ou null",
@@ -412,6 +412,9 @@ REGRAS:
 - "últimos preços", "preço atual", "quanto paga", "tabela de preços": tipo="ultimos_precos"
 - Se mencionar produto específico (ex: "file mignon", "cupim", "peito"): preencha busca_produto com o termo → mostra preço mais recente por produto; se período não especificado: precisa_periodo=false (o sistema assume 90 dias automaticamente)
 - DISTINÇÃO busca_produto: se a pergunta for sobre "notas fiscais", "relatório de notas", "quando vendemos X", "notas com X", "quais notas tem X" → tipo="ultimas_vendas" + busca_produto. Se for sobre preço/valor do produto → tipo="ultimos_precos" + busca_produto
+- RESUMO DE PRODUTO (quanto vendi de um produto): perguntas como "quanto vendi de X", "quanto já vendi de X", "total de X", "quanto de X vendemos", "quanto saiu de X", "vendas de X" onde X é um PRODUTO (ex: picanha, cupim, filé, alcatra, maminha, charque, ponta de agulha) → tipo="resumo_produto", busca_produto="X" (só o termo do produto, sem a palavra "de"). Traz o total consolidado em KG e R$ de todos os produtos que contêm esse termo.
+- CLIENTES QUE COMPRARAM UM PRODUTO: perguntas como "quais clientes compraram X", "quem comprou X", "clientes que compraram X", "quem levou X", "quem comprou X esse mês" → tipo="ranking_clientes", busca_produto="X". O sistema já filtra pelo produto e ranqueia os clientes.
+- PERÍODO em resumo_produto e ranking_clientes com busca_produto: se disser "esse mês"/"este mês"/"no mês"/"do mês" sem datas → data_inicio = primeiro dia do mês atual, data_fim = {hoje}. Se não citar período nenhum, deixe data_inicio/data_fim = null (o sistema assume o mês corrente automaticamente). NUNCA marque precisa_periodo=true para esses dois casos.
 - NUNCA invente dados, apenas interprete a pergunta"""
 
     async with httpx.AsyncClient(timeout=30) as client:
@@ -904,6 +907,7 @@ async def narrar(pergunta: str, resultado: dict, historico: list, modo: str = "n
     # Passar tipo_operacao para o narrador
     tipo_operacao = resultado.get("filtro_aplicado", {}).get("tipo_operacao", "TODOS")
     dados_narrar["_tipo_operacao"] = tipo_operacao
+    dados_narrar["_busca_produto"] = resultado.get("filtro_aplicado", {}).get("busca_produto")
     dados_json = json.dumps(dados_narrar, ensure_ascii=False, indent=2)
     tipo = resultado.get("tipo", "")
 
@@ -988,7 +992,17 @@ Sua missão é transformar dados de vendas em informação clara e útil para a 
   CASO ESPECIAL — ÚLTIMA NOTA: Se "resumo_notas" tiver exatamente 1 nota:
   **Nota [nr_nota]** · [data] · [filial]
   **Faturamento:** R$ [fat] | **Volume:** [kg] kg | **Itens:** [n_itens]
-- ranking_clientes: Tabela com posição, nome, kg, cx30, faturamento, R$/kg
+- ranking_clientes: Tabela com posição, nome, kg, cx30, faturamento, R$/kg. Se _busca_produto estiver preenchido, a lista JÁ está filtrada por esse produto — titule "## CLIENTES QUE COMPRARAM [_busca_produto em MAIÚSCULAS] · [periodo_ini ~ periodo_fim]" e use os dados de top_clientes.
+- resumo_produto: O usuário quer o total vendido de um produto (o termo está em _busca_produto). Responda EXATAMENTE assim:
+  Linha 1 — título: ## VENDAS DE [_busca_produto em MAIÚSCULAS] · [periodo_ini ~ periodo_fim]
+  Linha 2 — destaque em negrito com o total consolidado: **[kg] kg** · [cx30] CX30 · **R$ [faturamento]** · R$ [preco_medio]/kg
+  Depois, tabela de quebra por produto a partir de "top_produtos" (uma linha por item):
+  | PRODUTO | KG | CX30 | FATURAMENTO | R$/kg |
+  |---------|----|------|-------------|-------|
+  Encerre a tabela com a linha "| **TOTAIS** | ... |" batendo com o destaque.
+  Se não houver top_produtos (produto não encontrado), diga que não há registros desse produto no período.
+  NÃO liste clientes aqui (isso é outra pergunta). NÃO faça análise/insight a menos que peçam.
+  Finalize com um parágrafo em texto corrido (sem markdown) resumindo os números, para leitura em voz. Ex: "No mês, a Picanha somou X kg e R$ Y, com preço médio de R$ Z/kg."
 - ranking_vendedores: Tabela com cod, nome, kg, cx30, faturamento, notas
 - comparativo: 
   Use os campos periodo_a e periodo_b do JSON.
@@ -2271,6 +2285,17 @@ async def chat(req: ChatRequest):
         filtro["data_inicio"] = (hoje - timedelta(days=90)).strftime("%Y-%m-%d")
         filtro["data_fim"]    = hoje.strftime("%Y-%m-%d")
         filtro["precisa_periodo"] = False
+
+    # resumo_produto / ranking com produto e SEM período → assume mês corrente
+    if (filtro.get("tipo") in ("resumo_produto", "ranking_clientes")
+            and filtro.get("busca_produto")
+            and not filtro.get("data_inicio")):
+        from datetime import date as _date_pp
+        _hoje_pp = _date_pp.today()
+        filtro["data_inicio"] = _hoje_pp.replace(day=1).strftime("%Y-%m-%d")
+        filtro["data_fim"]    = _hoje_pp.strftime("%Y-%m-%d")
+        filtro["precisa_periodo"] = False
+        logging.warning(f"[RESUMO_PRODUTO] período assumido mês corrente | produto={filtro.get('busca_produto')}")
 
     # Se período indefinido para resumo
     if filtro.get("precisa_periodo") and not filtro.get("data_inicio"):
