@@ -2130,6 +2130,26 @@ async def _executar_envio_whats(acao):
         return _resp_txt(f"❌ Erro no envio: {e}")
 
 
+def _resolver_periodo_relativo(msg: str):
+    """Resolve expressões de data relativas (ontem, anteontem, essa semana, semana passada)
+    de forma DETERMINÍSTICA no fuso de Brasília, sem depender do interpretador LLM.
+    Retorna (data_inicio_iso, data_fim_iso, rotulo) ou None."""
+    t = (msg or "").lower()
+    hoje = datetime.now(timezone(timedelta(hours=-3))).date()
+    def _iso(d): return d.strftime("%Y-%m-%d")
+    if re.search(r"\banteontem\b", t):
+        d = hoje - timedelta(days=2); return (_iso(d), _iso(d), "anteontem")
+    if re.search(r"\bontem\b", t):
+        d = hoje - timedelta(days=1); return (_iso(d), _iso(d), "ontem")
+    if re.search(r"\bsemana\s+(passada|anterior|retrasada)\b", t):
+        seg = hoje - timedelta(days=hoje.weekday() + 7)
+        return (_iso(seg), _iso(seg + timedelta(days=6)), "semana passada")
+    if re.search(r"\b(essa|esta|nesta|dessa|desta)\s+semana\b", t):
+        seg = hoje - timedelta(days=hoje.weekday())
+        return (_iso(seg), _iso(hoje), "essa semana")
+    return None
+
+
 @app.post("/chat")
 async def chat(req: ChatRequest):
     if not CLAUDE_KEY:
@@ -2185,6 +2205,16 @@ async def chat(req: ChatRequest):
         filtro = {"tipo": "indefinido"}
 
     logging.info(f"[FILTRO] {json.dumps(filtro, ensure_ascii=False)}")
+
+    # ── Datas relativas resolvidas no código (não depende do LLM): ontem, essa semana, etc. ──
+    _per_rel = _resolver_periodo_relativo(ultima)
+    if _per_rel:
+        filtro["data_inicio"], filtro["data_fim"] = _per_rel[0], _per_rel[1]
+        filtro["precisa_periodo"] = False
+        # resumo_diario ignora o intervalo de datas; usa resumo_mensal para respeitar o período
+        if filtro.get("tipo") in (None, "indefinido", "saudacao", "resumo_diario"):
+            filtro["tipo"] = "resumo_mensal"
+        logging.warning(f"[PERIODO_REL] '{_per_rel[2]}' -> {_per_rel[0]}..{_per_rel[1]} | tipo={filtro.get('tipo')}")
 
     # Se o assistente acabou de pedir o cliente e o tipo voltou errado, corrigir pelo histórico
     ultimas_msgs = historico[-4:] if len(historico) >= 4 else historico
